@@ -1,0 +1,22 @@
+info:
+  name: Schema
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: '{{url}}/api/v3/context-url/schema'
+  headers:
+    - name: Content-Type
+      value: application/json
+  auth: inherit
+runtime:
+  scripts:
+    - type: after-response
+      code: |
+        test("status is 200", function() {
+          expect(res.getStatus()).to.equal(200);
+        });
+        test("response has schema", function() {
+          const body = res.getBody();
+          expect(body).to.have.property('schema');
+        });

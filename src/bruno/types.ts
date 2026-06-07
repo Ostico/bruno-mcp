@@ -243,6 +243,219 @@ export class BruFileError extends BrunoError {
   }
 }
 
+// ---------------------------------------------------------------------------
+// YAML opencollection format types
+// ---------------------------------------------------------------------------
+
+export interface YamlInfo {
+  name: string;
+  type?: 'http' | 'graphql' | 'folder';
+  seq?: number;
+}
+
+export interface YamlHeader {
+  name: string;
+  value: string;
+}
+
+export interface YamlBody {
+  type: string;
+  data?: string;
+}
+
+export type YamlAuth =
+  | 'inherit'
+  | {
+      type: string;
+      token?: string;
+      username?: string;
+      password?: string;
+      [key: string]: unknown;
+    };
+
+export interface YamlHttp {
+  method: string;
+  url: string;
+  headers?: YamlHeader[];
+  body?: YamlBody;
+  params?: YamlParam[];
+  auth?: YamlAuth;
+}
+
+export interface YamlParam {
+  name: string;
+  value: string;
+  type?: 'query' | 'path';
+  disabled?: boolean;
+}
+
+export interface YamlScript {
+  type: 'before-request' | 'after-response';
+  code: string;
+}
+
+export interface YamlRuntime {
+  scripts: YamlScript[];
+}
+
+export interface YamlSettings {
+  encodeUrl?: boolean;
+  timeout?: number;
+  followRedirects?: boolean;
+  maxRedirects?: number;
+}
+
+export interface YamlRequest {
+  info: YamlInfo;
+  http: YamlHttp;
+  runtime?: YamlRuntime;
+  settings?: YamlSettings;
+  docs?: string;
+}
+
+export interface YamlFolder {
+  info: YamlInfo;
+  request?: {
+    auth?: YamlAuth;
+    [key: string]: unknown;
+  };
+}
+
+export interface YamlCollection {
+  opencollection: string;
+  info: {
+    name: string;
+    [key: string]: unknown;
+  };
+  bundled?: boolean;
+  extensions?: {
+    bruno?: {
+      ignore?: string[];
+      [key: string]: unknown;
+    };
+    [key: string]: unknown;
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Workspace types
+// ---------------------------------------------------------------------------
+
+export interface WorkspaceCollection {
+  name: string;
+  path: string;
+}
+
+export interface WorkspaceYml {
+  opencollection?: string;
+  info?: { name: string; type: string };
+  collections?: WorkspaceCollection[] | null;
+  specs?: unknown;
+  docs?: string;
+}
+
+export interface CollectionInfo {
+  name: string;
+  path: string;
+  exists: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Response types
+// ---------------------------------------------------------------------------
+
+export interface ResponseData {
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+  body: string;
+  responseTime: number;
+}
+
+export interface MockResponseData {
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+  body: unknown;
+  responseTime: number;
+}
+
+// ---------------------------------------------------------------------------
+// Test runner types
+// ---------------------------------------------------------------------------
+
+export interface TestResult {
+  description: string;
+  status: 'pass' | 'fail';
+  error?: string;
+}
+
+export interface TestRunnerOptions {
+  timeout?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Environment types
+// ---------------------------------------------------------------------------
+
+export interface EnvVariable {
+  name: string;
+  value?: string | number | boolean;
+  disabled?: boolean;
+}
+
+export interface EnvFile {
+  name?: string;
+  variables?: EnvVariable[];
+}
+
+// ---------------------------------------------------------------------------
+// Collection stats types
+// ---------------------------------------------------------------------------
+
+export interface RequestDetail {
+  name: string;
+  method: string;
+  seq: number;
+  folder: string;
+  hasTests: boolean;
+}
+
+export interface CollectionStats {
+  totalRequests: number;
+  requestsByMethod: Record<string, number>;
+  folders: string[];
+  environments: string[];
+  requests: RequestDetail[];
+}
+
+// ---------------------------------------------------------------------------
+// Request executor types
+// ---------------------------------------------------------------------------
+
+export interface RequestExecutionResult {
+  name: string;
+  method: string;
+  url: string;
+  status: number;
+  duration_ms: number;
+  tests: TestResult[];
+  error?: string;
+}
+
+export interface CollectionRunSummary {
+  total: number;
+  passed: number;
+  failed: number;
+  duration_ms: number;
+}
+
+export interface CollectionRunResult {
+  summary: CollectionRunSummary;
+  results: RequestExecutionResult[];
+  parseErrors?: number;
+}
+
 // Utility types for better type safety
 export type BrunoCollectionConfig = Omit<BrunoCollection, 'type'> & {
   type?: 'collection';
@@ -251,6 +464,21 @@ export type BrunoCollectionConfig = Omit<BrunoCollection, 'type'> & {
 export type HttpRequestMethod = Extract<HttpMethod, 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH'>;
 
 export type AuthenticationMethod = Extract<AuthType, 'bearer' | 'basic' | 'oauth2' | 'api-key'>;
+
+// ---------------------------------------------------------------------------
+// Path validation types
+// ---------------------------------------------------------------------------
+
+export interface PathValidationResult {
+  valid: boolean;
+  resolved: string;
+  reason?: string;
+}
+
+export interface CollectionPathValidationResult {
+  valid: boolean;
+  reason?: string;
+}
 
 // File system related types
 export interface FileOperationResult {

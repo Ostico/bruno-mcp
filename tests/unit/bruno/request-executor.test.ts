@@ -1,0 +1,1095 @@
+/**
+ * Tests for RequestExecutor — the engine that executes Bruno YAML requests
+ * via native fetch, runs test scripts, and collects structured results.
+ */
+
+import { RequestExecutor } from '../../../src/bruno/request-executor';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+
+// ---------------------------------------------------------------------------
+// Mock fetch globally
+// ---------------------------------------------------------------------------
+
+const mockFetch = jest.fn();
+(global as any).fetch = mockFetch;
+
+// Mock fs/promises for reading YAML files
+jest.mock('node:fs/promises');
+const mockedFs = jest.mocked(fs);
+
+// Mock url-validator
+jest.mock('../../../src/bruno/url-validator', () => ({
+  validateUrl: jest.fn().mockReturnValue({ valid: true }),
+}));
+import { validateUrl } from '../../../src/bruno/url-validator';
+const mockedValidateUrl = jest.mocked(validateUrl);
+
+// ---------------------------------------------------------------------------
+// Test fixtures
+// ---------------------------------------------------------------------------
+
+const GET_REQUEST_YAML = `
+info:
+  name: Get Users
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "{{base_url}}/api/users"
+  headers:
+    - name: Accept
+      value: application/json
+    - name: Authorization
+      value: "Bearer {{api_key}}"
+`;
+
+const POST_REQUEST_YAML = `
+info:
+  name: Create User
+  type: http
+  seq: 2
+http:
+  method: POST
+  url: "{{base_url}}/api/users"
+  headers:
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: '{"name": "John", "email": "john@example.com"}'
+`;
+
+const REQUEST_WITH_TESTS_YAML = `
+info:
+  name: Get Status
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "{{base_url}}/api/status"
+runtime:
+  scripts:
+    - type: after-response
+      code: |
+        test("should return 200", function() {
+          expect(res.getStatus()).to.equal(200);
+        });
+        test("should have status field", function() {
+          expect(res.getBody()).to.have.property("status");
+        });
+`;
+
+const REQUEST_WITH_FAILING_TEST_YAML = `
+info:
+  name: Health Check
+  type: http
+  seq: 2
+http:
+  method: GET
+  url: "{{base_url}}/health"
+runtime:
+  scripts:
+    - type: after-response
+      code: |
+        test("should return 200", function() {
+          expect(res.getStatus()).to.equal(200);
+        });
+`;
+
+const ENV_YAML = `
+variables:
+  - name: base_url
+    value: "https://api.example.com"
+  - name: api_key
+    value: "test-key-123"
+  - name: disabled_var
+    value: "should-not-appear"
+    disabled: true
+`;
+
+const REQUEST_WITH_TIMEOUT_YAML = `
+info:
+  name: Slow Request
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/slow"
+settings:
+  timeout: 100
+`;
+
+const SSRF_REQUEST_YAML = `
+info:
+  name: SSRF Request
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "http://169.254.169.254/metadata"
+`;
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function createMockResponse(
+  body: unknown,
+  status = 200,
+  statusText = 'OK',
+  contentType = 'application/json',
+): Response {
+  const headers = new Headers({ 'content-type': contentType });
+  return {
+    status,
+    statusText,
+    headers,
+    text: jest.fn().mockResolvedValue(
+      typeof body === 'string' ? body : JSON.stringify(body),
+    ),
+    ok: status >= 200 && status < 300,
+  } as unknown as Response;
+}
+
+/**
+ * Setup readdir mock for recursive directory scanning.
+ * dirMap is a mapping from directory path to an array of entries.
+ * Each entry is { name, isFile, isDirectory }.
+ */
+function setupFsReaddirRecursive(
+  dirMap: Record<string, Array<{ name: string; isFile: boolean; isDirectory: boolean }>>,
+): void {
+  mockedFs.readdir.mockImplementation(async (dirPath: any) => {
+    const p = typeof dirPath === 'string' ? dirPath : dirPath.toString();
+    const entries = dirMap[p];
+    if (!entries) {
+      const err = new Error(`ENOENT: no such directory - ${p}`) as NodeJS.ErrnoException;
+      err.code = 'ENOENT';
+      throw err;
+    }
+    return entries.map(e => ({
+      name: e.name,
+      isFile: () => e.isFile,
+      isDirectory: () => e.isDirectory,
+    })) as any;
+  });
+}
+
+function setupFsReaddir(files: string[]): void {
+  // For backward compat: flat readdir returns only files, no subdirectories
+  setupFsReaddirRecursive({
+    '/test-collection': files.map(f => ({
+      name: f,
+      isFile: true,
+      isDirectory: false,
+    })),
+  });
+}
+
+function setupFsReadFile(fileMap: Record<string, string>): void {
+  mockedFs.readFile.mockImplementation(async (filePath: any) => {
+    const p = typeof filePath === 'string' ? filePath : filePath.toString();
+    // Normalize path separators for matching
+    for (const [key, value] of Object.entries(fileMap)) {
+      if (p.endsWith(key) || p === key) {
+        return value;
+      }
+    }
+    const err = new Error(`ENOENT: no such file - ${p}`) as NodeJS.ErrnoException;
+    err.code = 'ENOENT';
+    throw err;
+  });
+}
+
+function setupFsStat(existingPaths: string[]): void {
+  mockedFs.stat.mockImplementation(async (filePath: any) => {
+    const p = typeof filePath === 'string' ? filePath : filePath.toString();
+    for (const existing of existingPaths) {
+      if (p.endsWith(existing) || p === existing) {
+        return { isDirectory: () => true, isFile: () => false } as any;
+      }
+    }
+    const err = new Error(`ENOENT`) as NodeJS.ErrnoException;
+    err.code = 'ENOENT';
+    throw err;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe('RequestExecutor', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockedValidateUrl.mockReturnValue({ valid: true });
+  });
+
+  describe('executeCollection', () => {
+    it('should execute all requests in a folder sorted by seq', async () => {
+      // Setup: 2 request files + env
+      setupFsReaddir(['Get Users.yml', 'Create User.yml', 'folder.yml', 'opencollection.yml']);
+      setupFsReadFile({
+        'Get Users.yml': GET_REQUEST_YAML,
+        'Create User.yml': POST_REQUEST_YAML,
+        'dev.yml': ENV_YAML,
+      });
+      setupFsStat(['/test-collection', '/test-collection/environments']);
+
+      mockFetch
+        .mockResolvedValueOnce(
+          createMockResponse([{ id: 1, name: 'Alice' }]),
+        )
+        .mockResolvedValueOnce(
+          createMockResponse({ id: 2, name: 'John' }, 201, 'Created'),
+        );
+
+      const result = await RequestExecutor.executeCollection(
+        '/test-collection',
+        { environment: 'dev' },
+      );
+
+      expect(result.summary.total).toBe(2);
+      expect(result.summary.failed).toBe(0);
+      expect(result.summary.passed).toBe(2);
+      expect(result.summary.duration_ms).toBeGreaterThanOrEqual(0);
+
+      // Verify order: seq 1 (Get Users) before seq 2 (Create User)
+      expect(result.results).toHaveLength(2);
+      expect(result.results[0].name).toBe('Get Users');
+      expect(result.results[0].method).toBe('GET');
+      expect(result.results[0].status).toBe(200);
+      expect(result.results[1].name).toBe('Create User');
+      expect(result.results[1].method).toBe('POST');
+      expect(result.results[1].status).toBe(201);
+
+      // Verify variable substitution was applied
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      const firstCallUrl = mockFetch.mock.calls[0][0];
+      expect(firstCallUrl).toBe('https://api.example.com/api/users');
+    });
+
+    it('should run after-response test scripts and collect results', async () => {
+      setupFsReaddir(['Get Status.yml']);
+      setupFsReadFile({
+        'Get Status.yml': REQUEST_WITH_TESTS_YAML,
+        'dev.yml': ENV_YAML,
+      });
+      setupFsStat(['/test-collection', '/test-collection/environments']);
+
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ status: 'healthy' }),
+      );
+
+      const result = await RequestExecutor.executeCollection(
+        '/test-collection',
+        { environment: 'dev' },
+      );
+
+      expect(result.summary.total).toBe(1);
+      expect(result.summary.passed).toBe(1);
+      expect(result.results[0].tests).toHaveLength(2);
+      expect(result.results[0].tests[0]).toEqual({
+        description: 'should return 200',
+        status: 'pass',
+      });
+      expect(result.results[0].tests[1]).toEqual({
+        description: 'should have status field',
+        status: 'pass',
+      });
+    });
+
+    it('should handle network errors gracefully and continue', async () => {
+      setupFsReaddir(['Get Users.yml', 'Create User.yml']);
+      setupFsReadFile({
+        'Get Users.yml': GET_REQUEST_YAML,
+        'Create User.yml': POST_REQUEST_YAML,
+        'dev.yml': ENV_YAML,
+      });
+      setupFsStat(['/test-collection', '/test-collection/environments']);
+
+      // First request fails with network error
+      mockFetch
+        .mockRejectedValueOnce(new Error('ECONNREFUSED'))
+        .mockResolvedValueOnce(
+          createMockResponse({ id: 2, name: 'John' }, 201, 'Created'),
+        );
+
+      const result = await RequestExecutor.executeCollection(
+        '/test-collection',
+        { environment: 'dev' },
+      );
+
+      expect(result.summary.total).toBe(2);
+      expect(result.summary.failed).toBe(1);
+      expect(result.summary.passed).toBe(1);
+
+      // First request should be marked as failed
+      expect(result.results[0].name).toBe('Get Users');
+      expect(result.results[0].status).toBe(0);
+      expect(result.results[0].error).toContain('ECONNREFUSED');
+
+      // Second request should still execute
+      expect(result.results[1].name).toBe('Create User');
+      expect(result.results[1].status).toBe(201);
+    });
+
+    it('should handle test script failures', async () => {
+      setupFsReaddir(['Health Check.yml']);
+      setupFsReadFile({
+        'Health Check.yml': REQUEST_WITH_FAILING_TEST_YAML,
+        'dev.yml': ENV_YAML,
+      });
+      setupFsStat(['/test-collection', '/test-collection/environments']);
+
+      // Return 500 so the test "should return 200" fails
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ error: 'internal' }, 500, 'Internal Server Error'),
+      );
+
+      const result = await RequestExecutor.executeCollection(
+        '/test-collection',
+        { environment: 'dev' },
+      );
+
+      expect(result.summary.total).toBe(1);
+      expect(result.summary.failed).toBe(1);
+      expect(result.results[0].status).toBe(500);
+      expect(result.results[0].tests).toHaveLength(1);
+      expect(result.results[0].tests[0].status).toBe('fail');
+      expect(result.results[0].tests[0].error).toBeDefined();
+    });
+
+    it('should proceed with empty vars when environment is missing', async () => {
+      setupFsReaddir(['Get Users.yml']);
+      setupFsReadFile({
+        'Get Users.yml': GET_REQUEST_YAML,
+        // No env file — loadEnvironment returns empty map
+      });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ users: [] }),
+      );
+
+      const result = await RequestExecutor.executeCollection(
+        '/test-collection',
+        { environment: 'nonexistent' },
+      );
+
+      expect(result.summary.total).toBe(1);
+      expect(result.summary.passed).toBe(1);
+
+      // URL should still have unsubstituted variables
+      const calledUrl = mockFetch.mock.calls[0][0];
+      expect(calledUrl).toBe('{{base_url}}/api/users');
+    });
+
+    it('should work with no environment specified', async () => {
+      const NO_VARS_REQUEST = `
+info:
+  name: Ping
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/ping"
+`;
+      setupFsReaddir(['Ping.yml']);
+      setupFsReadFile({
+        'Ping.yml': NO_VARS_REQUEST,
+      });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ pong: true }),
+      );
+
+      const result = await RequestExecutor.executeCollection(
+        '/test-collection',
+      );
+
+      expect(result.summary.total).toBe(1);
+      expect(result.summary.passed).toBe(1);
+      expect(result.results[0].url).toBe('https://api.example.com/ping');
+    });
+  });
+
+  describe('executeSingleRequest', () => {
+    it('should execute a single request file', async () => {
+      setupFsReadFile({
+        '/test-collection/requests/Get Users.yml': GET_REQUEST_YAML,
+        'dev.yml': ENV_YAML,
+      });
+      setupFsStat(['/test-collection', '/test-collection/environments']);
+
+      // Need to mock readFile to return the content for the specific path
+      mockedFs.readFile.mockImplementation(async (filePath: any) => {
+        const p = typeof filePath === 'string' ? filePath : filePath.toString();
+        if (p.includes('Get Users.yml')) return GET_REQUEST_YAML;
+        if (p.includes('dev.yml')) return ENV_YAML;
+        const err = new Error(`ENOENT: ${p}`) as NodeJS.ErrnoException;
+        err.code = 'ENOENT';
+        throw err;
+      });
+
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse([{ id: 1 }]),
+      );
+
+      const result = await RequestExecutor.executeCollection(
+        '/test-collection',
+        {
+          environment: 'dev',
+          requestPath: '/test-collection/requests/Get Users.yml',
+        },
+      );
+
+      expect(result.summary.total).toBe(1);
+      expect(result.results[0].name).toBe('Get Users');
+      expect(result.results[0].method).toBe('GET');
+      expect(result.results[0].url).toBe('https://api.example.com/api/users');
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('variable substitution in requests', () => {
+    it('should substitute variables in URL, headers, and body', async () => {
+      const REQUEST_WITH_VARS = `
+info:
+  name: Create Thing
+  type: http
+  seq: 1
+http:
+  method: POST
+  url: "{{base_url}}/api/things"
+  headers:
+    - name: Authorization
+      value: "Bearer {{api_key}}"
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: '{"owner": "{{api_key}}"}'
+`;
+      setupFsReaddir(['Create Thing.yml']);
+      setupFsReadFile({
+        'Create Thing.yml': REQUEST_WITH_VARS,
+        'dev.yml': ENV_YAML,
+      });
+      setupFsStat(['/test-collection', '/test-collection/environments']);
+
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ id: 99 }, 201, 'Created'),
+      );
+
+      await RequestExecutor.executeCollection(
+        '/test-collection',
+        { environment: 'dev' },
+      );
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const [calledUrl, calledOptions] = mockFetch.mock.calls[0];
+      expect(calledUrl).toBe('https://api.example.com/api/things');
+      expect(calledOptions.headers['Authorization']).toBe('Bearer test-key-123');
+      expect(calledOptions.body).toContain('test-key-123');
+    });
+  });
+
+  describe('request sorting', () => {
+    it('should sort requests by seq number', async () => {
+      const REQ_SEQ_3 = `
+info:
+  name: Third
+  type: http
+  seq: 3
+http:
+  method: GET
+  url: "https://api.example.com/third"
+`;
+      const REQ_SEQ_1 = `
+info:
+  name: First
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/first"
+`;
+      const REQ_SEQ_2 = `
+info:
+  name: Second
+  type: http
+  seq: 2
+http:
+  method: GET
+  url: "https://api.example.com/second"
+`;
+
+      // readdir returns them out of order
+      setupFsReaddir(['Third.yml', 'First.yml', 'Second.yml']);
+      mockedFs.readFile.mockImplementation(async (filePath: any) => {
+        const p = typeof filePath === 'string' ? filePath : filePath.toString();
+        if (p.includes('Third.yml')) return REQ_SEQ_3;
+        if (p.includes('First.yml')) return REQ_SEQ_1;
+        if (p.includes('Second.yml')) return REQ_SEQ_2;
+        const err = new Error(`ENOENT: ${p}`) as NodeJS.ErrnoException;
+        err.code = 'ENOENT';
+        throw err;
+      });
+      setupFsStat(['/test-collection']);
+
+      mockFetch
+        .mockResolvedValueOnce(createMockResponse({ n: 1 }))
+        .mockResolvedValueOnce(createMockResponse({ n: 2 }))
+        .mockResolvedValueOnce(createMockResponse({ n: 3 }));
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.results[0].name).toBe('First');
+      expect(result.results[1].name).toBe('Second');
+      expect(result.results[2].name).toBe('Third');
+    });
+  });
+
+  describe('error handling', () => {
+    it('should return empty results when collection path does not exist', async () => {
+      mockedFs.readdir.mockRejectedValue(
+        Object.assign(new Error('ENOENT'), { code: 'ENOENT' }),
+      );
+
+      const result = await RequestExecutor.executeCollection('/nonexistent');
+
+      // Recursive discovery gracefully handles missing directories
+      expect(result.summary.total).toBe(0);
+      expect(result.results).toHaveLength(0);
+      expect(result.parseErrors).toBe(0);
+    });
+
+    it('should skip non-request YAML files (folder.yml, opencollection.yml)', async () => {
+      const SIMPLE_REQUEST = `
+info:
+  name: Simple
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/simple"
+`;
+      setupFsReaddir(['folder.yml', 'opencollection.yml', 'Simple.yml']);
+      setupFsReadFile({ 'Simple.yml': SIMPLE_REQUEST });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.summary.total).toBe(1);
+      expect(result.results[0].name).toBe('Simple');
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('should handle requests without seq field', async () => {
+      const NO_SEQ_REQUEST = `
+info:
+  name: No Seq
+  type: http
+http:
+  method: GET
+  url: "https://api.example.com/no-seq"
+`;
+      setupFsReaddir(['No Seq.yml']);
+      setupFsReadFile({ 'No Seq.yml': NO_SEQ_REQUEST });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.summary.total).toBe(1);
+      expect(result.results[0].name).toBe('No Seq');
+    });
+  });
+
+  describe('headers and body handling', () => {
+    it('should send headers from the request YAML', async () => {
+      setupFsReaddir(['Get Users.yml']);
+      setupFsReadFile({ 'Get Users.yml': GET_REQUEST_YAML });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse([]));
+
+      await RequestExecutor.executeCollection('/test-collection');
+
+      const [, options] = mockFetch.mock.calls[0];
+      expect(options.headers['Accept']).toBe('application/json');
+      // Without env substitution, the raw template is sent
+      expect(options.headers['Authorization']).toBe('Bearer {{api_key}}');
+    });
+
+    it('should send POST body when present', async () => {
+      setupFsReaddir(['Create User.yml']);
+      setupFsReadFile({ 'Create User.yml': POST_REQUEST_YAML });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ id: 1 }, 201, 'Created'),
+      );
+
+      await RequestExecutor.executeCollection('/test-collection');
+
+      const [, options] = mockFetch.mock.calls[0];
+      expect(options.method).toBe('POST');
+      expect(options.body).toBeDefined();
+      const parsedBody = JSON.parse(options.body);
+      expect(parsedBody.name).toBe('John');
+    });
+  });
+
+  describe('duration tracking', () => {
+    it('should record duration_ms for each request', async () => {
+      setupFsReaddir(['Get Users.yml']);
+      setupFsReadFile({ 'Get Users.yml': GET_REQUEST_YAML });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse([]));
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.results[0].duration_ms).toBeGreaterThanOrEqual(0);
+      expect(typeof result.results[0].duration_ms).toBe('number');
+      expect(result.summary.duration_ms).toBeGreaterThanOrEqual(0);
+    });
+  });
+
+  // =========================================================================
+  // New tests for Task 6: recursive discovery, SSRF, timeout, parse errors
+  // =========================================================================
+
+  describe('recursive discovery', () => {
+    it('should find request files in nested subdirectories', async () => {
+      const NESTED_REQUEST = `
+info:
+  name: Nested Request
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/nested"
+`;
+      const TOP_REQUEST = `
+info:
+  name: Top Request
+  type: http
+  seq: 2
+http:
+  method: GET
+  url: "https://api.example.com/top"
+`;
+
+      // Simulate a nested directory structure:
+      // /test-collection/
+      //   Top Request.yml
+      //   subfolder/
+      //     Nested Request.yml
+      setupFsReaddirRecursive({
+        '/test-collection': [
+          { name: 'Top Request.yml', isFile: true, isDirectory: false },
+          { name: 'subfolder', isFile: false, isDirectory: true },
+        ],
+        '/test-collection/subfolder': [
+          { name: 'Nested Request.yml', isFile: true, isDirectory: false },
+        ],
+      });
+
+      setupFsReadFile({
+        'Top Request.yml': TOP_REQUEST,
+        'Nested Request.yml': NESTED_REQUEST,
+      });
+      setupFsStat(['/test-collection']);
+
+      mockFetch
+        .mockResolvedValueOnce(createMockResponse({ ok: true }))
+        .mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.summary.total).toBe(2);
+      // Sorted by seq: Nested (seq 1) before Top (seq 2)
+      expect(result.results[0].name).toBe('Nested Request');
+      expect(result.results[1].name).toBe('Top Request');
+    });
+
+    it('should exclude node_modules, .git, and environments directories', async () => {
+      const VALID_REQUEST = `
+info:
+  name: Valid
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/valid"
+`;
+
+      setupFsReaddirRecursive({
+        '/test-collection': [
+          { name: 'Valid.yml', isFile: true, isDirectory: false },
+          { name: 'node_modules', isFile: false, isDirectory: true },
+          { name: '.git', isFile: false, isDirectory: true },
+          { name: 'environments', isFile: false, isDirectory: true },
+        ],
+        // These should NOT be traversed — if they are, the test will break
+        // because we haven't set them up. The code should skip them.
+      });
+
+      setupFsReadFile({ 'Valid.yml': VALID_REQUEST });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.summary.total).toBe(1);
+      expect(result.results[0].name).toBe('Valid');
+
+      // readdir should only have been called for /test-collection, not excluded dirs
+      const readdirCalls = mockedFs.readdir.mock.calls.map(c =>
+        typeof c[0] === 'string' ? c[0] : c[0].toString(),
+      );
+      expect(readdirCalls).not.toContain('/test-collection/node_modules');
+      expect(readdirCalls).not.toContain('/test-collection/.git');
+      expect(readdirCalls).not.toContain('/test-collection/environments');
+    });
+  });
+
+  describe('SSRF protection', () => {
+    it('should block SSRF URLs and return error result without throwing', async () => {
+      mockedValidateUrl.mockReturnValue({
+        valid: false,
+        reason: 'Blocked IP: link-local address (169.254.0.0/16)',
+      });
+
+      setupFsReaddir(['SSRF Request.yml']);
+      setupFsReadFile({ 'SSRF Request.yml': SSRF_REQUEST_YAML });
+      setupFsStat(['/test-collection']);
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.summary.total).toBe(1);
+      expect(result.summary.failed).toBe(1);
+      expect(result.results[0].status).toBe(0);
+      expect(result.results[0].error).toContain('SSRF blocked');
+      expect(result.results[0].error).toContain('link-local');
+      // fetch should NOT have been called
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('should continue executing remaining requests after SSRF block', async () => {
+      const SAFE_REQUEST_YAML = `
+info:
+  name: Safe Request
+  type: http
+  seq: 2
+http:
+  method: GET
+  url: "https://api.example.com/safe"
+`;
+
+      // First call (SSRF) blocked, second call (safe) allowed
+      mockedValidateUrl
+        .mockReturnValueOnce({ valid: false, reason: 'Blocked IP: link-local address' })
+        .mockReturnValueOnce({ valid: true });
+
+      setupFsReaddir(['SSRF Request.yml', 'Safe Request.yml']);
+      setupFsReadFile({
+        'SSRF Request.yml': SSRF_REQUEST_YAML,
+        'Safe Request.yml': SAFE_REQUEST_YAML,
+      });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.summary.total).toBe(2);
+      expect(result.summary.failed).toBe(1);
+      expect(result.summary.passed).toBe(1);
+      // SSRF request should be first (seq 1)
+      expect(result.results[0].error).toContain('SSRF blocked');
+      // Safe request should still execute
+      expect(result.results[1].name).toBe('Safe Request');
+      expect(result.results[1].status).toBe(200);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('fetch timeout', () => {
+    it('should apply timeout from YAML settings', async () => {
+      setupFsReaddir(['Slow Request.yml']);
+      setupFsReadFile({ 'Slow Request.yml': REQUEST_WITH_TIMEOUT_YAML });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      await RequestExecutor.executeCollection('/test-collection');
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const [, fetchOptions] = mockFetch.mock.calls[0];
+      // The signal should be set (AbortSignal.timeout)
+      expect(fetchOptions.signal).toBeDefined();
+    });
+
+    it('should use default 30000ms timeout when settings.timeout is not specified', async () => {
+      const NO_TIMEOUT_REQUEST = `
+info:
+  name: Default Timeout
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/default"
+`;
+      setupFsReaddir(['Default Timeout.yml']);
+      setupFsReadFile({ 'Default Timeout.yml': NO_TIMEOUT_REQUEST });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      await RequestExecutor.executeCollection('/test-collection');
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const [, fetchOptions] = mockFetch.mock.calls[0];
+      expect(fetchOptions.signal).toBeDefined();
+    });
+  });
+
+  describe('parse error tracking', () => {
+    it('should count parse errors and include in result', async () => {
+      const VALID_REQUEST = `
+info:
+  name: Valid
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/valid"
+`;
+      const INVALID_YAML = `not: [valid: yaml: request`;
+
+      setupFsReaddirRecursive({
+        '/test-collection': [
+          { name: 'Valid.yml', isFile: true, isDirectory: false },
+          { name: 'Invalid.yml', isFile: true, isDirectory: false },
+        ],
+      });
+
+      mockedFs.readFile.mockImplementation(async (filePath: any) => {
+        const p = typeof filePath === 'string' ? filePath : filePath.toString();
+        if (p.includes('Valid.yml')) return VALID_REQUEST;
+        if (p.includes('Invalid.yml')) return INVALID_YAML;
+        const err = new Error(`ENOENT: ${p}`) as NodeJS.ErrnoException;
+        err.code = 'ENOENT';
+        throw err;
+      });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.summary.total).toBe(1);
+      expect(result.parseErrors).toBe(1);
+    });
+
+    it('should return parseErrors 0 when all files parse successfully', async () => {
+      const VALID_REQUEST = `
+info:
+  name: Valid
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/valid"
+`;
+
+      setupFsReaddir(['Valid.yml']);
+      setupFsReadFile({ 'Valid.yml': VALID_REQUEST });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.summary.total).toBe(1);
+      expect(result.parseErrors).toBe(0);
+    });
+  });
+
+  // =========================================================================
+  // Security fix tests: timeout ?? and redirect SSRF
+  // =========================================================================
+
+  describe('timeout nullish coalescing fix', () => {
+    it('should use timeout: 0 as-is and not replace it with 30000', async () => {
+      const ZERO_TIMEOUT_REQUEST = `
+info:
+  name: Zero Timeout
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/zero"
+settings:
+  timeout: 0
+`;
+      setupFsReaddir(['Zero Timeout.yml']);
+      setupFsReadFile({ 'Zero Timeout.yml': ZERO_TIMEOUT_REQUEST });
+      setupFsStat(['/test-collection']);
+
+      // Spy on AbortSignal.timeout to capture the value passed
+      const originalAbortTimeout = AbortSignal.timeout.bind(AbortSignal);
+      const abortTimeoutSpy = jest.spyOn(AbortSignal, 'timeout');
+      abortTimeoutSpy.mockImplementation(originalAbortTimeout);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      await RequestExecutor.executeCollection('/test-collection');
+
+      // AbortSignal.timeout must have been called with 0, NOT 30000
+      expect(abortTimeoutSpy).toHaveBeenCalledWith(0);
+      expect(abortTimeoutSpy).not.toHaveBeenCalledWith(30000);
+
+      abortTimeoutSpy.mockRestore();
+    });
+  });
+
+  describe('redirect SSRF protection', () => {
+    it('should block redirect to internal IP (SSRF via 302)', async () => {
+      const PUBLIC_REQUEST = `
+info:
+  name: Public Request
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/api"
+`;
+      setupFsReaddir(['Public Request.yml']);
+      setupFsReadFile({ 'Public Request.yml': PUBLIC_REQUEST });
+      setupFsStat(['/test-collection']);
+
+      // Initial fetch passes validation (public URL)
+      // But the response is a 302 redirect to an internal IP
+      const redirectHeaders = new Headers({ location: 'http://169.254.169.254/metadata' });
+      const redirectResponse = {
+        status: 302,
+        statusText: 'Found',
+        headers: redirectHeaders,
+        ok: false,
+        text: jest.fn().mockResolvedValue(''),
+      } as unknown as Response;
+
+      mockFetch.mockResolvedValueOnce(redirectResponse);
+
+      // validateUrl: first call (original URL) passes, second call (redirect target) blocks
+      mockedValidateUrl
+        .mockReturnValueOnce({ valid: true })
+        .mockReturnValueOnce({ valid: false, reason: 'Blocked IP: link-local address (169.254.0.0/16)' });
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.summary.total).toBe(1);
+      expect(result.summary.failed).toBe(1);
+      expect(result.results[0].status).toBe(0);
+      expect(result.results[0].error).toContain('blocked');
+      expect(result.results[0].error).toContain('169.254.169.254');
+
+      // fetch must only have been called once (for the original URL, not the redirect target)
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('should follow a redirect to a valid public URL successfully', async () => {
+      const PUBLIC_REQUEST = `
+info:
+  name: Redirect Request
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/old"
+`;
+      setupFsReaddir(['Redirect Request.yml']);
+      setupFsReadFile({ 'Redirect Request.yml': PUBLIC_REQUEST });
+      setupFsStat(['/test-collection']);
+
+      const redirectHeaders = new Headers({ location: 'https://api.example.com/new' });
+      const redirectResponse = {
+        status: 302,
+        statusText: 'Found',
+        headers: redirectHeaders,
+        ok: false,
+        text: jest.fn().mockResolvedValue(''),
+      } as unknown as Response;
+
+      const finalResponse = createMockResponse({ ok: true }, 200);
+
+      mockFetch
+        .mockResolvedValueOnce(redirectResponse)
+        .mockResolvedValueOnce(finalResponse);
+
+      // Both URLs pass validation
+      mockedValidateUrl.mockReturnValue({ valid: true });
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.summary.total).toBe(1);
+      expect(result.summary.passed).toBe(1);
+      expect(result.results[0].status).toBe(200);
+      expect(result.results[0].error).toBeUndefined();
+      // fetch called twice: original + redirect
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(mockFetch.mock.calls[1][0]).toBe('https://api.example.com/new');
+    });
+
+    it('should return error after exceeding max redirects (10 hops)', async () => {
+      const PUBLIC_REQUEST = `
+info:
+  name: Loop Request
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/loop"
+`;
+      setupFsReaddir(['Loop Request.yml']);
+      setupFsReadFile({ 'Loop Request.yml': PUBLIC_REQUEST });
+      setupFsStat(['/test-collection']);
+
+      // Every fetch returns a 302 pointing back to the same URL
+      const loopHeaders = new Headers({ location: 'https://api.example.com/loop' });
+      const loopResponse = {
+        status: 302,
+        statusText: 'Found',
+        headers: loopHeaders,
+        ok: false,
+        text: jest.fn().mockResolvedValue(''),
+      } as unknown as Response;
+
+      // 11 calls: 1 original + 10 redirects (loop terminates at MAX_REDIRECTS)
+      mockFetch.mockResolvedValue(loopResponse);
+
+      mockedValidateUrl.mockReturnValue({ valid: true });
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.summary.total).toBe(1);
+      expect(result.summary.failed).toBe(1);
+      expect(result.results[0].status).toBe(0);
+      expect(result.results[0].error).toContain('Too many redirects');
+      expect(result.results[0].error).toContain('10');
+      // fetch called 11 times: 1 + 10 redirect follows (loop exits before 11th redirect fetch)
+      expect(mockFetch).toHaveBeenCalledTimes(11);
+    });
+  });
+});

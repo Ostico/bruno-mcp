@@ -1,0 +1,8 @@
+variables:
+  - name: url
+    value: https://dev.matecat.com
+  - name: api-key
+    value: abc123
+  - name: disabled-var
+    value: should-not-appear
+    disabled: true

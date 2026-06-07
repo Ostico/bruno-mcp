@@ -7,10 +7,17 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 
+import path from 'path';
+
 // Import our Bruno modules
 import { createCollectionManager } from './bruno/collection.js';
 import { createEnvironmentManager } from './bruno/environment.js';
 import { createRequestBuilder } from './bruno/request.js';
+import { createWorkspaceResolver } from './bruno/workspace.js';
+import { listCollectionsHandler } from './bruno/list-collections-handler.js';
+import { getCollectionStats } from './bruno/collection-stats.js';
+import { RequestExecutor } from './bruno/request-executor.js';
+import { validatePath } from './bruno/path-validator.js';
 import {
   CreateCollectionInput,
   CreateEnvironmentInput,
@@ -27,6 +34,7 @@ export class BrunoMcpServer {
   private collectionManager;
   private environmentManager;
   private requestBuilder;
+  private workspaceResolver;
 
   constructor() {
     // Initialize MCP server
@@ -39,8 +47,39 @@ export class BrunoMcpServer {
     this.collectionManager = createCollectionManager();
     this.environmentManager = createEnvironmentManager();
     this.requestBuilder = createRequestBuilder();
+    this.workspaceResolver = createWorkspaceResolver();
 
     this.setupTools();
+  }
+
+  /**
+   * Validate a tool input path for traversal attacks and null bytes.
+   *
+   * When `basePath` is provided the path must resolve within it (uses the
+   * full `validatePath` from path-validator).  Otherwise a lightweight
+   * check rejects `..` segments and null bytes.
+   */
+  private validateToolPath(
+    inputPath: string,
+    basePath?: string,
+  ): { valid: boolean; resolved: string; reason?: string } {
+    if (!inputPath) {
+      return { valid: false, resolved: '', reason: 'Path is required' };
+    }
+    // Reject null bytes
+    if (inputPath.includes('\0')) {
+      return { valid: false, resolved: '', reason: 'Path contains null bytes' };
+    }
+    // If basePath provided, validate path is within it
+    if (basePath) {
+      return validatePath(inputPath, basePath);
+    }
+    // Otherwise just validate no obvious traversal
+    const resolved = path.resolve(inputPath);
+    if (inputPath.includes('..')) {
+      return { valid: false, resolved, reason: 'Path traversal not allowed' };
+    }
+    return { valid: true, resolved };
   }
 
   /**
@@ -55,6 +94,7 @@ export class BrunoMcpServer {
     this.setupCreateCrudRequestsTool();
     this.setupListCollectionsTool();
     this.setupGetCollectionStatsTool();
+    this.setupRunCollectionTool();
   }
 
   /**
@@ -76,6 +116,14 @@ export class BrunoMcpServer {
       },
       async (args) => {
         try {
+          const pathCheck = this.validateToolPath(args.outputPath);
+          if (!pathCheck.valid) {
+            return {
+              content: [{ type: 'text', text: `Invalid outputPath: ${pathCheck.reason}` }],
+              isError: true,
+            };
+          }
+
           const input: CreateCollectionInput = {
             name: args.name,
             description: args.description,
@@ -138,6 +186,14 @@ export class BrunoMcpServer {
       },
       async (args) => {
         try {
+          const pathCheck = this.validateToolPath(args.collectionPath);
+          if (!pathCheck.valid) {
+            return {
+              content: [{ type: 'text', text: `Invalid collectionPath: ${pathCheck.reason}` }],
+              isError: true,
+            };
+          }
+
           const input: CreateEnvironmentInput = {
             collectionPath: args.collectionPath,
             name: args.name,
@@ -216,6 +272,14 @@ export class BrunoMcpServer {
       },
       async (args) => {
         try {
+          const pathCheck = this.validateToolPath(args.collectionPath);
+          if (!pathCheck.valid) {
+            return {
+              content: [{ type: 'text', text: `Invalid collectionPath: ${pathCheck.reason}` }],
+              isError: true,
+            };
+          }
+
           const input: CreateRequestInput = {
             collectionPath: args.collectionPath,
             name: args.name,
@@ -290,15 +354,22 @@ export class BrunoMcpServer {
       },
       async (args) => {
         try {
-          // For now, this is a placeholder implementation
-          // In a full implementation, we'd parse the existing .bru file and add the script
+          const pathCheck = this.validateToolPath(args.bruFilePath);
+          if (!pathCheck.valid) {
+            return {
+              content: [{ type: 'text', text: `Invalid bruFilePath: ${pathCheck.reason}` }],
+              isError: true,
+            };
+          }
+
           return {
             content: [
               {
                 type: 'text',
-                text: `✅ ${args.scriptType} script added to ${args.bruFilePath}\n\nScript content:\n${args.script}`
+                text: 'add_test_script is not yet implemented. Use create_request with inline scripts instead.'
               }
-            ]
+            ],
+            isError: true,
           };
         } catch (error) {
           return {
@@ -351,8 +422,16 @@ export class BrunoMcpServer {
       },
       async (args) => {
         try {
+          const pathCheck = this.validateToolPath(args.collectionPath);
+          if (!pathCheck.valid) {
+            return {
+              content: [{ type: 'text', text: `Invalid collectionPath: ${pathCheck.reason}` }],
+              isError: true,
+            };
+          }
+
           const results = [];
-          
+
           for (let i = 0; i < args.requests.length; i++) {
             const req = args.requests[i];
             const input: CreateRequestInput = {
@@ -421,6 +500,14 @@ export class BrunoMcpServer {
       },
       async (args) => {
         try {
+          const pathCheck = this.validateToolPath(args.collectionPath);
+          if (!pathCheck.valid) {
+            return {
+              content: [{ type: 'text', text: `Invalid collectionPath: ${pathCheck.reason}` }],
+              isError: true,
+            };
+          }
+
           const results = await this.requestBuilder.createCrudRequests(
             args.collectionPath,
             args.entityName,
@@ -462,19 +549,48 @@ export class BrunoMcpServer {
       'list_collections',
       {
         title: 'List Collections',
-        description: 'List all Bruno collections in a directory',
+        description: 'List all Bruno collections discovered from the workspace.yml file. Works with no arguments (auto-discovery) or with an explicit workspacePath.',
         inputSchema: {
-          path: z.string().min(1, 'Directory path is required')
+          workspacePath: z.string().optional().describe('Optional explicit path to workspace.yml')
         }
       },
       async (args) => {
         try {
-          // This would scan for bruno.json files in subdirectories
+          // Validate workspacePath if provided (basic traversal check)
+          if (args.workspacePath) {
+            const wsCheck = this.validateToolPath(args.workspacePath);
+            if (!wsCheck.valid) {
+              return {
+                content: [{ type: 'text', text: `Invalid workspacePath: ${wsCheck.reason}` }],
+                isError: true,
+              };
+            }
+          }
+
+          const collections = await listCollectionsHandler(
+            this.workspaceResolver,
+            { workspacePath: args.workspacePath }
+          );
+
+          if (collections.length === 0) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    collections: [],
+                    message: 'No collections found. Ensure Bruno workspace.yml exists or provide an explicit workspacePath.'
+                  }, null, 2)
+                }
+              ]
+            };
+          }
+
           return {
             content: [
               {
                 type: 'text',
-                text: `📁 Scanning for Bruno collections in: ${args.path}\n\n(This feature will be implemented in a future version)`
+                text: JSON.stringify({ collections }, null, 2)
               }
             ]
           };
@@ -483,7 +599,7 @@ export class BrunoMcpServer {
             content: [
               {
                 type: 'text',
-                text: `❌ Error listing collections: ${error instanceof Error ? error.message : 'Unknown error'}`
+                text: `Error listing collections: ${error instanceof Error ? error.message : 'Unknown error'}`
               }
             ],
             isError: true
@@ -501,28 +617,29 @@ export class BrunoMcpServer {
       'get_collection_stats',
       {
         title: 'Get Collection Statistics',
-        description: 'Get detailed statistics about a Bruno collection',
+        description: 'Get detailed statistics about a Bruno YAML collection — request counts by method, folders, environments, and per-request details with test presence.',
         inputSchema: {
           collectionPath: z.string().min(1, 'Collection path is required')
         }
       },
       async (args) => {
         try {
-          const stats = await this.collectionManager.getCollectionStats(args.collectionPath);
-          
+          // Validate collectionPath
+          const pathCheck = this.validateToolPath(args.collectionPath);
+          if (!pathCheck.valid) {
+            return {
+              content: [{ type: 'text', text: `Invalid collectionPath: ${pathCheck.reason}` }],
+              isError: true,
+            };
+          }
+
+          const stats = await getCollectionStats(args.collectionPath);
+
           return {
             content: [
               {
                 type: 'text',
-                text: `📊 Collection Statistics for ${args.collectionPath}:
-
-📁 Total Requests: ${stats.totalRequests}
-📂 Folders: ${stats.folders.length > 0 ? stats.folders.join(', ') : 'None'}
-🌍 Environments: ${stats.environments.length > 0 ? stats.environments.join(', ') : 'None'}
-
-Request Methods:
-${Object.entries(stats.requestsByMethod).map(([method, count]) => `  ${method}: ${count}`).join('\n') || '  (Analysis not yet implemented)'}
-`
+                text: JSON.stringify(stats, null, 2),
               }
             ]
           };
@@ -531,7 +648,88 @@ ${Object.entries(stats.requestsByMethod).map(([method, count]) => `  ${method}: 
             content: [
               {
                 type: 'text',
-                text: `❌ Error getting collection stats: ${error instanceof Error ? error.message : 'Unknown error'}`
+                text: `Error getting collection stats: ${error instanceof Error ? error.message : 'Unknown error'}`
+              }
+            ],
+            isError: true
+          };
+        }
+      }
+    );
+  }
+
+  /**
+   * Tool: run_collection
+   */
+  private setupRunCollectionTool(): void {
+    this.server.registerTool(
+      'run_collection',
+      {
+        title: 'Run Collection',
+        description: 'Execute all requests in a Bruno collection or a single request, run test scripts, and return structured results',
+        inputSchema: {
+          collectionPath: z.string().min(1, 'Collection path is required'),
+          environment: z.string().optional(),
+          collectionRoot: z.string().optional().describe('Path to collection root for environment resolution (if different from collectionPath)'),
+          requestPath: z.string().optional()
+        }
+      },
+      async (args) => {
+        try {
+          // Validate collectionPath (no traversal, no null bytes)
+          const collectionCheck = this.validateToolPath(args.collectionPath);
+          if (!collectionCheck.valid) {
+            return {
+              content: [{ type: 'text', text: `Invalid collectionPath: ${collectionCheck.reason}` }],
+              isError: true,
+            };
+          }
+
+          // Validate requestPath is within collectionPath if provided
+          if (args.requestPath) {
+            const requestCheck = this.validateToolPath(args.requestPath, args.collectionPath);
+            if (!requestCheck.valid) {
+              return {
+                content: [{ type: 'text', text: `Invalid requestPath: ${requestCheck.reason}` }],
+                isError: true,
+              };
+            }
+          }
+
+          // Validate collectionRoot if provided (no traversal, no null bytes)
+          if (args.collectionRoot) {
+            const rootCheck = this.validateToolPath(args.collectionRoot);
+            if (!rootCheck.valid) {
+              return {
+                content: [{ type: 'text', text: `Invalid collectionRoot: ${rootCheck.reason}` }],
+                isError: true,
+              };
+            }
+          }
+
+          const result = await RequestExecutor.executeCollection(
+            args.collectionPath,
+            {
+              environment: args.environment,
+              collectionRoot: args.collectionRoot,
+              requestPath: args.requestPath,
+            },
+          );
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(result, null, 2)
+              }
+            ]
+          };
+        } catch (error) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Error running collection: ${error instanceof Error ? error.message : 'Unknown error'}`
               }
             ],
             isError: true

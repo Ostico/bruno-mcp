@@ -1,0 +1,29 @@
+info:
+  name: Set for Project
+  type: http
+  seq: 2
+http:
+  method: POST
+  url: '{{url}}/api/v3/context-url/set'
+  headers:
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: '{"project_id": 123, "url": "https://example.com"}'
+  auth: inherit
+runtime:
+  scripts:
+    - type: after-response
+      code: |
+        test("status is 200", function() {
+          expect(res.getStatus()).to.equal(200);
+        });
+        test("response has success", function() {
+          const body = res.getBody();
+          expect(body).to.have.property('success');
+        });
+        test("success is true", function() {
+          const body = res.getBody();
+          expect(body.success).to.equal(true);
+        });

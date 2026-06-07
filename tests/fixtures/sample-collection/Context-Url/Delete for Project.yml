@@ -1,0 +1,14 @@
+info:
+  name: Delete for Project
+  type: http
+  seq: 4
+http:
+  method: POST
+  url: '{{url}}/api/v3/context-url/delete'
+  headers:
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: '{"project_id": 123}'
+  auth: inherit
