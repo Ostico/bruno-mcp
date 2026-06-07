@@ -10,8 +10,14 @@ import {
   CreateEnvironmentInput,
   FileOperationResult,
   BrunoError,
-  BruFileError
+  BruFileError,
+  EnvFile,
+  EnvVariable,
 } from './types.js';
+import { parse as parseYaml } from 'yaml';
+import { detectFormat } from './format-detector.js';
+import { generateYamlEnvironment } from './yaml-generator.js';
+import { parseBruEnvironment } from './bru-parser.js';
 
 export class EnvironmentManager {
 
@@ -23,20 +29,32 @@ export class EnvironmentManager {
       // Validate input
       this.validateEnvironmentInput(input);
 
+      // Detect collection format
+      const detection = await detectFormat(input.collectionPath);
+
       // Ensure environments directory exists
       const envDir = join(input.collectionPath, 'environments');
       await this.ensureDirectory(envDir);
 
-      // Create environment file
-      const envFilePath = join(envDir, `${input.name}.bru`);
-      const envContent = this.generateEnvironmentFile(input.name, input.variables);
-
-      await fs.writeFile(envFilePath, envContent);
-
-      return {
-        success: true,
-        path: envFilePath
-      };
+      if (detection.format === 'yaml') {
+        // Build EnvFile and write .yml
+        const envFile: EnvFile = {
+          name: input.name,
+          variables: Object.entries(input.variables).map(
+            ([name, value]): EnvVariable => ({ name, value }),
+          ),
+        };
+        const yamlContent = generateYamlEnvironment(envFile);
+        const envFilePath = join(envDir, `${input.name}.yml`);
+        await fs.writeFile(envFilePath, yamlContent);
+        return { success: true, path: envFilePath };
+      } else {
+        // Existing BRU behavior
+        const envFilePath = join(envDir, `${input.name}.bru`);
+        const envContent = this.generateEnvironmentFile(input.name, input.variables);
+        await fs.writeFile(envFilePath, envContent);
+        return { success: true, path: envFilePath };
+      }
 
     } catch (error) {
       return {
@@ -51,9 +69,24 @@ export class EnvironmentManager {
    */
   async loadEnvironment(collectionPath: string, environmentName: string): Promise<BrunoEnvironment> {
     try {
-      const envFilePath = join(collectionPath, 'environments', `${environmentName}.bru`);
+      const detection = await detectFormat(collectionPath);
+      const ext = detection.format === 'yaml' ? '.yml' : '.bru';
+      const envFilePath = join(collectionPath, 'environments', `${environmentName}${ext}`);
       const envContent = await fs.readFile(envFilePath, 'utf-8');
-      
+
+      if (detection.format === 'yaml') {
+        const parsed = parseYaml(envContent) as Record<string, unknown>;
+        const variables: Record<string, string | number | boolean> = {};
+        if (Array.isArray(parsed?.variables)) {
+          for (const v of parsed.variables as Array<Record<string, unknown>>) {
+            if (v.name != null && String(v.name) !== '' && !v.disabled) {
+              variables[String(v.name)] = (v.value as string | number | boolean) ?? '';
+            }
+          }
+        }
+        return { name: environmentName, variables };
+      }
+
       return this.parseEnvironmentFile(envContent, environmentName);
 
     } catch (error) {
@@ -73,8 +106,10 @@ export class EnvironmentManager {
     variables: Record<string, string | number | boolean>
   ): Promise<FileOperationResult> {
     try {
+      const detection = await detectFormat(collectionPath);
       const envDir = join(collectionPath, 'environments');
-      const envFilePath = join(envDir, `${environmentName}.bru`);
+      const ext = detection.format === 'yaml' ? '.yml' : '.bru';
+      const envFilePath = join(envDir, `${environmentName}${ext}`);
 
       // Check if environment exists
       const exists = await this.fileExists(envFilePath);
@@ -85,9 +120,16 @@ export class EnvironmentManager {
         );
       }
 
-      // Generate updated content
-      const envContent = this.generateEnvironmentFile(environmentName, variables);
-      await fs.writeFile(envFilePath, envContent);
+      if (detection.format === 'yaml') {
+        const envFile: EnvFile = {
+          name: environmentName,
+          variables: Object.entries(variables).map(([name, value]): EnvVariable => ({ name, value })),
+        };
+        await fs.writeFile(envFilePath, generateYamlEnvironment(envFile));
+      } else {
+        const envContent = this.generateEnvironmentFile(environmentName, variables);
+        await fs.writeFile(envFilePath, envContent);
+      }
 
       return {
         success: true,
@@ -107,8 +149,10 @@ export class EnvironmentManager {
    */
   async deleteEnvironment(collectionPath: string, environmentName: string): Promise<FileOperationResult> {
     try {
-      const envFilePath = join(collectionPath, 'environments', `${environmentName}.bru`);
-      
+      const detection = await detectFormat(collectionPath);
+      const ext = detection.format === 'yaml' ? '.yml' : '.bru';
+      const envFilePath = join(collectionPath, 'environments', `${environmentName}${ext}`);
+
       const exists = await this.fileExists(envFilePath);
       if (!exists) {
         return {
@@ -145,10 +189,10 @@ export class EnvironmentManager {
       }
 
       const entries = await fs.readdir(envDir, { withFileTypes: true });
-      
+
       return entries
-        .filter(entry => entry.isFile() && entry.name.endsWith('.bru'))
-        .map(entry => entry.name.replace('.bru', ''))
+        .filter(entry => entry.isFile() && (entry.name.endsWith('.bru') || entry.name.endsWith('.yml')))
+        .map(entry => entry.name.replace(/\.(bru|yml)$/, ''))
         .sort();
 
     } catch (error) {
@@ -283,33 +327,8 @@ export class EnvironmentManager {
     return lines.join('\n') + '\n';
   }
 
-  /**
-   * Parse environment file content
-   */
   private parseEnvironmentFile(content: string, name: string): BrunoEnvironment {
-    const variables: Record<string, string | number | boolean> = {};
-
-    // Simple parser for vars block
-    const varsMatch = content.match(/vars\s*\{([^}]*)\}/s);
-    if (varsMatch) {
-      const varsContent = varsMatch[1];
-      const lines = varsContent.split('\n');
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed && !trimmed.startsWith('#')) {
-          const colonIndex = trimmed.indexOf(':');
-          if (colonIndex > 0) {
-            const key = trimmed.substring(0, colonIndex).trim();
-            const valueStr = trimmed.substring(colonIndex + 1).trim();
-            const value = this.parseVariableValue(valueStr);
-            variables[key] = value;
-          }
-        }
-      }
-    }
-
-    return { name, variables };
+    return parseBruEnvironment(content, name);
   }
 
   /**
@@ -321,31 +340,6 @@ export class EnvironmentManager {
       return `'${value.replace(/'/g, "\\'")}'`;
     }
     return String(value);
-  }
-
-  /**
-   * Parse variable value from BRU file
-   */
-  private parseVariableValue(valueStr: string): string | number | boolean {
-    const trimmed = valueStr.trim();
-
-    // Handle quoted strings
-    if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
-      return trimmed.slice(1, -1).replace(/\\'/g, "'");
-    }
-
-    // Handle booleans
-    if (trimmed === 'true') return true;
-    if (trimmed === 'false') return false;
-
-    // Handle numbers
-    const numValue = Number(trimmed);
-    if (!isNaN(numValue)) {
-      return numValue;
-    }
-
-    // Default to string (unquoted)
-    return trimmed;
   }
 
   /**
@@ -423,19 +417,19 @@ export function createEnvironmentManager(): EnvironmentManager {
 export const commonEnvironments = {
   development: {
     baseUrl: 'http://localhost:3000',
-    apiKey: 'dev-api-key',
+    apiKey: '{{API_KEY}}',
     timeout: 5000,
     debug: true
   },
   staging: {
     baseUrl: 'https://staging-api.example.com',
-    apiKey: 'staging-api-key',
+    apiKey: '{{API_KEY}}',
     timeout: 10000,
     debug: false
   },
   production: {
     baseUrl: 'https://api.example.com',
-    apiKey: 'prod-api-key',
+    apiKey: '{{API_KEY}}',
     timeout: 30000,
     debug: false
   }

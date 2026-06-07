@@ -8,6 +8,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 
 import path from 'path';
+import { readFile, writeFile } from 'node:fs/promises';
 
 // Import our Bruno modules
 import { createCollectionManager } from './bruno/collection.js';
@@ -28,6 +29,8 @@ import {
   AuthType,
   BodyType
 } from './bruno/types.js';
+import { findCollectionRoot, detectFormat } from './bruno/format-detector.js';
+import { createWriter } from './bruno/format-factory.js';
 
 export class BrunoMcpServer {
   private server: McpServer;
@@ -111,7 +114,8 @@ export class BrunoMcpServer {
           description: z.string().optional(),
           baseUrl: z.string().url().optional(),
           outputPath: z.string().min(1, 'Output path is required'),
-          ignore: z.array(z.string()).optional()
+          ignore: z.array(z.string()).optional(),
+          format: z.enum(['yaml', 'bru']).optional().default('yaml')
         }
       },
       async (args) => {
@@ -129,7 +133,8 @@ export class BrunoMcpServer {
             description: args.description,
             baseUrl: args.baseUrl,
             outputPath: args.outputPath,
-            ignore: args.ignore
+            ignore: args.ignore,
+            format: args.format as 'yaml' | 'bru',
           };
 
           const result = await this.collectionManager.createCollection(input);
@@ -245,7 +250,7 @@ export class BrunoMcpServer {
       'create_request',
       {
         title: 'Create Bruno Request',
-        description: 'Generate .bru request files for API testing',
+        description: 'Generate request files for API testing (supports .bru and .yml formats)',
         inputSchema: {
           collectionPath: z.string().min(1, 'Collection path is required'),
           name: z.string().min(1, 'Request name is required'),
@@ -354,6 +359,7 @@ export class BrunoMcpServer {
       },
       async (args) => {
         try {
+          // 1. Path validation (traversal + null bytes)
           const pathCheck = this.validateToolPath(args.bruFilePath);
           if (!pathCheck.valid) {
             return {
@@ -362,14 +368,70 @@ export class BrunoMcpServer {
             };
           }
 
+          // 2. Script content validation
+          if (args.script.length > 50_000) {
+            return {
+              content: [{ type: 'text', text: 'Script exceeds maximum size limit of 50KB' }],
+              isError: true,
+            };
+          }
+          if (args.script.includes('\x00')) {
+            return {
+              content: [{ type: 'text', text: 'Script contains null bytes' }],
+              isError: true,
+            };
+          }
+
+          // 3. File extension validation
+          const ext = path.extname(args.bruFilePath).toLowerCase();
+          if (ext !== '.bru' && ext !== '.yml') {
+            return {
+              content: [{ type: 'text', text: `Invalid file extension "${ext}": expected .bru or .yml` }],
+              isError: true,
+            };
+          }
+
+          // 4. Find collection root
+          const collectionRoot = await findCollectionRoot(args.bruFilePath);
+          if (!collectionRoot) {
+            return {
+              content: [{ type: 'text', text: 'Could not determine collection format: no opencollection.yml or bruno.json found within 10 parent directories' }],
+              isError: true,
+            };
+          }
+
+          // 5. Detect format
+          const detection = await detectFormat(collectionRoot);
+
+          // 6. Verify extension matches detected format
+          const expectedExt = detection.format === 'yaml' ? '.yml' : '.bru';
+          if (ext !== expectedExt) {
+            return {
+              content: [{ type: 'text', text: `File extension "${ext}" does not match collection format "${detection.format}" (expected "${expectedExt}")` }],
+              isError: true,
+            };
+          }
+
+          // 7. Read file content (also serves as existence check — ENOENT caught below)
+          // Note: read-modify-write is not atomic. Concurrent writes to the same file
+          // may lose data. Single-client MCP usage is safe; multi-client needs locking.
+          const content = await readFile(args.bruFilePath, 'utf-8');
+
+          // 8. Get format writer and inject script
+          const writer = createWriter(detection.format);
+          const updated = writer.injectScript(content, args.scriptType, args.script, 'append');
+
+          // 9. Write back
+          await writeFile(args.bruFilePath, updated);
+
+          // 10. Return success
           return {
             content: [
               {
                 type: 'text',
-                text: 'add_test_script is not yet implemented. Use create_request with inline scripts instead.'
+                text: `Successfully added ${args.scriptType} script to ${path.basename(args.bruFilePath)} (${detection.format} format)`
               }
-            ],
-            isError: true,
+            ]
           };
         } catch (error) {
           return {

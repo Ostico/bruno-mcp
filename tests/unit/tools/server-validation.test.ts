@@ -161,15 +161,15 @@ describe('write-tool path validation', () => {
       expect(response.content[0].text).toMatch(/bruFilePath/i);
     });
 
-    it('returns not-implemented error for valid paths', async () => {
+    it('validates script content for null bytes', async () => {
       const handler = getHandler(server, 'add_test_script');
       const response = await handler({
         bruFilePath: '/workspace/collection/request.bru',
         scriptType: 'tests',
-        script: 'bru.test("ok", () => {})',
+        script: 'bru.test("ok", () => {})\x00',
       });
       expect(response.isError).toBe(true);
-      expect(response.content[0].text).toMatch(/not yet implemented/i);
+      expect(response.content[0].text).toMatch(/null/i);
     });
   });
 

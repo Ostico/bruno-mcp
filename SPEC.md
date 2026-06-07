@@ -5,7 +5,7 @@
 **Name:** bruno-mcp  
 **Version:** 1.0.0  
 **License:** MIT  
-**Description:** MCP server for generating Bruno API testing files programmatically
+**Description:** MCP server for creating, managing, and executing Bruno API testing collections with dual format support
 
 ## Objectives
 
@@ -15,35 +15,42 @@ Build a TypeScript MCP (Model Context Protocol) server that enables the generati
 
 ```
 bruno-mcp/
-├── .gitignore                 # Node.js, TypeScript, Bruno files ✅
-├── README.md                  # Project documentation (pending)
-├── LICENSE                    # MIT License ✅
-├── SPEC.md                    # This specification file ✅
-├── package.json               # Dependencies and scripts ✅
-├── tsconfig.json              # TypeScript configuration ✅
+├── .gitignore
+├── README.md
+├── LICENSE
+├── SPEC.md
+├── package.json
+├── tsconfig.json
+├── jest.config.ts
 ├── src/
-│   ├── index.ts               # Main entry point (pending)
-│   ├── server.ts              # MCP server setup (pending)
-│   ├── bruno/
-│   │   ├── types.ts           # Bruno file type definitions (pending)
-│   │   ├── generator.ts       # BRU file generator (pending)
-│   │   ├── collection.ts      # Collection management (pending)
-│   │   ├── environment.ts     # Environment management (pending)
-│   │   └── request.ts         # Request builder (pending)
-│   └── tools/
-│       ├── createCollection.ts  # (pending)
-│       ├── createEnvironment.ts # (pending)
-│       ├── createRequest.ts     # (pending)
-│       └── addTest.ts           # (pending)
+│   ├── index.ts               # Main entry point & exports
+│   ├── server.ts              # MCP server (9 tools)
+│   ├── usebruno-lang.d.ts     # Type declarations for @usebruno/lang
+│   └── bruno/
+│       ├── types.ts             # TypeScript interfaces
+│       ├── collection.ts        # Collection management
+│       ├── environment.ts       # Environment management
+│       ├── request.ts           # Request builder (dual format)
+│       ├── bru-parser.ts        # .bru file parser/generator
+│       ├── yaml-parser.ts       # YAML request parser
+│       ├── yaml-generator.ts    # YAML file generator
+│       ├── format-detector.ts   # Auto-detect .bru vs .yml
+│       ├── format-factory.ts    # Format-aware read/write routing
+│       ├── generator.ts         # Legacy BRU generator
+│       ├── collection-stats.ts  # Collection analysis
+│       ├── request-executor.ts  # HTTP execution engine
+│       ├── test-runner.ts       # VM-sandboxed test runner
+│       ├── env-loader.ts        # Environment variable loader
+│       ├── workspace.ts         # Workspace resolver
+│       ├── list-collections-handler.ts
+│       ├── url-validator.ts     # SSRF protection
+│       ├── path-validator.ts    # Path traversal prevention
+│       └── response-wrapper.ts  # Response object builder
 ├── tests/
-│   ├── unit/                  # Jest/Vitest unit tests (pending)
-│   ├── integration/           # MCP protocol tests (pending)
-│   └── fixtures/              # Test data and sample APIs (pending)
-├── examples/                  # Sample collections for testing (pending)
-│   ├── jsonplaceholder/       # Basic CRUD operations
-│   ├── authentication/        # Auth examples
-│   └── complex-workflows/     # Multi-step scenarios
-└── dist/                      # Compiled TypeScript output
+│   ├── unit/                    # 363 unit tests
+│   └── fixtures/                # Test collections
+└── examples/
+    └── jsonplaceholder/         # Example collection
 ```
 
 ## Technical Stack
@@ -52,8 +59,10 @@ bruno-mcp/
 - **Runtime:** Node.js >=18.0.0
 - **MCP SDK:** @modelcontextprotocol/sdk
 - **Validation:** Zod
+- **YAML:** yaml
+- **Bruno Parser:** @usebruno/lang
 - **Testing:** Jest
-- **Build:** TypeScript Compiler
+- **Build:** tsup
 - **Transport:** stdio (for CLI usage)
 
 ## MCP Tools Specification
@@ -121,21 +130,20 @@ bruno-mcp/
 - Handles headers, body, and folder organization
 
 ### 4. `add_test_script`
-**Purpose:** Add pre-request and post-request scripts to existing .bru files
+**Purpose:** Add pre-request and post-request scripts to existing request files
 
 **Input Schema:**
 ```typescript
 {
-  bruFilePath: string;            // Path to existing .bru file
-  scriptType: 'pre-request' | 'post-response';
+  bruFilePath: string;            // Path to .bru or .yml request file
+  scriptType: 'pre-request' | 'post-response' | 'tests';
   script: string;                 // JavaScript test script
+  mode?: 'append' | 'replace';    // Default: 'append'
 }
 ```
 
 **Output:**
-- Adds test scripts to existing .bru files
-- Supports assertions and variable extraction
-- Uses Bruno's JavaScript scripting syntax
+- Reads existing file, injects script via format-aware parser, writes back. Supports both .bru and .yml formats.
 
 ### 5. `create_test_suite`
 **Purpose:** Generate comprehensive test collections
@@ -163,6 +171,47 @@ bruno-mcp/
 - Creates related requests with dependencies
 - Sets up data-driven testing scenarios
 - Generates comprehensive test workflows
+
+### 6. `list_collections`
+**Purpose:** Discover Bruno collections in a workspace
+
+**Input Schema:**
+```typescript
+{
+  workspacePath?: string;         // Path to workspace (optional)
+}
+```
+
+**Output:**
+- Discovers Bruno collections by scanning for `bruno.json` or `opencollection.yml` marker files.
+
+### 7. `get_collection_stats`
+**Purpose:** Analyze a Bruno collection and return summary statistics
+
+**Input Schema:**
+```typescript
+{
+  collectionPath: string;         // Path to collection directory
+}
+```
+
+**Output:**
+- Returns request count, methods breakdown, folders, environments, test coverage.
+
+### 8. `run_collection`
+**Purpose:** Execute requests in a Bruno collection
+
+**Input Schema:**
+```typescript
+{
+  collectionPath: string;         // Path to collection
+  environment?: string;           // Environment name
+  requestPath?: string;           // Single request path (optional)
+}
+```
+
+**Output:**
+- Executes HTTP requests with SSRF protection, runs test scripts in sandboxed VM, returns results with pass/fail counts.
 
 ## Bruno BRU File Format
 
@@ -269,10 +318,12 @@ tests {
 - [x] Test MCP server functionality and build process
 - [x] Create initial git commit with complete implementation
 
-### Phase 5: Testing & Validation (Optional)
-- [ ] Write unit tests for BRU generation and MCP tools
-- [ ] Test with MCP Inspector and Bruno CLI integration
-- [ ] Performance testing and optimization
+### Phase 5: Testing & Security ✅
+- [x] 363 unit tests across 16 test suites
+- [x] VM sandbox hardening (prototype chain, eval, Function blocked)
+- [x] SSRF protection (private IPs, cloud metadata, scheme blocking)
+- [x] Path traversal prevention in all tool handlers
+- [x] Dual format support (.bru and .yml auto-detection)
 
 ## Client Integration Support
 
@@ -295,11 +346,14 @@ The Bruno MCP Server supports integration with multiple AI clients:
 ## Key Features
 
 - **File Generation:** Create properly formatted .bru files
+- **Dual Format Support:** Auto-detection of .bru and .yml (opencollection) formats
 - **Environment Management:** Handle multiple environments with variables
 - **Authentication Support:** Bearer tokens, Basic auth, OAuth 2.0, API keys
 - **Test Scripting:** Pre/post request scripts with assertions
 - **Collection Organization:** Folder structure and request grouping
 - **Variable Interpolation:** {{variable}} syntax support
+- **Security Hardening:** SSRF protection, path traversal prevention, sandboxed test execution
+- **Request Execution:** Run collections with environment substitution and test assertions
 - **CLI Integration:** Works with Bruno CLI for test execution
 
 ## Dependencies
@@ -307,11 +361,14 @@ The Bruno MCP Server supports integration with multiple AI clients:
 ### Production Dependencies
 - `@modelcontextprotocol/sdk`: MCP protocol implementation
 - `zod`: Schema validation and type safety
+- `yaml`: YAML parsing and generation
+- `@usebruno/lang`: BRU markup language parser
 
 ### Development Dependencies
 - `typescript`: TypeScript compiler and language support
 - `@types/node`: Node.js type definitions
 - `jest` + `@types/jest` + `ts-jest`: Testing framework
+- `tsup`: Build bundler
 - `eslint` + `@typescript-eslint/*`: Code linting
 - `prettier`: Code formatting
 - `ts-node`: TypeScript execution for development

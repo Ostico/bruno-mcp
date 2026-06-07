@@ -1,11 +1,13 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 import { parseYamlRequest } from './yaml-parser.js';
+import { parseBruRequest } from './bru-parser.js';
 import { loadEnvironment, substitute } from './env-loader.js';
 import { TestRunner } from './test-runner.js';
 import { wrapFetchResponse } from './response-wrapper.js';
 import { validateUrl } from './url-validator.js';
 import type {
+  BruFile,
   YamlRequest,
   CollectionRunResult,
   RequestExecutionResult,
@@ -31,6 +33,7 @@ interface DiscoveryResult {
 const EXCLUDED_FILES = new Set([
   'folder.yml',
   'opencollection.yml',
+  'bruno.json',
 ]);
 
 const EXCLUDED_DIRS = new Set([
@@ -52,7 +55,7 @@ async function findYmlFilesRecursive(dirPath: string, results: string[]): Promis
 
     if (entry.isDirectory() && !EXCLUDED_DIRS.has(entry.name)) {
       await findYmlFilesRecursive(fullPath, results);
-    } else if (entry.isFile() && entry.name.endsWith('.yml')) {
+    } else if (entry.isFile() && (entry.name.endsWith('.yml') || entry.name.endsWith('.bru'))) {
       if (!EXCLUDED_FILES.has(entry.name.toLowerCase())) {
         results.push(fullPath);
       }
@@ -60,17 +63,50 @@ async function findYmlFilesRecursive(dirPath: string, results: string[]): Promis
   }
 }
 
+function bruFileToYamlRequest(bru: BruFile): YamlRequest {
+  const scripts: YamlRequest['runtime'] = { scripts: [] };
+  if (bru.script?.['pre-request']?.exec) {
+    scripts.scripts.push({ type: 'before-request', code: bru.script['pre-request'].exec.join('\n') });
+  }
+  if (bru.script?.['post-response']?.exec) {
+    scripts.scripts.push({ type: 'after-response', code: bru.script['post-response'].exec.join('\n') });
+  }
+  if (bru.tests?.exec) {
+    scripts.scripts.push({ type: 'after-response', code: bru.tests.exec.join('\n') });
+  }
+
+  const headers = bru.headers
+    ? Object.entries(bru.headers).map(([name, value]) => ({ name, value }))
+    : undefined;
+
+  const body = bru.body?.content ? { type: bru.body.type, data: bru.body.content } : undefined;
+
+  return {
+    info: { name: bru.meta.name, type: bru.meta.type, seq: bru.meta.seq },
+    http: { method: bru.http.method, url: bru.http.url, headers, body },
+    runtime: scripts.scripts.length > 0 ? scripts : undefined,
+    docs: bru.docs,
+  };
+}
+
 async function discoverRequests(dirPath: string): Promise<DiscoveryResult> {
-  const ymlFiles: string[] = [];
-  await findYmlFilesRecursive(dirPath, ymlFiles);
+  const requestFiles: string[] = [];
+  await findYmlFilesRecursive(dirPath, requestFiles);
 
   const requests: ParsedRequest[] = [];
   let parseErrors = 0;
 
-  for (const filePath of ymlFiles) {
+  for (const filePath of requestFiles) {
     try {
       const content = await readFile(filePath, 'utf-8');
-      const yaml = parseYamlRequest(content);
+      let yaml: YamlRequest;
+      if (filePath.endsWith('.yml')) {
+        yaml = parseYamlRequest(content);
+      } else if (filePath.endsWith('.bru')) {
+        yaml = bruFileToYamlRequest(parseBruRequest(content));
+      } else {
+        continue;
+      }
       requests.push({ yaml, filePath });
     } catch {
       parseErrors++;
@@ -247,7 +283,14 @@ export class RequestExecutor {
 
     if (options?.requestPath) {
       const content = await readFile(options.requestPath, 'utf-8');
-      const yaml = parseYamlRequest(content);
+      let yaml: YamlRequest;
+      if (options.requestPath.endsWith('.yml')) {
+        yaml = parseYamlRequest(content);
+      } else if (options.requestPath.endsWith('.bru')) {
+        yaml = bruFileToYamlRequest(parseBruRequest(content));
+      } else {
+        throw new Error(`Unsupported request file format: ${options.requestPath}`);
+      }
       requests = [{ yaml, filePath: options.requestPath }];
     } else {
       const discovery = await discoverRequests(collectionPath);

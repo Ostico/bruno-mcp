@@ -12,7 +12,7 @@ A clear and concise description of what the bug is.
 **To Reproduce**
 Steps to reproduce the behavior:
 1. MCP client used (e.g., Claude Desktop, VS Code extension)
-2. Tool called (e.g., create_collection, create_request)
+2. Tool called (e.g., create_collection, create_request, run_collection, list_collections)
 3. Parameters provided
 4. See error
 
@@ -20,7 +20,7 @@ Steps to reproduce the behavior:
 A clear and concise description of what you expected to happen.
 
 **Generated Output**
-If applicable, add the generated .bru files or error messages.
+If applicable, add the generated .bru/.yml files or error messages.
 
 **Environment:**
  - OS: [e.g. macOS, Windows, Linux]

@@ -1,6 +1,6 @@
 # Bruno MCP Server
 
-A Model Context Protocol (MCP) server for generating Bruno API testing files programmatically.
+A Model Context Protocol (MCP) server for creating, managing, and executing Bruno API testing collections. Supports both .bru and .yml (opencollection) formats with built-in security hardening.
 
 ## Overview
 
@@ -15,6 +15,10 @@ Bruno MCP Server enables you to create, manage, and generate Bruno API testing c
 - **📝 Test Scripts**: Add pre/post request scripts and assertions
 - **🔄 CRUD Operations**: Generate complete CRUD request sets
 - **📊 Collection Statistics**: Analyze existing collections
+- **📂 Dual Format Support**: `.bru` (legacy) and `.yml` (opencollection YAML) with auto-detection
+- **🔍 Collection Discovery**: `list_collections` tool to discover Bruno collections from workspace
+- **▶ Request Execution**: `run_collection` tool to execute requests and run tests
+- **🛡 Security Hardening**: SSRF protection, path traversal prevention, VM sandbox for test scripts
 
 ## Installation
 
@@ -185,24 +189,32 @@ Get statistics about a collection.
 **Parameters:**
 - `collectionPath` (string): Path to collection
 
+#### `list_collections`
+Discover Bruno collections in a workspace.
+
+**Parameters:**
+- `workspacePath` (string, optional): Path to workspace directory
+
+#### `run_collection`
+Execute API requests and run test scripts.
+
+**Parameters:**
+- `collectionPath` (string): Path to collection
+- `environment` (string, optional): Environment name
+- `requestPath` (string, optional): Run single request
+
 ## Generated File Structure
 
 ```
 my-collection/
-├── bruno.json              # Collection configuration
-├── environments/           # Environment files
-│   ├── development.bru
-│   ├── staging.bru
-│   └── production.bru
-├── auth/                   # Authentication requests
-│   ├── login.bru
-│   └── get-profile.bru
-└── users/                  # User management
-    ├── get-all-users.bru
-    ├── get-user-by-id.bru
-    ├── create-user.bru
-    ├── update-user.bru
-    └── delete-user.bru
+├── bruno.json              # BRU format collection config
+├── opencollection.yml      # YAML format collection config
+├── environments/
+│   ├── development.bru     # or .yml
+│   └── production.bru      # or .yml
+└── requests/
+    ├── get-users.bru       # BRU format request
+    └── create-user.yml     # YAML format request
 ```
 
 ## Bruno BRU File Format
@@ -246,21 +258,8 @@ tests {
 
 ## Testing
 
-### Run Unit Tests
 ```bash
-npm test
-```
-
-### Run Integration Tests
-```bash
-npm run test:integration
-```
-
-### Test with Bruno CLI
-```bash
-# Generate a collection first
-# Then run tests with Bruno CLI
-bruno-cli run ./collections/my-api-tests/
+npm test           # Run 363 unit tests
 ```
 
 ## Examples
@@ -268,8 +267,6 @@ bruno-cli run ./collections/my-api-tests/
 See the `examples/` directory for complete usage examples:
 
 - `examples/jsonplaceholder/` - JSONPlaceholder API testing
-- `examples/authentication/` - Authentication workflows  
-- `examples/complex-workflows/` - Multi-step API scenarios
 
 ## Development
 
@@ -277,23 +274,34 @@ See the `examples/` directory for complete usage examples:
 
 ```
 src/
-├── index.ts              # Main entry point
-├── server.ts             # MCP server implementation
-├── bruno/
-│   ├── types.ts          # TypeScript interfaces
-│   ├── generator.ts      # BRU file generator
-│   ├── collection.ts     # Collection management
-│   ├── environment.ts    # Environment management
-│   └── request.ts        # Request builder
-└── tools/                # Individual MCP tools
+├── index.ts                # Main entry point & exports
+├── server.ts               # MCP server (9 tools)
+└── bruno/
+    ├── types.ts             # TypeScript interfaces
+    ├── collection.ts        # Collection management
+    ├── environment.ts       # Environment management
+    ├── request.ts           # Request builder (dual format)
+    ├── bru-parser.ts        # .bru file parser/generator
+    ├── yaml-parser.ts       # YAML request parser
+    ├── yaml-generator.ts    # YAML file generator
+    ├── format-detector.ts   # Auto-detect .bru vs .yml
+    ├── format-factory.ts    # Format-aware read/write
+    ├── collection-stats.ts  # Collection analysis
+    ├── request-executor.ts  # HTTP execution engine
+    ├── test-runner.ts       # Sandboxed test runner
+    ├── env-loader.ts        # Environment variable loader
+    ├── workspace.ts         # Workspace resolver
+    ├── list-collections-handler.ts
+    ├── url-validator.ts     # SSRF protection
+    ├── path-validator.ts    # Path traversal prevention
+    └── response-wrapper.ts  # Response object builder
 ```
 
 ### Building
 
 ```bash
-npm run build      # Build TypeScript
-npm run dev        # Development mode
-npm run clean      # Clean build artifacts
+npm run build      # Build with tsup
+npm run typecheck   # TypeScript type checking
 ```
 
 ### Code Quality

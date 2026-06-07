@@ -167,6 +167,7 @@ export interface CreateCollectionInput {
   baseUrl?: string;
   outputPath: string;
   ignore?: string[];
+  format?: 'yaml' | 'bru';
 }
 
 // Environment creation input

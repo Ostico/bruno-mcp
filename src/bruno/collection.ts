@@ -10,8 +10,12 @@ import {
   CreateCollectionInput,
   FileOperationResult,
   BrunoError,
-  BruFileError
+  BruFileError,
+  YamlCollection,
 } from './types.js';
+import { generateYamlCollection } from './yaml-generator.js';
+import { detectFormat } from './format-detector.js';
+import { parseYamlCollection } from './yaml-parser.js';
 
 export class CollectionManager {
   
@@ -23,20 +27,37 @@ export class CollectionManager {
       // Validate input
       this.validateCollectionInput(input);
 
+      // Determine format — default to 'yaml'
+      const format = input.format || 'yaml';
+
       // Create collection directory
       const collectionPath = join(input.outputPath, input.name);
       await this.ensureDirectory(collectionPath);
 
-      // Create bruno.json configuration
-      const brunoConfig: BrunoCollection = {
-        version: '1',
-        name: input.name,
-        type: 'collection',
-        ignore: input.ignore || ['node_modules', '.git', '.env']
-      };
+      if (format === 'bru') {
+        // Create bruno.json configuration (legacy BRU format)
+        const brunoConfig: BrunoCollection = {
+          version: '1',
+          name: input.name,
+          type: 'collection',
+          ignore: input.ignore || ['node_modules', '.git', '.env']
+        };
 
-      const configPath = join(collectionPath, 'bruno.json');
-      await fs.writeFile(configPath, JSON.stringify(brunoConfig, null, 2));
+        const configPath = join(collectionPath, 'bruno.json');
+        await fs.writeFile(configPath, JSON.stringify(brunoConfig, null, 2));
+      } else {
+        // Create opencollection.yml (YAML format — default)
+        const yamlCollection: YamlCollection = {
+          opencollection: '1',
+          info: {
+            name: input.name,
+          },
+        };
+
+        const yamlContent = generateYamlCollection(yamlCollection);
+        const configPath = join(collectionPath, 'opencollection.yml');
+        await fs.writeFile(configPath, yamlContent);
+      }
 
       // Create environments directory
       const envPath = join(collectionPath, 'environments');
@@ -71,10 +92,27 @@ export class CollectionManager {
    */
   async loadCollection(collectionPath: string): Promise<BrunoCollection> {
     try {
+      const detection = await detectFormat(collectionPath);
+
+      if (detection.format === 'yaml') {
+        const configPath = join(collectionPath, 'opencollection.yml');
+        const configContent = await fs.readFile(configPath, 'utf-8');
+        const yamlCol = parseYamlCollection(configContent);
+        // Map YamlCollection fields to BrunoCollection shape
+        const config: BrunoCollection = {
+          version: yamlCol.opencollection,
+          name: yamlCol.info.name,
+          type: 'collection',
+          ignore: yamlCol.extensions?.bruno?.ignore ?? [],
+        };
+        this.validateCollectionConfig(config);
+        return config;
+      }
+
       const configPath = join(collectionPath, 'bruno.json');
       const configContent = await fs.readFile(configPath, 'utf-8');
       const config = JSON.parse(configContent) as BrunoCollection;
-      
+
       this.validateCollectionConfig(config);
       return config;
 
@@ -90,14 +128,26 @@ export class CollectionManager {
    * Update collection configuration
    */
   async updateCollection(
-    collectionPath: string, 
+    collectionPath: string,
     updates: Partial<BrunoCollection>
   ): Promise<FileOperationResult> {
     try {
       const existingConfig = await this.loadCollection(collectionPath);
       const updatedConfig = { ...existingConfig, ...updates };
-      
+
       this.validateCollectionConfig(updatedConfig);
+
+      const detection = await detectFormat(collectionPath);
+      if (detection.format === 'yaml') {
+        const yamlCollection: YamlCollection = {
+          opencollection: updatedConfig.version,
+          info: { name: updatedConfig.name },
+        };
+        const yamlContent = generateYamlCollection(yamlCollection);
+        const configPath = join(collectionPath, 'opencollection.yml');
+        await fs.writeFile(configPath, yamlContent);
+        return { success: true, path: configPath };
+      }
 
       const configPath = join(collectionPath, 'bruno.json');
       await fs.writeFile(configPath, JSON.stringify(updatedConfig, null, 2));
@@ -315,8 +365,10 @@ Created on: ${new Date().toISOString()}
     await fs.writeFile(readmePath, readmeContent);
   }
 
+  private static readonly EXCLUDED_YML = new Set(['opencollection.yml', 'folder.yml']);
+
   /**
-   * Recursively find all .bru files
+   * Recursively find all .bru and .yml request files
    */
   private async findBruFiles(dirPath: string, bruFiles: string[]): Promise<void> {
     const entries = await fs.readdir(dirPath, { withFileTypes: true });
@@ -324,9 +376,9 @@ Created on: ${new Date().toISOString()}
     for (const entry of entries) {
       const fullPath = join(dirPath, entry.name);
 
-      if (entry.isDirectory() && entry.name !== 'node_modules' && entry.name !== '.git') {
+      if (entry.isDirectory() && entry.name !== 'node_modules' && entry.name !== '.git' && entry.name !== 'environments') {
         await this.findBruFiles(fullPath, bruFiles);
-      } else if (entry.isFile() && entry.name.endsWith('.bru')) {
+      } else if (entry.isFile() && (entry.name.endsWith('.bru') || (entry.name.endsWith('.yml') && !CollectionManager.EXCLUDED_YML.has(entry.name)))) {
         bruFiles.push(fullPath);
       }
     }
@@ -360,8 +412,8 @@ Created on: ${new Date().toISOString()}
       const entries = await fs.readdir(envPath, { withFileTypes: true });
       
       return entries
-        .filter(entry => entry.isFile() && entry.name.endsWith('.bru'))
-        .map(entry => entry.name.replace('.bru', ''))
+        .filter(entry => entry.isFile() && (entry.name.endsWith('.bru') || entry.name.endsWith('.yml')))
+        .map(entry => entry.name.replace(/\.(bru|yml)$/, ''))
         .sort();
 
     } catch {

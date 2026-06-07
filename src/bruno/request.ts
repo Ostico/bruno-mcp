@@ -7,6 +7,10 @@ import { promises as fs } from 'fs';
 import { join, dirname } from 'path';
 import {
   BruFile,
+  BruAuth,
+  YamlRequest,
+  YamlHeader,
+  YamlAuth,
   CreateRequestInput,
   FileOperationResult,
   BrunoError,
@@ -15,7 +19,10 @@ import {
   AuthType,
   BodyType
 } from './types.js';
-import { generateBruFile } from './generator.js';
+import { detectFormat } from './format-detector.js';
+import { generateYamlRequest } from './yaml-generator.js';
+import { parseBruRequest, generateBruRequest } from './bru-parser.js';
+import { parseYamlRequest } from './yaml-parser.js';
 
 export class RequestBuilder {
 
@@ -27,23 +34,26 @@ export class RequestBuilder {
       // Validate input
       this.validateRequestInput(input);
 
-      // Build BRU file structure
-      const bruFile = this.buildBruFile(input);
+      // Detect collection format
+      const detection = await detectFormat(input.collectionPath);
 
-      // Determine file path
-      const filePath = this.getRequestFilePath(input);
-
-      // Ensure directory exists
-      await this.ensureDirectory(dirname(filePath));
-
-      // Generate and write BRU file
-      const bruContent = generateBruFile(bruFile);
-      await fs.writeFile(filePath, bruContent);
-
-      return {
-        success: true,
-        path: filePath
-      };
+      if (detection.format === 'yaml') {
+        // Build YAML request and write .yml file
+        const yamlRequest = this.buildYamlRequest(input);
+        const filePath = this.getRequestFilePath(input, '.yml');
+        await this.ensureDirectory(dirname(filePath));
+        const yamlContent = generateYamlRequest(yamlRequest);
+        await fs.writeFile(filePath, yamlContent);
+        return { success: true, path: filePath };
+      } else {
+        // Build BRU file structure and write .bru file
+        const bruFile = this.buildBruFile(input);
+        const filePath = this.getRequestFilePath(input, '.bru');
+        await this.ensureDirectory(dirname(filePath));
+        const bruContent = generateBruRequest(bruFile);
+        await fs.writeFile(filePath, bruContent);
+        return { success: true, path: filePath };
+      }
 
     } catch (error) {
       return {
@@ -54,12 +64,67 @@ export class RequestBuilder {
   }
 
   /**
-   * Load an existing .bru request file
+   * Load an existing .bru or .yml request file
    */
   async loadRequest(filePath: string): Promise<BruFile> {
     try {
       const content = await fs.readFile(filePath, 'utf-8');
-      return this.parseBruFile(content);
+
+      if (filePath.endsWith('.yml')) {
+        const yamlReq = parseYamlRequest(content);
+        const bruFile: BruFile = {
+          meta: {
+            name: yamlReq.info.name,
+            type: (yamlReq.info.type as 'http' | 'graphql') || 'http',
+            seq: yamlReq.info.seq,
+          },
+          http: {
+            method: yamlReq.http.method as HttpMethod,
+            url: yamlReq.http.url,
+            body: (yamlReq.http.body?.type as BodyType) || 'none',
+            auth: this.resolveAuthType(yamlReq.http.auth),
+          },
+        };
+
+        if (yamlReq.http.headers && yamlReq.http.headers.length > 0) {
+          bruFile.headers = {};
+          for (const h of yamlReq.http.headers) {
+            bruFile.headers[h.name] = h.value;
+          }
+        }
+
+        if (yamlReq.http.body && yamlReq.http.body.type !== 'none') {
+          bruFile.body = {
+            type: yamlReq.http.body.type as BodyType,
+            content: typeof yamlReq.http.body.data === 'string' ? yamlReq.http.body.data : undefined,
+          };
+        }
+
+        if (yamlReq.http.auth && typeof yamlReq.http.auth !== 'string') {
+          bruFile.auth = yamlReq.http.auth as BruAuth;
+        }
+
+        if (yamlReq.runtime?.scripts && yamlReq.runtime.scripts.length > 0) {
+          bruFile.script = {};
+          for (const s of yamlReq.runtime.scripts) {
+            if (s.type === 'before-request') {
+              bruFile.script['pre-request'] = { exec: s.code.split('\n') };
+            } else if (s.type === 'after-response') {
+              bruFile.script['post-response'] = { exec: s.code.split('\n') };
+            }
+          }
+        }
+
+        if (yamlReq.docs) {
+          bruFile.docs = yamlReq.docs;
+        }
+
+        return bruFile;
+      } else if (filePath.endsWith('.bru')) {
+        return this.parseBruFile(content);
+      }
+
+      throw new BrunoError(`Unsupported file extension: ${filePath}`, 'VALIDATION_ERROR');
 
     } catch (error) {
       throw new BruFileError(
@@ -74,15 +139,40 @@ export class RequestBuilder {
    */
   async updateRequest(filePath: string, updates: Partial<CreateRequestInput>): Promise<FileOperationResult> {
     try {
-      // Load existing request
-      const existingBru = await this.loadRequest(filePath);
+      if (filePath.endsWith('.yml')) {
+        const content = await fs.readFile(filePath, 'utf-8');
+        const yamlReq = parseYamlRequest(content);
 
-      // Apply updates
-      const updatedBru = this.applyUpdates(existingBru, updates);
+        if (updates.name) yamlReq.info.name = updates.name;
+        if (updates.method) yamlReq.http.method = updates.method;
+        if (updates.url) yamlReq.http.url = updates.url;
+        if (updates.headers) {
+          yamlReq.http.headers = Object.entries(updates.headers).map(
+            ([name, value]): YamlHeader => ({ name, value }),
+          );
+        }
+        if (updates.body && updates.body.type !== 'none') {
+          yamlReq.http.body = { type: updates.body.type, data: updates.body.content };
+        }
+        if (updates.auth && updates.auth.type !== 'none') {
+          const authObj: Record<string, unknown> = { type: updates.auth.type };
+          if (updates.auth.config) Object.assign(authObj, updates.auth.config);
+          yamlReq.http.auth = authObj as YamlAuth;
+        }
 
-      // Generate and write updated content
-      const bruContent = generateBruFile(updatedBru);
-      await fs.writeFile(filePath, bruContent);
+        const updatedContent = generateYamlRequest(yamlReq);
+        await fs.writeFile(filePath, updatedContent);
+      } else if (filePath.endsWith('.bru')) {
+        // Load existing BRU request
+        const existingBru = await this.loadRequest(filePath);
+
+        // Apply updates
+        const updatedBru = this.applyUpdates(existingBru, updates);
+
+        // Generate and write updated content
+        const bruContent = generateBruRequest(updatedBru);
+        await fs.writeFile(filePath, bruContent);
+      }
 
       return {
         success: true,
@@ -329,15 +419,78 @@ export class RequestBuilder {
   }
 
   /**
+   * Build a YamlRequest from CreateRequestInput
+   */
+  private buildYamlRequest(input: CreateRequestInput): YamlRequest {
+    const yamlRequest: YamlRequest = {
+      info: {
+        name: input.name,
+        type: 'http',
+        seq: input.sequence,
+      },
+      http: {
+        method: input.method,
+        url: input.url,
+      },
+    };
+
+    // Add headers
+    if (input.headers && Object.keys(input.headers).length > 0) {
+      yamlRequest.http.headers = Object.entries(input.headers).map(
+        ([name, value]): YamlHeader => ({ name, value }),
+      );
+    }
+
+    // Add body
+    if (input.body && input.body.type !== 'none') {
+      yamlRequest.http.body = {
+        type: input.body.type,
+        data: input.body.content,
+      };
+    }
+
+    // Add query params
+    if (input.query && Object.keys(input.query).length > 0) {
+      yamlRequest.http.params = Object.entries(input.query).map(
+        ([name, value]) => ({ name, value: String(value), type: 'query' as const }),
+      );
+    }
+
+    // Add auth
+    if (input.auth && input.auth.type !== 'none') {
+      const authObj: Record<string, unknown> = { type: input.auth.type };
+      if (input.auth.type === 'bearer' && input.auth.config.token) {
+        authObj.token = input.auth.config.token;
+      } else if (input.auth.type === 'basic') {
+        if (input.auth.config.username) authObj.username = input.auth.config.username;
+        if (input.auth.config.password) authObj.password = input.auth.config.password;
+      } else if (input.auth.type === 'api-key') {
+        if (input.auth.config.key) authObj.key = input.auth.config.key;
+        if (input.auth.config.value) authObj.value = input.auth.config.value;
+        if (input.auth.config.in) authObj.in = input.auth.config.in;
+      }
+      yamlRequest.http.auth = authObj as YamlAuth;
+    }
+
+    return yamlRequest;
+  }
+
+  /**
    * Get file path for request
    */
-  private getRequestFilePath(input: CreateRequestInput): string {
-    const fileName = this.sanitizeFileName(input.name) + '.bru';
-    
+  private resolveAuthType(auth: YamlAuth | undefined): AuthType {
+    if (!auth) return 'none';
+    if (typeof auth === 'string') return auth === 'inherit' ? 'none' : auth as AuthType;
+    return (auth.type as AuthType) ?? 'none';
+  }
+
+  private getRequestFilePath(input: CreateRequestInput, extension: string): string {
+    const fileName = this.sanitizeFileName(input.name) + extension;
+
     if (input.folder) {
       return join(input.collectionPath, input.folder, fileName);
     }
-    
+
     return join(input.collectionPath, fileName);
   }
 
@@ -353,51 +506,8 @@ export class RequestBuilder {
       .trim();
   }
 
-  /**
-   * Parse BRU file content (basic implementation)
-   */
   private parseBruFile(content: string): BruFile {
-    // This is a simplified parser - in a production environment,
-    // you'd want a more robust BRU parser
-    const bruFile: BruFile = {
-      meta: {
-        name: 'Parsed Request',
-        type: 'http'
-      },
-      http: {
-        method: 'GET',
-        url: '',
-        body: 'none',
-        auth: 'none'
-      }
-    };
-
-    // Extract meta information
-    const metaMatch = content.match(/meta\s*\{([^}]*)\}/s);
-    if (metaMatch) {
-      const metaContent = metaMatch[1];
-      const nameMatch = metaContent.match(/name:\s*'([^']*)'|name:\s*([^\n]*)/);
-      if (nameMatch) {
-        bruFile.meta.name = nameMatch[1] || nameMatch[2].trim();
-      }
-    }
-
-    // Extract HTTP method and URL
-    const httpMethods = ['get', 'post', 'put', 'delete', 'patch', 'head', 'options'];
-    for (const method of httpMethods) {
-      const methodMatch = content.match(new RegExp(`${method}\\s*\\{([^}]*)\\}`, 's'));
-      if (methodMatch) {
-        bruFile.http.method = method.toUpperCase() as HttpMethod;
-        const httpContent = methodMatch[1];
-        const urlMatch = httpContent.match(/url:\s*'([^']*)'|url:\s*([^\n]*)/);
-        if (urlMatch) {
-          bruFile.http.url = urlMatch[1] || urlMatch[2].trim();
-        }
-        break;
-      }
-    }
-
-    return bruFile;
+    return parseBruRequest(content);
   }
 
   /**
