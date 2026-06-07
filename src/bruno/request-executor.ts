@@ -179,10 +179,12 @@ async function executeSingleRequest(
     };
   }
 
-  // Apply timeout from YAML settings or default 30s
-  // Use ?? instead of || so that timeout: 0 is respected (disables timeout)
+  // timeout: 0 means "no timeout" in Bruno; omit signal entirely
   const timeout = yaml.settings?.timeout ?? 30000;
-  const fetchOpts = { ...options, redirect: 'manual' as RequestRedirect, signal: AbortSignal.timeout(timeout) };
+  const fetchOpts: RequestInit = { ...options, redirect: 'manual' as RequestRedirect };
+  if (timeout > 0) {
+    fetchOpts.signal = AbortSignal.timeout(timeout);
+  }
 
   const startTime = Date.now();
 

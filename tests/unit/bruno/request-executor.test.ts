@@ -931,7 +931,7 @@ http:
   // =========================================================================
 
   describe('timeout nullish coalescing fix', () => {
-    it('should use timeout: 0 as-is and not replace it with 30000', async () => {
+    it('should use timeout: 0 as no-timeout (omit AbortSignal)', async () => {
       const ZERO_TIMEOUT_REQUEST = `
 info:
   name: Zero Timeout
@@ -947,18 +947,14 @@ settings:
       setupFsReadFile({ 'Zero Timeout.yml': ZERO_TIMEOUT_REQUEST });
       setupFsStat(['/test-collection']);
 
-      // Spy on AbortSignal.timeout to capture the value passed
-      const originalAbortTimeout = AbortSignal.timeout.bind(AbortSignal);
       const abortTimeoutSpy = jest.spyOn(AbortSignal, 'timeout');
-      abortTimeoutSpy.mockImplementation(originalAbortTimeout);
 
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
 
       await RequestExecutor.executeCollection('/test-collection');
 
-      // AbortSignal.timeout must have been called with 0, NOT 30000
-      expect(abortTimeoutSpy).toHaveBeenCalledWith(0);
-      expect(abortTimeoutSpy).not.toHaveBeenCalledWith(30000);
+      // timeout: 0 means no timeout — AbortSignal.timeout should NOT be called
+      expect(abortTimeoutSpy).not.toHaveBeenCalled();
 
       abortTimeoutSpy.mockRestore();
     });
