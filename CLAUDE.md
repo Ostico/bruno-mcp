@@ -1,3 +1,7 @@
+## Git
+
+Do not add Co-Authored-By trailers to commit messages.
+
 # Memory-First Protocol
 <!-- signet-first-version: 2.0.4 -->
 

@@ -207,7 +207,7 @@ describe('WorkspaceResolver', () => {
       });
 
       it('should return empty array on invalid YAML content', async () => {
-        mockReadFile.mockResolvedValueOnce('{{{{invalid yaml}}}}');
+        mockReadFile.mockResolvedValueOnce('not: valid\ncollections: nope');
 
         const result = await resolver.resolve('/test/workspace.yml');
 
