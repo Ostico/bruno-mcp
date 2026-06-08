@@ -1,6 +1,6 @@
 {
   "name": "bruno-mcp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "MCP server for generating Bruno API testing files",
   "main": "dist/index.js",
   "type": "module",
@@ -51,10 +51,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/macarthy/bruno-mcp.git"
+    "url": "git+https://github.com/Ostico/bruno-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/macarthy/bruno-mcp/issues"
+    "url": "https://github.com/Ostico/bruno-mcp/issues"
   },
-  "homepage": "https://github.com/macarthy/bruno-mcp#readme"
+  "homepage": "https://github.com/Ostico/bruno-mcp#readme"
 }

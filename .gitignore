@@ -1,5 +1,7 @@
 .*
 !.gitignore
+!.github
+!.github/**
 # Dependencies
 node_modules/
 npm-debug.log*
