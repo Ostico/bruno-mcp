@@ -608,7 +608,6 @@ export class BrunoMcpServer {
           dependencies: z.array(z.object({
             from: z.string(),
             to: z.string(),
-            variable: z.string()
           })).optional()
         }
       },
@@ -622,6 +621,8 @@ export class BrunoMcpServer {
             };
           }
 
+          // Map request names to their created file paths
+          const nameToPath: Map<string, string> = new Map();
           const results = [];
 
           for (let i = 0; i < args.requests.length; i++) {
@@ -646,6 +647,31 @@ export class BrunoMcpServer {
 
             const result = await this.requestBuilder.createRequest(input);
             results.push(result);
+            if (result.success && result.path) {
+              nameToPath.set(req.name, result.path);
+            }
+          }
+
+          // Apply dependency ordering if dependencies are provided
+          if (args.dependencies && args.dependencies.length > 0) {
+            const requestNames = args.requests.map(r => r.name);
+            const sortResult = this.topologicalSort(requestNames, args.dependencies);
+
+            if (sortResult.error) {
+              return {
+                content: [{ type: 'text', text: sortResult.error }],
+                isError: true,
+              };
+            }
+
+            // Update seq values based on topological order
+            for (let i = 0; i < sortResult.order!.length; i++) {
+              const name = sortResult.order![i];
+              const filePath = nameToPath.get(name);
+              if (filePath) {
+                await this.requestBuilder.updateRequest(filePath, { sequence: i + 1 });
+              }
+            }
           }
 
           const successCount = results.filter(r => r.success).length;
@@ -672,6 +698,63 @@ export class BrunoMcpServer {
         }
       }
     );
+  }
+
+  /**
+   * Topological sort using Kahn's algorithm.
+   * Returns ordered names or an error if a cycle is detected.
+   */
+  private topologicalSort(
+    names: string[],
+    dependencies: Array<{ from: string; to: string }>
+  ): { order?: string[]; error?: string } {
+    // Build adjacency list and in-degree map
+    const adjacency: Map<string, string[]> = new Map();
+    const inDegree: Map<string, number> = new Map();
+
+    for (const name of names) {
+      adjacency.set(name, []);
+      inDegree.set(name, 0);
+    }
+
+    for (const dep of dependencies) {
+      // "from" must run before "to", so from → to is an edge
+      const neighbors = adjacency.get(dep.from);
+      if (neighbors) {
+        neighbors.push(dep.to);
+      }
+      inDegree.set(dep.to, (inDegree.get(dep.to) || 0) + 1);
+    }
+
+    // Initialize queue with nodes that have no incoming edges
+    const queue: string[] = [];
+    for (const name of names) {
+      if (inDegree.get(name) === 0) {
+        queue.push(name);
+      }
+    }
+
+    const order: string[] = [];
+    while (queue.length > 0) {
+      const node = queue.shift()!;
+      order.push(node);
+
+      for (const neighbor of adjacency.get(node) || []) {
+        const newDegree = (inDegree.get(neighbor) || 1) - 1;
+        inDegree.set(neighbor, newDegree);
+        if (newDegree === 0) {
+          queue.push(neighbor);
+        }
+      }
+    }
+
+    if (order.length !== names.length) {
+      // Cycle detected — find the nodes involved
+      const cycleNodes = names.filter(n => !order.includes(n));
+      return { error: `Circular dependency detected between: ${cycleNodes.join(', ')}` };
+    }
+
+    return { order };
   }
 
   /**

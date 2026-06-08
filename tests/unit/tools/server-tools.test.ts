@@ -14,6 +14,7 @@ jest.mock('../../../src/bruno/request', () => ({
   createRequestBuilder: () => ({
     createRequest: jest.fn(),
     createCrudRequests: jest.fn(),
+    updateRequest: jest.fn(),
   }),
 }));
 jest.mock('../../../src/bruno/workspace', () => ({
@@ -235,6 +236,133 @@ describe('Server tool handlers', () => {
         requests: [{ name: 'A', method: 'GET', url: 'https://a.com' }],
       });
       expect(result.isError).toBe(true);
+    });
+
+    it('should order requests by linear dependency chain', async () => {
+      const createMock = getManagerMock(server, 'requestBuilder', 'createRequest');
+      createMock.mockImplementation(async (input: any) => ({
+        success: true,
+        path: `/col/suite/${input.name}.yml`,
+      }));
+      const updateMock = getManagerMock(server, 'requestBuilder', 'updateRequest');
+      updateMock.mockResolvedValue({ success: true });
+
+      const handler = getHandler(server, 'create_test_suite');
+      const result = await handler({
+        collectionPath: '/col',
+        suiteName: 'Dep Suite',
+        requests: [
+          { name: 'C', method: 'GET', url: 'https://c.com' },
+          { name: 'A', method: 'GET', url: 'https://a.com' },
+          { name: 'B', method: 'GET', url: 'https://b.com' },
+        ],
+        dependencies: [
+          { from: 'A', to: 'B' },
+          { from: 'B', to: 'C' },
+        ],
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain('3 requests');
+
+      // A=1, B=2, C=3
+      expect(updateMock).toHaveBeenCalledWith('/col/suite/A.yml', { sequence: 1 });
+      expect(updateMock).toHaveBeenCalledWith('/col/suite/B.yml', { sequence: 2 });
+      expect(updateMock).toHaveBeenCalledWith('/col/suite/C.yml', { sequence: 3 });
+    });
+
+    it('should detect circular dependencies and return error', async () => {
+      const createMock = getManagerMock(server, 'requestBuilder', 'createRequest');
+      createMock.mockImplementation(async (input: any) => ({
+        success: true,
+        path: `/col/suite/${input.name}.yml`,
+      }));
+
+      const handler = getHandler(server, 'create_test_suite');
+      const result = await handler({
+        collectionPath: '/col',
+        suiteName: 'Cycle Suite',
+        requests: [
+          { name: 'A', method: 'GET', url: 'https://a.com' },
+          { name: 'B', method: 'GET', url: 'https://b.com' },
+        ],
+        dependencies: [
+          { from: 'A', to: 'B' },
+          { from: 'B', to: 'A' },
+        ],
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Circular dependency detected');
+      expect(result.content[0].text).toContain('A');
+      expect(result.content[0].text).toContain('B');
+    });
+
+    it('should use positional ordering when no dependencies provided', async () => {
+      const createMock = getManagerMock(server, 'requestBuilder', 'createRequest');
+      createMock.mockResolvedValue({ success: true, path: '/col/test.yml' });
+      const updateMock = getManagerMock(server, 'requestBuilder', 'updateRequest');
+
+      const handler = getHandler(server, 'create_test_suite');
+      const result = await handler({
+        collectionPath: '/col',
+        suiteName: 'No Deps',
+        requests: [
+          { name: 'First', method: 'GET', url: 'https://first.com' },
+          { name: 'Second', method: 'GET', url: 'https://second.com' },
+        ],
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain('2 requests');
+      // updateRequest should NOT be called when there are no dependencies
+      expect(updateMock).not.toHaveBeenCalled();
+
+      // Verify positional seq was set in createRequest calls
+      expect(createMock).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'First', sequence: 1 }),
+      );
+      expect(createMock).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'Second', sequence: 2 }),
+      );
+    });
+
+    it('should handle partial dependencies (some requests without deps)', async () => {
+      const createMock = getManagerMock(server, 'requestBuilder', 'createRequest');
+      createMock.mockImplementation(async (input: any) => ({
+        success: true,
+        path: `/col/suite/${input.name}.yml`,
+      }));
+      const updateMock = getManagerMock(server, 'requestBuilder', 'updateRequest');
+      updateMock.mockResolvedValue({ success: true });
+
+      const handler = getHandler(server, 'create_test_suite');
+      const result = await handler({
+        collectionPath: '/col',
+        suiteName: 'Partial',
+        requests: [
+          { name: 'A', method: 'GET', url: 'https://a.com' },
+          { name: 'B', method: 'GET', url: 'https://b.com' },
+          { name: 'C', method: 'GET', url: 'https://c.com' },
+        ],
+        dependencies: [
+          { from: 'A', to: 'C' },
+        ],
+      });
+
+      expect(result.isError).toBeUndefined();
+      // All 3 should have updateRequest called with some seq
+      expect(updateMock).toHaveBeenCalledTimes(3);
+
+      // A must come before C
+      const calls = updateMock.mock.calls;
+      const seqByName: Record<string, number> = {};
+      for (const call of calls) {
+        const filePath: string = call[0];
+        const name = filePath.replace('/col/suite/', '').replace('.yml', '');
+        seqByName[name] = call[1].sequence;
+      }
+      expect(seqByName['A']).toBeLessThan(seqByName['C']);
     });
   });
 

@@ -144,6 +144,7 @@ export class RequestBuilder {
         const yamlReq = parseYamlRequest(content);
 
         if (updates.name) yamlReq.info.name = updates.name;
+        if (updates.sequence !== undefined) yamlReq.info.seq = updates.sequence;
         if (updates.method) yamlReq.http.method = updates.method;
         if (updates.url) yamlReq.http.url = updates.url;
         if (updates.headers) {
@@ -518,6 +519,10 @@ export class RequestBuilder {
 
     if (updates.name) {
       updated.meta.name = updates.name;
+    }
+
+    if (updates.sequence !== undefined) {
+      updated.meta.seq = updates.sequence;
     }
 
     if (updates.method) {
