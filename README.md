@@ -197,6 +197,33 @@ Generate request files (`.bru` or `.yml` based on collection format).
 
 > **Note:** `create_test_suite` supports a subset of auth types (`bearer`, `basic`, `oauth2`, `api-key`) and body types (`json`, `text`, `xml`, `form-data`, `form-urlencoded`). `digest` auth and `binary` body are only available in `create_request`.
 
+### `modify_request`
+Update an existing Bruno request file with partial-merge semantics. Only provided fields are updated; all other fields are preserved.
+
+**Parameters:**
+- `filePath` (string, required): Absolute path to `.bru` or `.yml` request file
+- `name` (string, optional): New request name
+- `method` (string, optional): New HTTP method (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS)
+- `url` (string, optional): New URL
+- `headers` (object, optional): Headers to merge (`Record<string, string>`)
+- `body` (object, optional): Request body -- same shape as `create_request` body
+- `auth` (object, optional): Authentication -- same shape as `create_request` auth
+- `query` (object, optional): Query parameters to merge (`Record<string, string | number | boolean>`)
+
+**Example:**
+```json
+{
+  "filePath": "/path/to/collections/my-api-tests/users/get-users.yml",
+  "url": "{{baseUrl}}/v2/users",
+  "headers": {
+    "X-Api-Version": "2"
+  },
+  "query": {
+    "limit": 50
+  }
+}
+```
+
 ### `create_crud_requests`
 Generate a complete set of CRUD operations (5 requests: List, Get, Create, Update, Delete).
 
@@ -494,7 +521,7 @@ npm test           # Run 518 unit tests (95%+ coverage)
 ```
 src/
 ├── index.ts                # Main entry point & exports
-├── server.ts               # MCP server (9 tools)
+├── server.ts               # MCP server (10 tools)
 └── bruno/
     ├── types.ts             # TypeScript interfaces
     ├── collection.ts        # Collection management

@@ -92,6 +92,7 @@ export class BrunoMcpServer {
     this.setupCreateCollectionTool();
     this.setupCreateEnvironmentTool();
     this.setupCreateRequestTool();
+    this.setupModifyRequestTool();
     this.setupAddTestScriptTool();
     this.setupCreateTestSuiteTool();
     this.setupCreateCrudRequestsTool();
@@ -333,6 +334,135 @@ export class BrunoMcpServer {
               {
                 type: 'text',
                 text: `❌ Error creating request: ${error instanceof Error ? error.message : 'Unknown error'}`
+              }
+            ],
+            isError: true
+          };
+        }
+      }
+    );
+  }
+
+  /**
+   * Tool: modify_request
+   */
+  private setupModifyRequestTool(): void {
+    this.server.registerTool(
+      'modify_request',
+      {
+        title: 'Modify Request',
+        description: 'Update an existing Bruno request file with partial-merge semantics. Only provided fields are updated; all other fields are preserved.',
+        inputSchema: {
+          filePath: z.string().min(1, 'File path is required'),
+          name: z.string().optional(),
+          method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']).optional(),
+          url: z.string().optional(),
+          headers: z.record(z.string()).optional(),
+          body: z.object({
+            type: z.enum(['none', 'json', 'text', 'xml', 'form-data', 'form-urlencoded', 'binary']),
+            content: z.string().optional(),
+            formData: z.array(z.object({
+              name: z.string(),
+              value: z.string(),
+              type: z.enum(['text', 'file']).optional()
+            })).optional()
+          }).optional(),
+          auth: z.object({
+            type: z.enum(['none', 'bearer', 'basic', 'oauth2', 'api-key', 'digest']),
+            config: z.record(z.string())
+          }).optional(),
+          query: z.record(z.union([z.string(), z.number(), z.boolean()])).optional()
+        }
+      },
+      async (args) => {
+        try {
+          // 1. Path validation (traversal + null bytes)
+          const pathCheck = this.validateToolPath(args.filePath);
+          if (!pathCheck.valid) {
+            return {
+              content: [{ type: 'text', text: `Invalid filePath: ${pathCheck.reason}` }],
+              isError: true,
+            };
+          }
+
+          // 2. File extension validation
+          const ext = path.extname(args.filePath).toLowerCase();
+          if (ext !== '.bru' && ext !== '.yml') {
+            return {
+              content: [{ type: 'text', text: `Invalid file extension "${ext}": expected .bru or .yml` }],
+              isError: true,
+            };
+          }
+
+          // 3. Find collection root
+          const collectionRoot = await findCollectionRoot(args.filePath);
+          if (!collectionRoot) {
+            return {
+              content: [{ type: 'text', text: 'Could not determine collection format: no opencollection.yml or bruno.json found within 10 parent directories' }],
+              isError: true,
+            };
+          }
+
+          // 4. Detect format and verify extension matches
+          const detection = await detectFormat(collectionRoot);
+          const expectedExt = detection.format === 'yaml' ? '.yml' : '.bru';
+          if (ext !== expectedExt) {
+            return {
+              content: [{ type: 'text', text: `File extension "${ext}" does not match collection format "${detection.format}" (expected "${expectedExt}")` }],
+              isError: true,
+            };
+          }
+
+          // 5. Build partial update input from provided fields
+          const updates: Partial<CreateRequestInput> = {};
+          if (args.name !== undefined) updates.name = args.name;
+          if (args.method !== undefined) updates.method = args.method as HttpMethod;
+          if (args.url !== undefined) updates.url = args.url;
+          if (args.headers !== undefined) updates.headers = args.headers;
+          if (args.body !== undefined) {
+            updates.body = {
+              type: args.body.type as BodyType,
+              content: args.body.content,
+              formData: args.body.formData,
+            };
+          }
+          if (args.auth !== undefined) {
+            updates.auth = {
+              type: args.auth.type as AuthType,
+              config: args.auth.config,
+            };
+          }
+          if (args.query !== undefined) updates.query = args.query;
+
+          // 6. Call updateRequest with partial merge
+          const result = await this.requestBuilder.updateRequest(args.filePath, updates);
+
+          if (result.success) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `Successfully modified request "${path.basename(args.filePath)}"`
+                }
+              ]
+            };
+          } else {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `Failed to modify request: ${result.error}`
+                }
+              ],
+              isError: true
+            };
+          }
+        } catch (error) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Error modifying request: ${error instanceof Error ? error.message : 'Unknown error'}`
               }
             ],
             isError: true
