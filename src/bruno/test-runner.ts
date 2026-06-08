@@ -1,7 +1,7 @@
 import vm from 'node:vm';
-import { TestResult, TestRunnerOptions, MockResponseData, ScriptResult } from './types.js';
+import { TestResult, TestRunnerOptions, MockResponseData, MockRequestData, ScriptResult, PreRequestScriptResult, RequestMutations } from './types.js';
 
-export type { TestResult, ScriptResult } from './types.js';
+export type { TestResult, ScriptResult, PreRequestScriptResult } from './types.js';
 
 const DEFAULT_TIMEOUT = 5000;
 
@@ -270,7 +270,107 @@ var test = function(description, callback) {
 `;
 }
 
+/**
+ * JS source for req proxy and __reqMutations tracker, injected into pre-request sandbox.
+ * No test(), expect(), or res object — pre-request scripts only mutate the request.
+ */
+function buildPreRequestSandboxScript(requestData: MockRequestData): string {
+  const reqJson = JSON.stringify({
+    url: requestData.url,
+    method: requestData.method,
+    headers: requestData.headers,
+    body: requestData.body,
+  });
+
+  return `
+var __reqData = JSON.parse(${JSON.stringify(reqJson)});
+var __reqMutations = {};
+
+var req = Object.create(null);
+req.getUrl = function() { return __reqMutations.url !== undefined ? __reqMutations.url : __reqData.url; };
+req.getMethod = function() { return __reqData.method; };
+req.getHeaders = function() {
+  var h = {};
+  for (var k in __reqData.headers) { h[k] = __reqData.headers[k]; }
+  if (__reqMutations.headers) {
+    for (var k in __reqMutations.headers) { h[k] = __reqMutations.headers[k]; }
+  }
+  return h;
+};
+req.getHeader = function(name) {
+  if (__reqMutations.headers && __reqMutations.headers[name] !== undefined) {
+    return __reqMutations.headers[name];
+  }
+  return __reqData.headers[name] !== undefined ? __reqData.headers[name] : null;
+};
+req.getBody = function() { return __reqMutations.body !== undefined ? __reqMutations.body : __reqData.body; };
+req.setUrl = function(url) { __reqMutations.url = url; };
+req.setHeader = function(name, value) {
+  if (!__reqMutations.headers) { __reqMutations.headers = {}; }
+  __reqMutations.headers[name] = value;
+};
+req.setBody = function(body) { __reqMutations.body = body; };
+`;
+}
+
 export class TestRunner {
+  static async runPreRequestScript(
+    script: string,
+    request: MockRequestData,
+    options?: TestRunnerOptions,
+  ): Promise<PreRequestScriptResult> {
+    const timeout = options?.timeout ?? DEFAULT_TIMEOUT;
+
+    if (!script || script.trim().length === 0) {
+      return { variables: {}, mutations: {} };
+    }
+
+    const __bruVars: Record<string, unknown> = {};
+
+    const setupScript = buildPreRequestSandboxScript(request);
+    const fullScript = setupScript + '\n' + script;
+
+    const sandbox = Object.create(null);
+
+    sandbox.bru = Object.create(null);
+    sandbox.bru.setVar = (name: string, value: unknown): void => {
+      __bruVars[name] = value;
+    };
+    sandbox.bru.getVar = (name: string): unknown => {
+      return __bruVars[name];
+    };
+
+    try {
+      const vmScript = new vm.Script(fullScript, {
+        filename: 'bruno-pre-request-script.js',
+      });
+
+      const context = vm.createContext(sandbox, {
+        codeGeneration: { strings: false, wasm: false },
+      });
+
+      vmScript.runInContext(context, { timeout });
+
+      const mutations = vm.runInContext('__reqMutations', context) as RequestMutations;
+      return { variables: __bruVars, mutations: mutations || {} };
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? error.message : String(error);
+
+      const isTimeout =
+        message.includes('Script execution timed out') ||
+        message.includes('execution timed out');
+
+      return {
+        variables: __bruVars,
+        mutations: {},
+        error: isTimeout
+          ? `Script execution timed out after ${timeout}ms`
+          : `${(error as Error).constructor?.name ?? 'Error'}: ${message}`,
+      };
+    }
+  }
+
   static async runScript(
     script: string,
     response: MockResponseData,

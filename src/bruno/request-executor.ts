@@ -1,5 +1,5 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
-import { join, basename } from 'node:path';
+import { join, basename, relative, dirname } from 'node:path';
 import { parseYamlRequest } from './yaml-parser.js';
 import { parseBruRequest } from './bru-parser.js';
 import { loadEnvironment, substitute } from './env-loader.js';
@@ -7,9 +7,12 @@ import { TestRunner } from './test-runner.js';
 import { wrapFetchResponse } from './response-wrapper.js';
 import { validateUrl } from './url-validator.js';
 import { VariableStore } from './variable-store.js';
+import { buildDispatcher } from './fetch-dispatcher.js';
 import type {
   BruFile,
   YamlRequest,
+  YamlSettings,
+  MockRequestData,
   CollectionRunResult,
   RequestExecutionResult,
   TestResult,
@@ -19,6 +22,7 @@ interface ExecutionOptions {
   environment?: string;
   collectionRoot?: string;
   requestPath?: string;
+  parallel?: boolean;
 }
 
 interface ParsedRequest {
@@ -148,6 +152,16 @@ function buildFetchOptions(
   return { url, options };
 }
 
+function getBeforeRequestScript(yaml: YamlRequest): string | null {
+  if (!yaml.runtime?.scripts) return null;
+
+  const beforeScripts = yaml.runtime.scripts
+    .filter(s => s.type === 'before-request')
+    .map(s => s.code);
+
+  return beforeScripts.length > 0 ? beforeScripts.join('\n') : null;
+}
+
 function getAfterResponseScript(yaml: YamlRequest): string | null {
   if (!yaml.runtime?.scripts) return null;
 
@@ -166,9 +180,48 @@ async function executeSingleRequest(
   // Merge env vars with runtime vars (runtime takes precedence)
   const effectiveVars = variableStore ? variableStore.merge(vars) : vars;
 
-  const { url, options } = buildFetchOptions(yaml, effectiveVars);
+  let { url, options } = buildFetchOptions(yaml, effectiveVars);
   const name = yaml.info.name;
   const method = yaml.http.method;
+
+  // Run pre-request scripts (before fetch, may mutate url/headers/body)
+  const preScript = getBeforeRequestScript(yaml);
+  let preScriptError: string | undefined;
+  if (preScript) {
+    const mockReqData: MockRequestData = {
+      url,
+      method: options.method as string,
+      headers: { ...(options.headers as Record<string, string>) },
+      body: options.body ?? null,
+    };
+    const preResult = await TestRunner.runPreRequestScript(preScript, mockReqData, {
+      timeout: yaml.settings?.timeout ?? 5000,
+    });
+
+    // Apply mutations
+    if (preResult.mutations.url) {
+      url = preResult.mutations.url;
+    }
+    if (preResult.mutations.headers) {
+      Object.assign(options.headers as Record<string, string>, preResult.mutations.headers);
+    }
+    if (preResult.mutations.body !== undefined) {
+      options.body = typeof preResult.mutations.body === 'string'
+        ? preResult.mutations.body
+        : JSON.stringify(preResult.mutations.body);
+    }
+
+    // Feed variables into store
+    if (variableStore) {
+      for (const [k, v] of Object.entries(preResult.variables)) {
+        variableStore.set(k, v as string | number | boolean);
+      }
+    }
+
+    if (preResult.error) {
+      preScriptError = preResult.error;
+    }
+  }
 
   // SSRF protection: validate URL before making the request
   const urlCheck = validateUrl(url);
@@ -191,12 +244,22 @@ async function executeSingleRequest(
     fetchOpts.signal = AbortSignal.timeout(timeout);
   }
 
+  // Build custom dispatcher for TLS/proxy settings
+  const dispatcherResult = yaml.settings
+    ? await buildDispatcher(yaml.settings)
+    : undefined;
+
+  const fetchFn = dispatcherResult ? dispatcherResult.fetch : fetch;
+  if (dispatcherResult) {
+    (fetchOpts as any).dispatcher = dispatcherResult.dispatcher;
+  }
+
   const startTime = Date.now();
 
   const MAX_REDIRECTS = 10;
 
   try {
-    let response = await fetch(url, fetchOpts);
+    let response = await fetchFn(url, fetchOpts);
     let currentUrl = url;
     let redirectCount = 0;
 
@@ -221,7 +284,7 @@ async function executeSingleRequest(
         };
       }
 
-      response = await fetch(redirectUrl, fetchOpts);
+      response = await fetchFn(redirectUrl, fetchOpts);
       currentUrl = redirectUrl;
       redirectCount++;
     }
@@ -263,6 +326,7 @@ async function executeSingleRequest(
       status: response.status,
       duration_ms: durationMs,
       tests,
+      error: preScriptError,
     };
   } catch (error: unknown) {
     const durationMs = Date.now() - startTime;
@@ -324,13 +388,52 @@ export class RequestExecutor {
       parseErrors = discovery.parseErrors;
     }
 
-    // Create a fresh variable store per run for cross-request variable propagation
-    const variableStore = new VariableStore();
+    let results: RequestExecutionResult[];
 
-    const results: RequestExecutionResult[] = [];
-    for (const req of requests) {
-      const result = await executeSingleRequest(req.yaml, vars, variableStore);
-      results.push(result);
+    if (options?.parallel) {
+      // Group requests by folder (derived from file path relative to collectionPath)
+      const folderMap = new Map<string, ParsedRequest[]>();
+      for (const req of requests) {
+        const relPath = relative(collectionPath, req.filePath);
+        const folder = dirname(relPath) === '.' ? '' : dirname(relPath);
+        if (!folderMap.has(folder)) {
+          folderMap.set(folder, []);
+        }
+        folderMap.get(folder)!.push(req);
+      }
+
+      // Sort folder names alphabetically for deterministic merge order
+      const sortedFolders = [...folderMap.keys()].sort();
+
+      // Execute folders in parallel, serial within each folder
+      const folderResults = await Promise.allSettled(
+        sortedFolders.map(async (folder) => {
+          const folderRequests = folderMap.get(folder)!;
+          const folderStore = new VariableStore();
+          const folderRes: RequestExecutionResult[] = [];
+          for (const req of folderRequests) {
+            const result = await executeSingleRequest(req.yaml, vars, folderStore);
+            folderRes.push(result);
+          }
+          return folderRes;
+        }),
+      );
+
+      // Merge results in folder order
+      results = [];
+      for (const outcome of folderResults) {
+        if (outcome.status === 'fulfilled') {
+          results.push(...outcome.value);
+        }
+      }
+    } else {
+      // Serial execution (default)
+      const variableStore = new VariableStore();
+      results = [];
+      for (const req of requests) {
+        const result = await executeSingleRequest(req.yaml, vars, variableStore);
+        results.push(result);
+      }
     }
 
     const totalDuration = Date.now() - startTime;
