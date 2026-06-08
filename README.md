@@ -1,5 +1,8 @@
 # Bruno MCP Server
 
+> **Active fork** of [macarthy/bruno-mcp](https://github.com/macarthy/bruno-mcp) (original inactive since Jul 2025).
+> Maintained at [Ostico/bruno-mcp](https://github.com/Ostico/bruno-mcp) — see [announcement](https://github.com/macarthy/bruno-mcp/issues/4).
+
 A Model Context Protocol (MCP) server for creating, managing, and executing Bruno API testing collections. Supports both `.bru` and `.yml` (opencollection) formats with built-in security hardening.
 
 ## Why This MCP Server?
