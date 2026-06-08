@@ -150,6 +150,7 @@ export async function getCollectionStats(collectionPath: string): Promise<Collec
       seq,
       folder,
       hasTests: testsFound,
+      filePath,
     });
   }
 

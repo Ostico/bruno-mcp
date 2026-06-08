@@ -156,6 +156,25 @@ describe('run_collection tool', () => {
       );
     });
 
+    it('should pass directory requestPath to executor', async () => {
+      const mockResult = createSuccessResult(2, 2, 0);
+      mockedExecutor.executeCollection.mockResolvedValue(mockResult);
+
+      const tool = getRegisteredTool(server)!;
+      const response = await tool.handler({
+        collectionPath: '/path/to/collection',
+        requestPath: '/path/to/collection/subfolder',
+      });
+
+      expect(mockedExecutor.executeCollection).toHaveBeenCalledWith(
+        '/path/to/collection',
+        expect.objectContaining({ requestPath: '/path/to/collection/subfolder' }),
+      );
+
+      const parsed = JSON.parse(response.content[0].text);
+      expect(parsed.summary.total).toBe(2);
+    });
+
     it('should work without optional parameters', async () => {
       const mockResult = createSuccessResult(2, 2, 0);
       mockedExecutor.executeCollection.mockResolvedValue(mockResult);

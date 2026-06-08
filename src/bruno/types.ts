@@ -425,6 +425,7 @@ export interface RequestDetail {
   seq: number;
   folder: string;
   hasTests: boolean;
+  filePath?: string;
 }
 
 export interface CollectionStats {

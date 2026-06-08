@@ -97,6 +97,7 @@ export class BrunoMcpServer {
     this.setupCreateTestSuiteTool();
     this.setupCreateCrudRequestsTool();
     this.setupListCollectionsTool();
+    this.setupListRequestsTool();
     this.setupGetCollectionStatsTool();
     this.setupRunCollectionTool();
   }
@@ -114,7 +115,7 @@ export class BrunoMcpServer {
           name: z.string().min(1, 'Collection name is required'),
           description: z.string().optional(),
           baseUrl: z.string().url().optional(),
-          outputPath: z.string().min(1, 'Output path is required'),
+          outputPath: z.string().min(1, 'Output path is required').describe('Absolute path where the new collection directory will be created.'),
           ignore: z.array(z.string()).optional(),
           format: z.enum(['yaml', 'bru']).optional().default('yaml')
         }
@@ -185,7 +186,7 @@ export class BrunoMcpServer {
         title: 'Create Bruno Environment',
         description: 'Create environment configuration files for Bruno collection',
         inputSchema: {
-          collectionPath: z.string().min(1, 'Collection path is required'),
+          collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to existing collection directory.'),
           name: z.string().min(1, 'Environment name is required'),
           variables: z.record(z.union([z.string(), z.number(), z.boolean()]))
         }
@@ -253,7 +254,7 @@ export class BrunoMcpServer {
         title: 'Create Bruno Request',
         description: 'Generate request files for API testing (supports .bru and .yml formats)',
         inputSchema: {
-          collectionPath: z.string().min(1, 'Collection path is required'),
+          collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to existing collection directory.'),
           name: z.string().min(1, 'Request name is required'),
           method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']),
           url: z.string().min(1, 'URL is required'),
@@ -353,7 +354,7 @@ export class BrunoMcpServer {
         title: 'Modify Request',
         description: 'Update an existing Bruno request file with partial-merge semantics. Only provided fields are updated; all other fields are preserved.',
         inputSchema: {
-          filePath: z.string().min(1, 'File path is required'),
+          filePath: z.string().min(1, 'File path is required').describe('Absolute path to the .yml or .bru request file to modify. Get from list_requests or get_collection_stats.'),
           name: z.string().optional(),
           method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']).optional(),
           url: z.string().optional(),
@@ -482,7 +483,7 @@ export class BrunoMcpServer {
         title: 'Add Test Script',
         description: 'Add pre-request or post-response scripts to Bruno requests',
         inputSchema: {
-          bruFilePath: z.string().min(1, 'BRU file path is required'),
+          bruFilePath: z.string().min(1, 'BRU file path is required').describe('Absolute path to the .yml or .bru request file. Get from list_requests or get_collection_stats.'),
           scriptType: z.enum(['pre-request', 'post-response', 'tests']),
           script: z.string().min(1, 'Script content is required')
         }
@@ -588,7 +589,7 @@ export class BrunoMcpServer {
         title: 'Create Test Suite',
         description: 'Generate comprehensive test collections with multiple related requests',
         inputSchema: {
-          collectionPath: z.string().min(1, 'Collection path is required'),
+          collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to existing collection directory.'),
           suiteName: z.string().min(1, 'Suite name is required'),
           requests: z.array(z.object({
             name: z.string(),
@@ -767,7 +768,7 @@ export class BrunoMcpServer {
         title: 'Create CRUD Requests',
         description: 'Generate a complete set of CRUD operations for an entity',
         inputSchema: {
-          collectionPath: z.string().min(1, 'Collection path is required'),
+          collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to existing collection directory.'),
           entityName: z.string().min(1, 'Entity name is required'),
           baseUrl: z.string().min(1, 'Base URL is required'),
           folder: z.string().optional()
@@ -824,7 +825,7 @@ export class BrunoMcpServer {
       'list_collections',
       {
         title: 'List Collections',
-        description: 'List all Bruno collections discovered from the workspace.yml file. Works with no arguments (auto-discovery) or with an explicit workspacePath.',
+        description: 'List all Bruno collections from workspace.yml. Returns collection names and paths. Use the returned path as collectionPath in other tools (get_collection_stats, list_requests, run_collection).',
         inputSchema: {
           workspacePath: z.string().optional().describe('Optional explicit path to workspace.yml')
         }
@@ -885,6 +886,54 @@ export class BrunoMcpServer {
   }
 
   /**
+   * Tool: list_requests
+   */
+  private setupListRequestsTool(): void {
+    this.server.registerTool(
+      'list_requests',
+      {
+        title: 'List Requests',
+        description: 'List all request files (.yml/.bru) in a Bruno collection. Returns absolute file paths that can be used as requestPath in run_collection.',
+        inputSchema: {
+          collectionPath: z.string().min(1).describe('Absolute path to collection directory. Use the path returned by list_collections.')
+        }
+      },
+      async (args) => {
+        try {
+          const pathCheck = this.validateToolPath(args.collectionPath);
+          if (!pathCheck.valid) {
+            return {
+              content: [{ type: 'text', text: `Invalid collectionPath: ${pathCheck.reason}` }],
+              isError: true,
+            };
+          }
+
+          const requests = await this.collectionManager.listRequests(args.collectionPath);
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({ requests }, null, 2)
+              }
+            ]
+          };
+        } catch (error) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Error listing requests: ${error instanceof Error ? error.message : 'Unknown error'}`
+              }
+            ],
+            isError: true
+          };
+        }
+      }
+    );
+  }
+
+  /**
    * Tool: get_collection_stats
    */
   private setupGetCollectionStatsTool(): void {
@@ -892,9 +941,9 @@ export class BrunoMcpServer {
       'get_collection_stats',
       {
         title: 'Get Collection Statistics',
-        description: 'Get detailed statistics about a Bruno YAML collection — request counts by method, folders, environments, and per-request details with test presence.',
+        description: 'Get statistics about a Bruno collection — request counts by method, folders, environments, and per-request details including file paths. Use filePath values as requestPath in run_collection.',
         inputSchema: {
-          collectionPath: z.string().min(1, 'Collection path is required')
+          collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to collection directory. Use the path returned by list_collections.')
         }
       },
       async (args) => {
@@ -941,12 +990,12 @@ export class BrunoMcpServer {
       'run_collection',
       {
         title: 'Run Collection',
-        description: 'Execute all requests in a Bruno collection or a single request, run test scripts, and return structured results',
+        description: 'Execute requests in a Bruno collection and run test scripts. Omit requestPath to run ALL requests. Provide requestPath as a .yml/.bru file to run one request, or as a subdirectory to run all requests in that folder.',
         inputSchema: {
-          collectionPath: z.string().min(1, 'Collection path is required'),
-          environment: z.string().optional(),
+          collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to collection root directory. Use the path returned by list_collections.'),
+          environment: z.string().optional().describe('Environment name to use (e.g. "dev", "staging"). Get available names from get_collection_stats.'),
           collectionRoot: z.string().optional().describe('Path to collection root for environment resolution (if different from collectionPath)'),
-          requestPath: z.string().optional()
+          requestPath: z.string().optional().describe('Path to a specific .yml or .bru request file, or a subdirectory within the collection. Get file paths from list_requests or get_collection_stats. Omit to run all requests in the collection.')
         }
       },
       async (args) => {

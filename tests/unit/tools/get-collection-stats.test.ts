@@ -63,6 +63,15 @@ describe('getCollectionStats', () => {
         expect(req).toHaveProperty('seq');
         expect(req).toHaveProperty('folder');
         expect(req).toHaveProperty('hasTests');
+        expect(req).toHaveProperty('filePath');
+      }
+    });
+
+    it('includes filePath as absolute path to .yml file on each request', () => {
+      for (const req of stats.requests) {
+        expect(req.filePath).toBeDefined();
+        expect(req.filePath).toMatch(/\.(yml|bru)$/);
+        expect(req.filePath).toMatch(/^\//); // absolute path
       }
     });
 

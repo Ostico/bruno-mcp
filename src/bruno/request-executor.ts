@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 import { parseYamlRequest } from './yaml-parser.js';
 import { parseBruRequest } from './bru-parser.js';
@@ -297,16 +297,27 @@ export class RequestExecutor {
     let parseErrors = 0;
 
     if (options?.requestPath) {
-      const content = await readFile(options.requestPath, 'utf-8');
-      let yaml: YamlRequest;
-      if (options.requestPath.endsWith('.yml')) {
-        yaml = parseYamlRequest(content);
-      } else if (options.requestPath.endsWith('.bru')) {
-        yaml = bruFileToYamlRequest(parseBruRequest(content));
+      const isFile = options.requestPath.endsWith('.yml') || options.requestPath.endsWith('.bru');
+      if (!isFile) {
+        // Not a recognized file extension — check if it's a directory
+        const pathStat = await stat(options.requestPath);
+        if (pathStat.isDirectory()) {
+          const discovery = await discoverRequests(options.requestPath);
+          requests = discovery.requests;
+          parseErrors = discovery.parseErrors;
+        } else {
+          throw new Error(`Unsupported request file format: ${options.requestPath}`);
+        }
       } else {
-        throw new Error(`Unsupported request file format: ${options.requestPath}`);
+        const content = await readFile(options.requestPath, 'utf-8');
+        let yaml: YamlRequest;
+        if (options.requestPath.endsWith('.yml')) {
+          yaml = parseYamlRequest(content);
+        } else {
+          yaml = bruFileToYamlRequest(parseBruRequest(content));
+        }
+        requests = [{ yaml, filePath: options.requestPath }];
       }
-      requests = [{ yaml, filePath: options.requestPath }];
     } else {
       const discovery = await discoverRequests(collectionPath);
       requests = discovery.requests;
