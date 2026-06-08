@@ -19,6 +19,9 @@ Requires **Node.js >= 18.0.0**.
 - **Collection Statistics**: Analyze existing collections
 - **Dual Format Support**: `.bru` (legacy) and `.yml` (opencollection YAML) with auto-detection
 - **Collection Discovery**: Discover Bruno collections from workspace with zero config
+- **Request Modification**: Partial-merge updates to existing request files
+- **Variable Chaining**: `bru.setVar()`/`bru.getVar()` for cross-request variable flow
+- **Dependency Ordering**: Topological sort for test suite execution order
 - **Request Execution**: Execute requests and run tests with structured results
 - **Security Hardening**: SSRF protection, path traversal prevention, VM sandbox for test scripts
 
@@ -250,7 +253,7 @@ Generate a test suite with multiple related requests and optional dependencies.
 - `collectionPath` (string): Path to collection
 - `suiteName` (string): Suite/folder name
 - `requests` (array): Array of request definitions (same shape as `create_request`)
-- `dependencies` (array, optional): _Reserved for future use — not yet implemented_
+- `dependencies` (array, optional): Execution ordering constraints as `[{from: string, to: string}]` — enforces topological order via `seq` numbers. Circular dependencies return an error.
 
 **Example:**
 ```json
@@ -260,6 +263,9 @@ Generate a test suite with multiple related requests and optional dependencies.
   "requests": [
     { "name": "Login", "method": "POST", "url": "{{baseUrl}}/auth/login" },
     { "name": "Get Profile", "method": "GET", "url": "{{baseUrl}}/auth/profile" }
+  ],
+  "dependencies": [
+    { "from": "Login", "to": "Get Profile" }
   ]
 }
 ```
@@ -327,8 +333,8 @@ Execute all requests in a collection (or a single request) and run test scripts.
 **Execution Flow:**
 1. Find all `.yml` request files, sort by `seq` field
 2. Load environment variables (if specified)
-3. For each request: substitute `{{variables}}` in URL, headers, and body → execute via `fetch()` → run test scripts
-4. Requests execute serially in sequence order
+3. For each request: substitute `{{variables}}` (env + runtime) in URL, headers, and body → execute via `fetch()` → run test scripts → extract `bru.setVar()` variables for next request
+4. Requests execute serially in sequence order; variables accumulate across the run
 5. **On failure**: network errors or HTTP errors are recorded in the result — execution continues to the next request (never stops early)
 6. Requests with no test scripts report zero tests (still counted in `summary.total`)
 
@@ -382,6 +388,16 @@ Test scripts run in a sandboxed VM with these globals:
 | `test(description, fn)` | Define a test case. `fn` is called synchronously; exceptions mark the test as failed. |
 | `expect(value)` | Chai `expect` — supports `.to.equal()`, `.to.have.property()`, `.to.be.above()`, etc. |
 | `res` | Response object (see methods below) |
+| `bru` | Variable store for cross-request chaining (see methods below) |
+
+**`bru` methods (variable chaining):**
+
+| Method | Description |
+|---|---|
+| `bru.setVar(name, value)` | Store a variable for use by subsequent requests. Run-scoped — lost when execution ends. |
+| `bru.getVar(name)` | Retrieve a previously set variable. Returns `undefined` if not set. |
+
+Variables set via `bru.setVar()` are merged with environment variables for `{{substitution}}` in subsequent requests. Runtime variables take precedence over environment variables with the same name.
 
 **`res` methods:**
 
@@ -409,6 +425,20 @@ test("Response is JSON array", function() {
 test("Response time under 2s", function() {
   expect(res.getResponseTime()).to.be.below(2000);
 });
+
+// Chain a variable to subsequent requests
+bru.setVar("userId", res.getBody()[0].id);
+```
+
+**Variable chaining example** (Login → Profile):
+```javascript
+// In Login's after-response script:
+test("Login returns token", function() {
+  expect(res.getBody().access_token).to.be.a("string");
+});
+bru.setVar("token", res.getBody().access_token);
+
+// In Get Profile's request, {{token}} is now substituted automatically
 ```
 
 ## File Formats
@@ -506,12 +536,12 @@ Test scripts execute in a hardened `node:vm` context:
 - **Code generation disabled**: `eval()` and `new Function()` blocked via `codeGeneration` option
 - **Script size limit**: 50KB maximum
 - **Execution timeout**: Default 5 seconds
-- **No filesystem/network access**: Only `test()`, `expect()`, and `res` are available
+- **No filesystem/network access**: Only `test()`, `expect()`, `res`, and `bru` are available
 
 ## Testing
 
 ```bash
-npm test           # Run 518 unit tests (95%+ coverage)
+npm test           # Run 591 unit tests (95%+ coverage)
 ```
 
 ## Development
@@ -537,6 +567,7 @@ src/
     ├── test-runner.ts       # Sandboxed test runner (node:vm)
     ├── env-loader.ts        # Environment variable loader
     ├── workspace.ts         # Workspace resolver
+    ├── variable-store.ts    # Run-scoped variable store for cross-request chaining
     ├── list-collections-handler.ts
     ├── url-validator.ts     # SSRF protection
     ├── path-validator.ts    # Path traversal prevention
