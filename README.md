@@ -1,51 +1,46 @@
 # Bruno MCP Server
 
-A Model Context Protocol (MCP) server for creating, managing, and executing Bruno API testing collections. Supports both .bru and .yml (opencollection) formats with built-in security hardening.
+A Model Context Protocol (MCP) server for creating, managing, and executing Bruno API testing collections. Supports both `.bru` and `.yml` (opencollection) formats with built-in security hardening.
 
-## Overview
+## Why This MCP Server?
 
-Bruno MCP Server enables you to create, manage, and generate Bruno API testing collections, environments, and requests through standardized MCP tools. This allows for automated setup of API testing workflows and integration with Claude and other MCP-compatible clients.
+Use this when you want an AI agent (Claude, Copilot, etc.) to create, inspect, or execute Bruno API test collections programmatically — without opening the Bruno GUI or installing the Bruno CLI. Typical use cases: AI-assisted test generation, CI pipeline integration, automated API exploration.
+
+Requires **Node.js >= 18.0.0**.
 
 ## Features
 
-- **📁 Collection Management**: Create and organize Bruno collections
-- **🌍 Environment Configuration**: Manage multiple environments (dev, staging, prod)
-- **🔧 Request Generation**: Generate .bru files for all HTTP methods
-- **🔐 Authentication Support**: Bearer tokens, Basic auth, OAuth 2.0, API keys
-- **📝 Test Scripts**: Add pre/post request scripts and assertions
-- **🔄 CRUD Operations**: Generate complete CRUD request sets
-- **📊 Collection Statistics**: Analyze existing collections
-- **📂 Dual Format Support**: `.bru` (legacy) and `.yml` (opencollection YAML) with auto-detection
-- **🔍 Collection Discovery**: `list_collections` tool to discover Bruno collections from workspace
-- **▶ Request Execution**: `run_collection` tool to execute requests and run tests
-- **🛡 Security Hardening**: SSRF protection, path traversal prevention, VM sandbox for test scripts
+- **Collection Management**: Create and organize Bruno collections
+- **Environment Configuration**: Manage multiple environments (dev, staging, prod)
+- **Request Generation**: Generate request files for all HTTP methods
+- **Authentication Support**: Bearer, Basic, OAuth 2.0, API key, Digest
+- **Test Scripts**: Add pre/post request scripts and assertions
+- **CRUD Operations**: Generate complete CRUD request sets
+- **Collection Statistics**: Analyze existing collections
+- **Dual Format Support**: `.bru` (legacy) and `.yml` (opencollection YAML) with auto-detection
+- **Collection Discovery**: Discover Bruno collections from workspace with zero config
+- **Request Execution**: Execute requests and run tests with structured results
+- **Security Hardening**: SSRF protection, path traversal prevention, VM sandbox for test scripts
 
 ## Installation
 
 ```bash
-# Clone the repository
 git clone https://github.com/macarthy/bruno-mcp.git
 cd bruno-mcp
-
-# Install dependencies
 npm install
-
-# Build the project
 npm run build
 ```
 
 ## Client Integration
 
-The Bruno MCP Server can be integrated with various AI clients that support the Model Context Protocol:
-
 ### Quick Setup for Claude Desktop
 
-1. **Edit Claude Desktop config file:**
+1. Edit Claude Desktop config file:
    - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
    - **Windows:** `%APPDATA%/Claude/claude_desktop_config.json`
    - **Linux:** `~/.config/Claude/claude_desktop_config.json`
 
-2. **Add Bruno MCP Server:**
+2. Add Bruno MCP Server:
    ```json
    {
      "mcpServers": {
@@ -58,37 +53,35 @@ The Bruno MCP Server can be integrated with various AI clients that support the 
    }
    ```
 
-3. **Restart Claude Desktop**
+3. Restart Claude Desktop
 
 ### Supported Clients
 
-- ✅ **Claude Desktop App** - Full support
-- ✅ **Claude Code (VS Code)** - Full support  
-- ✅ **Continue** - Tools and resources
-- ✅ **Cline** - Tools and resources
-- ✅ **LM Studio** - Tools support
-- ✅ **MCP Inspector** - Development/testing
-- ✅ **Custom MCP Clients** - via SDK
+- **Claude Desktop App** - Full support
+- **Claude Code (VS Code)** - Full support
+- **Continue** - Tools and resources
+- **Cline** - Tools and resources
+- **LM Studio** - Tools support
+- **MCP Inspector** - Development/testing
+- **Custom MCP Clients** - via SDK
 
-**📖 For detailed integration instructions with all clients, see [INTEGRATION.md](./INTEGRATION.md)**
+For detailed integration instructions with all clients, see [INTEGRATION.md](./INTEGRATION.md)
 
-## Usage
+## Format Detection
 
-### With Claude Code or MCP Inspector
+The server auto-detects collection format by checking for marker files:
 
-1. Start the MCP server:
-```bash
-npm start
-```
+| Marker file | Format | Priority |
+|---|---|---|
+| `opencollection.yml` | YAML (opencollection) | Checked first |
+| `bruno.json` | BRU (legacy) | Fallback |
+| Neither | YAML (default) | — |
 
-2. Use the MCP Inspector to test tools:
-```bash
-npx @modelcontextprotocol/inspector
-```
+New collections default to YAML format. Pass `format: "bru"` to `create_collection` for legacy format.
 
-### Available MCP Tools
+## Available MCP Tools
 
-#### `create_collection`
+### `create_collection`
 Create a new Bruno collection with configuration.
 
 **Parameters:**
@@ -97,18 +90,19 @@ Create a new Bruno collection with configuration.
 - `baseUrl` (string, optional): Default base URL
 - `outputPath` (string): Directory to create collection
 - `ignore` (array, optional): Files to ignore
+- `format` (string, optional): `"yaml"` (default) or `"bru"`
 
 **Example:**
 ```json
 {
   "name": "my-api-tests",
-  "description": "API tests for my application", 
+  "description": "API tests for my application",
   "baseUrl": "https://api.example.com",
   "outputPath": "./collections"
 }
 ```
 
-#### `create_environment`
+### `create_environment`
 Create environment configuration files.
 
 **Parameters:**
@@ -129,18 +123,20 @@ Create environment configuration files.
 }
 ```
 
-#### `create_request`
-Generate .bru request files.
+### `create_request`
+Generate request files (`.bru` or `.yml` based on collection format).
 
 **Parameters:**
 - `collectionPath` (string): Path to collection
 - `name` (string): Request name
-- `method` (string): HTTP method
-- `url` (string): Request URL
+- `method` (string): HTTP method (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS)
+- `url` (string): Request URL (supports `{{variable}}` syntax)
 - `headers` (object, optional): HTTP headers
-- `body` (object, optional): Request body
-- `auth` (object, optional): Authentication config
-- `folder` (string, optional): Folder organization
+- `body` (object, optional): Request body — see [Body Types](#body-types)
+- `auth` (object, optional): Authentication — see [Auth Types](#auth-types)
+- `query` (object, optional): Query parameters as `Record<string, string | number | boolean>`
+- `folder` (string, optional): Subfolder within collection
+- `sequence` (number, optional): Execution order
 
 **Example:**
 ```json
@@ -156,8 +152,53 @@ Generate .bru request files.
 }
 ```
 
-#### `create_crud_requests`
-Generate complete CRUD operation sets.
+#### Auth Types
+
+| `auth.type` | Required `auth.config` keys |
+|---|---|
+| `bearer` | `token` |
+| `basic` | `username`, `password` |
+| `api-key` | `key`, `value`, `in` (`"header"` or `"query"`) |
+| `digest` | `username`, `password` |
+| `oauth2` | See Bruno OAuth2 docs |
+| `none` | _(omit `auth` entirely)_ |
+
+**Example (bearer):**
+```json
+{ "auth": { "type": "bearer", "config": { "token": "{{token}}" } } }
+```
+
+**Example (api-key):**
+```json
+{ "auth": { "type": "api-key", "config": { "key": "X-API-Key", "value": "{{apiKey}}", "in": "header" } } }
+```
+
+#### Body Types
+
+| `body.type` | Fields | Description |
+|---|---|---|
+| `json` | `content`: JSON string | JSON body |
+| `text` | `content`: plain text | Plain text body |
+| `xml` | `content`: XML string | XML body |
+| `form-data` | `formData`: `[{name, value, type?}]` | Multipart form (`type`: `"text"` or `"file"`) |
+| `form-urlencoded` | `content`: URL-encoded string | URL-encoded form |
+| `binary` | `content`: file path | Binary body |
+| `none` | _(omit `body` entirely)_ | No body |
+
+**Example (JSON body):**
+```json
+{ "body": { "type": "json", "content": "{\"name\": \"test\"}" } }
+```
+
+**Example (form-data):**
+```json
+{ "body": { "type": "form-data", "formData": [{"name": "file", "value": "photo.jpg", "type": "file"}] } }
+```
+
+> **Note:** `create_test_suite` supports a subset of auth types (`bearer`, `basic`, `oauth2`, `api-key`) and body types (`json`, `text`, `xml`, `form-data`, `form-urlencoded`). `digest` auth and `binary` body are only available in `create_request`.
+
+### `create_crud_requests`
+Generate a complete set of CRUD operations (5 requests: List, Get, Create, Update, Delete).
 
 **Parameters:**
 - `collectionPath` (string): Path to collection
@@ -175,52 +216,206 @@ Generate complete CRUD operation sets.
 }
 ```
 
-#### `add_test_script`
-Add test scripts to existing requests.
+### `create_test_suite`
+Generate a test suite with multiple related requests and optional dependencies.
 
 **Parameters:**
-- `bruFilePath` (string): Path to .bru file
-- `scriptType` (string): Script type (pre-request, post-response, tests)
-- `script` (string): JavaScript code
+- `collectionPath` (string): Path to collection
+- `suiteName` (string): Suite/folder name
+- `requests` (array): Array of request definitions (same shape as `create_request`)
+- `dependencies` (array, optional): _Reserved for future use — not yet implemented_
 
-#### `get_collection_stats`
-Get statistics about a collection.
+**Example:**
+```json
+{
+  "collectionPath": "./collections/my-api-tests",
+  "suiteName": "Auth Flow",
+  "requests": [
+    { "name": "Login", "method": "POST", "url": "{{baseUrl}}/auth/login" },
+    { "name": "Get Profile", "method": "GET", "url": "{{baseUrl}}/auth/profile" }
+  ]
+}
+```
+
+### `add_test_script`
+Add test scripts to existing request files. Format-aware: injects into `.bru` or `.yml` automatically.
+
+**Parameters:**
+- `bruFilePath` (string): Path to `.bru` or `.yml` request file
+- `scriptType` (string): `"pre-request"`, `"post-response"`, or `"tests"`
+- `script` (string): JavaScript code (max 50KB)
+
+### `list_collections`
+Discover Bruno collections from the Bruno app's `workspace.yml`.
+
+**Parameters:**
+- `workspacePath` (string, optional): Explicit path to `workspace.yml`
+
+**Workspace Resolution Cascade** (highest priority first):
+1. Explicit `workspacePath` argument
+2. `BRUNO_WORKSPACE_PATH` environment variable (set this when running the server in CI or on a machine where Bruno is not installed at the default location)
+3. Platform default:
+   - **macOS:** `~/Library/Application Support/bruno/default-workspace/workspace.yml`
+   - **Linux:** `~/.config/bruno/default-workspace/workspace.yml`
+   - **Windows:** `%APPDATA%/bruno/default-workspace/workspace.yml`
+
+**Returns:**
+```json
+{
+  "collections": [
+    { "name": "My API", "path": "/path/to/collection", "exists": true },
+    { "name": "Old API", "path": "/missing/path", "exists": false }
+  ]
+}
+```
+
+### `get_collection_stats`
+Get detailed statistics about a collection.
 
 **Parameters:**
 - `collectionPath` (string): Path to collection
 
-#### `list_collections`
-Discover Bruno collections in a workspace.
-
-**Parameters:**
-- `workspacePath` (string, optional): Path to workspace directory
-
-#### `run_collection`
-Execute API requests and run test scripts.
-
-**Parameters:**
-- `collectionPath` (string): Path to collection
-- `environment` (string, optional): Environment name
-- `requestPath` (string, optional): Run single request
-
-## Generated File Structure
-
-```
-my-collection/
-├── bruno.json              # BRU format collection config
-├── opencollection.yml      # YAML format collection config
-├── environments/
-│   ├── development.bru     # or .yml
-│   └── production.bru      # or .yml
-└── requests/
-    ├── get-users.bru       # BRU format request
-    └── create-user.yml     # YAML format request
+**Returns:**
+```json
+{
+  "totalRequests": 12,
+  "requestsByMethod": { "GET": 5, "POST": 4, "PUT": 2, "DELETE": 1 },
+  "folders": ["auth", "users", "products"],
+  "environments": ["dev", "staging", "prod"],
+  "requests": [
+    { "name": "Get Users", "method": "GET", "seq": 1, "folder": "users", "hasTests": true }
+  ]
+}
 ```
 
-## Bruno BRU File Format
+### `run_collection`
+Execute all requests in a collection (or a single request) and run test scripts.
 
-Generated .bru files follow the Bruno markup language specification:
+**Parameters:**
+- `collectionPath` (string): Path to collection or subfolder
+- `environment` (string, optional): Environment name (loads from `environments/<name>.yml`)
+- `collectionRoot` (string, optional): Collection root for environment resolution
+- `requestPath` (string, optional): Run a single request file instead of the full collection
 
+**Execution Flow:**
+1. Find all `.yml` request files, sort by `seq` field
+2. Load environment variables (if specified)
+3. For each request: substitute `{{variables}}` in URL, headers, and body → execute via `fetch()` → run test scripts
+4. Requests execute serially in sequence order
+5. **On failure**: network errors or HTTP errors are recorded in the result — execution continues to the next request (never stops early)
+6. Requests with no test scripts report zero tests (still counted in `summary.total`)
+
+**Returns:**
+```json
+{
+  "summary": { "total": 4, "passed": 3, "failed": 1, "duration_ms": 1250 },
+  "results": [
+    {
+      "name": "Get Schema",
+      "method": "GET",
+      "url": "https://api.example.com/schema",
+      "status": 200,
+      "duration_ms": 312,
+      "tests": [
+        { "description": "Status is 200", "status": "pass" },
+        { "description": "Body is JSON", "status": "pass" }
+      ]
+    }
+  ]
+}
+```
+
+## Environment Variables
+
+Environment files define variables that are substituted into requests at execution time.
+
+**YAML format** (`environments/dev.yml`):
+```yaml
+name: dev
+variables:
+  - name: baseUrl
+    value: https://dev.api.example.com
+  - name: apiKey
+    value: dev-key-123
+  - name: disabled_var
+    value: skip-me
+    disabled: true
+```
+
+**Input vs file format**: The `create_environment` tool accepts variables as a flat object (`{"baseUrl": "..."}`) and converts them to the YAML array format shown above. You never need to construct the array format yourself when calling the tool.
+
+**Substitution**: Any `{{variableName}}` in request URLs, headers, or body content is replaced with the corresponding environment variable value. Variables with `disabled: true` are skipped. Unresolved references (e.g. `{{missing}}`) are left as-is.
+
+## Test Script API
+
+Test scripts run in a sandboxed VM with these globals:
+
+| Global | Description |
+|---|---|
+| `test(description, fn)` | Define a test case. `fn` is called synchronously; exceptions mark the test as failed. |
+| `expect(value)` | Chai `expect` — supports `.to.equal()`, `.to.have.property()`, `.to.be.above()`, etc. |
+| `res` | Response object (see methods below) |
+
+**`res` methods:**
+
+| Method | Returns | Description |
+|---|---|---|
+| `res.getStatus()` | `number` | HTTP status code |
+| `res.getStatusText()` | `string` | Status text (e.g. "OK") |
+| `res.getHeaders()` | `object` | All response headers |
+| `res.getHeader(name)` | `string \| null` | Single header (case-insensitive) |
+| `res.getBody()` | `any` | Parsed JSON if content-type is `application/json`, otherwise raw text |
+| `res.getResponseTime()` | `number` | Response time in milliseconds |
+
+**Example test script:**
+```javascript
+test("Status is 200", function() {
+  expect(res.getStatus()).to.equal(200);
+});
+
+test("Response is JSON array", function() {
+  const body = res.getBody();
+  expect(body).to.be.an("array");
+  expect(body.length).to.be.above(0);
+});
+
+test("Response time under 2s", function() {
+  expect(res.getResponseTime()).to.be.below(2000);
+});
+```
+
+## File Formats
+
+### YAML Request (`.yml`)
+```yaml
+info:
+  name: Get Users
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "{{baseUrl}}/users"
+  headers:
+    - name: Authorization
+      value: "Bearer {{token}}"
+  body:
+    type: json
+    data: '{"limit": 10}'
+  auth:
+    type: bearer
+    token: "{{token}}"
+runtime:
+  scripts:
+    - type: after-response
+      code: |
+        test("Status is 200", function() {
+          expect(res.getStatus()).to.equal(200);
+        });
+settings:
+  timeout: 5000
+```
+
+### BRU Request (`.bru`)
 ```bru
 meta {
   name: Get Users
@@ -239,16 +434,6 @@ headers {
   Authorization: Bearer {{token}}
 }
 
-script:pre-request {
-  bru.setVar("timestamp", Date.now());
-}
-
-script:post-response {
-  if (res.status === 200) {
-    bru.setVar("userId", res.body[0].id);
-  }
-}
-
 tests {
   test("Status should be 200", function() {
     expect(res.status).to.equal(200);
@@ -256,17 +441,51 @@ tests {
 }
 ```
 
+### Generated Collection Structure
+```
+my-collection/
+├── opencollection.yml      # YAML format collection config
+├── bruno.json              # BRU format collection config
+├── .gitignore
+├── README.md
+├── environments/
+│   ├── dev.yml
+│   └── prod.yml
+├── auth/
+│   ├── login.yml
+│   └── get-profile.yml
+└── users/
+    ├── get-users.yml
+    └── create-user.yml
+```
+
+## Security
+
+### SSRF Protection
+All outbound requests from `run_collection` are validated:
+- **Private IP blocking**: Requests to `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, and IPv6 equivalents (including IPv4-mapped `::ffff:x.x.x.x`) are blocked
+- **Scheme validation**: Only `http:` and `https:` schemes allowed
+- **Redirect TOCTOU protection**: Each redirect hop is re-validated against SSRF rules (prevents DNS rebinding via redirects to internal IPs)
+
+### Path Traversal Prevention
+All tool inputs that accept file paths are validated:
+- `..` segments rejected
+- Null byte (`\0`) injection blocked
+- Paths resolved and checked against expected base directory
+
+### VM Sandbox (Test Scripts)
+Test scripts execute in a hardened `node:vm` context:
+- **Prototype chain isolation**: Context created with `Object.create(null)`
+- **Code generation disabled**: `eval()` and `new Function()` blocked via `codeGeneration` option
+- **Script size limit**: 50KB maximum
+- **Execution timeout**: Default 5 seconds
+- **No filesystem/network access**: Only `test()`, `expect()`, and `res` are available
+
 ## Testing
 
 ```bash
-npm test           # Run 363 unit tests
+npm test           # Run 518 unit tests (95%+ coverage)
 ```
-
-## Examples
-
-See the `examples/` directory for complete usage examples:
-
-- `examples/jsonplaceholder/` - JSONPlaceholder API testing
 
 ## Development
 
@@ -288,13 +507,13 @@ src/
     ├── format-factory.ts    # Format-aware read/write
     ├── collection-stats.ts  # Collection analysis
     ├── request-executor.ts  # HTTP execution engine
-    ├── test-runner.ts       # Sandboxed test runner
+    ├── test-runner.ts       # Sandboxed test runner (node:vm)
     ├── env-loader.ts        # Environment variable loader
     ├── workspace.ts         # Workspace resolver
     ├── list-collections-handler.ts
     ├── url-validator.ts     # SSRF protection
     ├── path-validator.ts    # Path traversal prevention
-    └── response-wrapper.ts  # Response object builder
+    └── response-wrapper.ts  # Response object for test scripts
 ```
 
 ### Building
@@ -302,13 +521,6 @@ src/
 ```bash
 npm run build      # Build with tsup
 npm run typecheck   # TypeScript type checking
-```
-
-### Code Quality
-
-```bash
-npm run lint       # ESLint
-npm run format     # Prettier
 ```
 
 ## Contributing
@@ -329,7 +541,3 @@ MIT License - see LICENSE file for details.
 - [Model Context Protocol](https://modelcontextprotocol.io/)
 - [Bruno Documentation](https://docs.usebruno.com/)
 - [BRU Language Specification](https://github.com/brulang/bru-lang)
-
----
-
-**Generated with Bruno MCP Server** 🚀
