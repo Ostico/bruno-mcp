@@ -41,10 +41,17 @@ export class BrunoMcpServer {
 
   constructor() {
     // Initialize MCP server
-    this.server = new McpServer({
-      name: 'bruno-mcp',
-      version: '1.0.0'
-    });
+    this.server = new McpServer(
+      {
+        name: 'bruno-mcp',
+        version: '1.2.0'
+      },
+      {
+        instructions: 'When the user asks to test, call, or run API endpoints, use this server first. ' +
+          'Workflow: list_collections → list_requests (to discover request file paths) → run_collection. ' +
+          'Do not fall back to curl or direct HTTP calls when Bruno collections already cover the endpoints.',
+      },
+    );
 
     // Initialize Bruno managers
     this.collectionManager = createCollectionManager();
