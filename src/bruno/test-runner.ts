@@ -1,7 +1,7 @@
 import vm from 'node:vm';
-import { TestResult, TestRunnerOptions, MockResponseData } from './types.js';
+import { TestResult, TestRunnerOptions, MockResponseData, ScriptResult } from './types.js';
 
-export type { TestResult } from './types.js';
+export type { TestResult, ScriptResult } from './types.js';
 
 const DEFAULT_TIMEOUT = 5000;
 
@@ -275,12 +275,15 @@ export class TestRunner {
     script: string,
     response: MockResponseData,
     options?: TestRunnerOptions,
-  ): Promise<TestResult[]> {
+  ): Promise<ScriptResult> {
     const timeout = options?.timeout ?? DEFAULT_TIMEOUT;
 
     if (!script || script.trim().length === 0) {
-      return [];
+      return { results: [], variables: {} };
     }
+
+    // Host-realm variable store — bru.setVar/getVar closures write here
+    const __bruVars: Record<string, unknown> = {};
 
     // Build the full script: expect lib + sandbox setup + user script
     const setupScript = buildSandboxSetupScript(response);
@@ -288,6 +291,15 @@ export class TestRunner {
 
     // Create a sandbox with NO prototype chain to the main realm
     const sandbox = Object.create(null);
+
+    // Inject bru object — host-realm closures, not sandbox-constructed
+    sandbox.bru = Object.create(null);
+    sandbox.bru.setVar = (name: string, value: unknown): void => {
+      __bruVars[name] = value;
+    };
+    sandbox.bru.getVar = (name: string): unknown => {
+      return __bruVars[name];
+    };
 
     try {
       const vmScript = new vm.Script(fullScript, {
@@ -303,7 +315,7 @@ export class TestRunner {
 
       // Extract results from sandbox — the only thing we read back
       const results = vm.runInContext('__results', context) as TestResult[];
-      return results || [];
+      return { results: results || [], variables: __bruVars };
     } catch (error: unknown) {
       const message =
         error instanceof Error ? error.message : String(error);
@@ -312,15 +324,18 @@ export class TestRunner {
         message.includes('Script execution timed out') ||
         message.includes('execution timed out');
 
-      return [
-        {
-          description: isTimeout ? 'Script timeout' : 'Script error',
-          status: 'fail',
-          error: isTimeout
-            ? `Script execution timed out after ${timeout}ms`
-            : `${(error as Error).constructor?.name ?? 'Error'}: ${message}`,
-        },
-      ];
+      return {
+        results: [
+          {
+            description: isTimeout ? 'Script timeout' : 'Script error',
+            status: 'fail',
+            error: isTimeout
+              ? `Script execution timed out after ${timeout}ms`
+              : `${(error as Error).constructor?.name ?? 'Error'}: ${message}`,
+          },
+        ],
+        variables: __bruVars,
+      };
     }
   }
 }

@@ -395,6 +395,11 @@ export interface TestRunnerOptions {
   timeout?: number;
 }
 
+export interface ScriptResult {
+  results: TestResult[];
+  variables: Record<string, unknown>;
+}
+
 // ---------------------------------------------------------------------------
 // Environment types
 // ---------------------------------------------------------------------------

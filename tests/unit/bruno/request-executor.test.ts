@@ -960,6 +960,322 @@ settings:
     });
   });
 
+  describe('cross-request variable propagation', () => {
+    it('should propagate variables from request A script to request B substitution', async () => {
+      const REQUEST_A = `
+info:
+  name: Request A
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/login"
+runtime:
+  scripts:
+    - type: after-response
+      code: |
+        bru.setVar("auth_token", "tok_abc123");
+        test("login ok", function() {
+          expect(res.getStatus()).to.equal(200);
+        });
+`;
+
+      const REQUEST_B = `
+info:
+  name: Request B
+  type: http
+  seq: 2
+http:
+  method: GET
+  url: "https://api.example.com/data"
+  headers:
+    - name: Authorization
+      value: "Bearer {{auth_token}}"
+`;
+
+      setupFsReaddir(['Request A.yml', 'Request B.yml']);
+      setupFsReadFile({
+        'Request A.yml': REQUEST_A,
+        'Request B.yml': REQUEST_B,
+      });
+      setupFsStat(['/test-collection']);
+
+      mockFetch
+        .mockResolvedValueOnce(createMockResponse({ token: 'tok_abc123' }))
+        .mockResolvedValueOnce(createMockResponse({ data: 'secret' }));
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.summary.total).toBe(2);
+      expect(result.summary.passed).toBe(2);
+
+      // Request B should have the token substituted from Request A's bru.setVar
+      const secondCallOptions = mockFetch.mock.calls[1][1];
+      expect(secondCallOptions.headers['Authorization']).toBe('Bearer tok_abc123');
+    });
+
+    it('should allow runtime vars to override env vars', async () => {
+      const REQUEST_A = `
+info:
+  name: Set Override
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/init"
+runtime:
+  scripts:
+    - type: after-response
+      code: |
+        bru.setVar("api_key", "runtime-key");
+        test("ok", function() { expect(res.getStatus()).to.equal(200); });
+`;
+
+      const REQUEST_B = `
+info:
+  name: Use Override
+  type: http
+  seq: 2
+http:
+  method: GET
+  url: "https://api.example.com/data"
+  headers:
+    - name: Authorization
+      value: "Bearer {{api_key}}"
+`;
+
+      setupFsReaddir(['Set Override.yml', 'Use Override.yml']);
+      setupFsReadFile({
+        'Set Override.yml': REQUEST_A,
+        'Use Override.yml': REQUEST_B,
+        'dev.yml': ENV_YAML, // ENV_YAML has api_key = "test-key-123"
+      });
+      setupFsStat(['/test-collection', '/test-collection/environments']);
+
+      mockFetch
+        .mockResolvedValueOnce(createMockResponse({ ok: true }))
+        .mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      const result = await RequestExecutor.executeCollection(
+        '/test-collection',
+        { environment: 'dev' },
+      );
+
+      expect(result.summary.total).toBe(2);
+      expect(result.summary.passed).toBe(2);
+
+      // Request B should use runtime-key (from bru.setVar), not env test-key-123
+      const secondCallOptions = mockFetch.mock.calls[1][1];
+      expect(secondCallOptions.headers['Authorization']).toBe('Bearer runtime-key');
+    });
+
+    it('should use a fresh variable store for each executeCollection call', async () => {
+      const REQUEST_WITH_SETVAR = `
+info:
+  name: Setter
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/set"
+runtime:
+  scripts:
+    - type: after-response
+      code: |
+        bru.setVar("run_var", "from_run");
+        test("ok", function() { expect(res.getStatus()).to.equal(200); });
+`;
+
+      const REQUEST_WITH_GETVAR = `
+info:
+  name: Getter
+  type: http
+  seq: 2
+http:
+  method: GET
+  url: "https://api.example.com/get?val={{run_var}}"
+`;
+
+      setupFsReaddir(['Setter.yml', 'Getter.yml']);
+      setupFsReadFile({
+        'Setter.yml': REQUEST_WITH_SETVAR,
+        'Getter.yml': REQUEST_WITH_GETVAR,
+      });
+      setupFsStat(['/test-collection']);
+
+      // Run 1: sets run_var
+      mockFetch
+        .mockResolvedValueOnce(createMockResponse({ ok: true }))
+        .mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      const result1 = await RequestExecutor.executeCollection('/test-collection');
+      expect(result1.summary.total).toBe(2);
+      expect(mockFetch.mock.calls[1][0]).toBe('https://api.example.com/get?val=from_run');
+
+      // Reset mocks for run 2
+      mockFetch.mockClear();
+
+      // Run 2: variable store should be fresh — run_var should still resolve
+      // because the setter runs again
+      mockFetch
+        .mockResolvedValueOnce(createMockResponse({ ok: true }))
+        .mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      const result2 = await RequestExecutor.executeCollection('/test-collection');
+      expect(result2.summary.total).toBe(2);
+      // The setter runs again, so run_var is set again
+      expect(mockFetch.mock.calls[1][0]).toBe('https://api.example.com/get?val=from_run');
+    });
+
+    it('should not have variables from a previous run leak into a new run', async () => {
+      // Run 1: has a setter request
+      const SETTER_REQUEST = `
+info:
+  name: Setter
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/set"
+runtime:
+  scripts:
+    - type: after-response
+      code: |
+        bru.setVar("leak_test", "should_not_leak");
+        test("ok", function() { expect(res.getStatus()).to.equal(200); });
+`;
+
+      setupFsReaddir(['Setter.yml']);
+      setupFsReadFile({ 'Setter.yml': SETTER_REQUEST });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
+      await RequestExecutor.executeCollection('/test-collection');
+
+      // Run 2: only getter, no setter — leak_test should not be available
+      const GETTER_REQUEST = `
+info:
+  name: Getter
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/get?val={{leak_test}}"
+`;
+
+      // Clear call history for second run assertions
+      mockFetch.mockClear();
+
+      setupFsReaddirRecursive({
+        '/test-collection2': [
+          { name: 'Getter.yml', isFile: true, isDirectory: false },
+        ],
+      });
+      setupFsReadFile({ 'Getter.yml': GETTER_REQUEST });
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
+      await RequestExecutor.executeCollection('/test-collection2');
+
+      // leak_test should NOT be substituted — fresh store means it stays as template
+      expect(mockFetch.mock.calls[0][0]).toBe('https://api.example.com/get?val={{leak_test}}');
+    });
+
+    it('should accumulate variables across multiple requests', async () => {
+      const REQ_1 = `
+info:
+  name: Step 1
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/step1"
+runtime:
+  scripts:
+    - type: after-response
+      code: |
+        bru.setVar("var1", "value1");
+        test("ok", function() { expect(res.getStatus()).to.equal(200); });
+`;
+
+      const REQ_2 = `
+info:
+  name: Step 2
+  type: http
+  seq: 2
+http:
+  method: GET
+  url: "https://api.example.com/step2?v={{var1}}"
+runtime:
+  scripts:
+    - type: after-response
+      code: |
+        bru.setVar("var2", "value2");
+        test("ok", function() { expect(res.getStatus()).to.equal(200); });
+`;
+
+      const REQ_3 = `
+info:
+  name: Step 3
+  type: http
+  seq: 3
+http:
+  method: GET
+  url: "https://api.example.com/step3?a={{var1}}&b={{var2}}"
+`;
+
+      setupFsReaddir(['Step 1.yml', 'Step 2.yml', 'Step 3.yml']);
+      setupFsReadFile({
+        'Step 1.yml': REQ_1,
+        'Step 2.yml': REQ_2,
+        'Step 3.yml': REQ_3,
+      });
+      setupFsStat(['/test-collection']);
+
+      mockFetch
+        .mockResolvedValueOnce(createMockResponse({ ok: true }))
+        .mockResolvedValueOnce(createMockResponse({ ok: true }))
+        .mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.summary.total).toBe(3);
+      expect(result.summary.passed).toBe(3);
+
+      // Step 2 should have var1 substituted
+      expect(mockFetch.mock.calls[1][0]).toBe('https://api.example.com/step2?v=value1');
+      // Step 3 should have both var1 and var2 substituted
+      expect(mockFetch.mock.calls[2][0]).toBe('https://api.example.com/step3?a=value1&b=value2');
+    });
+
+    it('should work with existing tests that do not use bru', async () => {
+      // This verifies backward compatibility — existing test scripts
+      // that don't call bru.setVar/getVar should still work
+      setupFsReaddir(['Get Status.yml']);
+      setupFsReadFile({
+        'Get Status.yml': REQUEST_WITH_TESTS_YAML,
+        'dev.yml': ENV_YAML,
+      });
+      setupFsStat(['/test-collection', '/test-collection/environments']);
+
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ status: 'healthy' }),
+      );
+
+      const result = await RequestExecutor.executeCollection(
+        '/test-collection',
+        { environment: 'dev' },
+      );
+
+      expect(result.summary.total).toBe(1);
+      expect(result.summary.passed).toBe(1);
+      expect(result.results[0].tests).toHaveLength(2);
+      expect(result.results[0].tests[0]).toEqual({
+        description: 'should return 200',
+        status: 'pass',
+      });
+    });
+  });
+
   describe('redirect SSRF protection', () => {
     it('should block redirect to internal IP (SSRF via 302)', async () => {
       const PUBLIC_REQUEST = `

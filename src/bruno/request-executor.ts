@@ -6,6 +6,7 @@ import { loadEnvironment, substitute } from './env-loader.js';
 import { TestRunner } from './test-runner.js';
 import { wrapFetchResponse } from './response-wrapper.js';
 import { validateUrl } from './url-validator.js';
+import { VariableStore } from './variable-store.js';
 import type {
   BruFile,
   YamlRequest,
@@ -160,8 +161,12 @@ function getAfterResponseScript(yaml: YamlRequest): string | null {
 async function executeSingleRequest(
   yaml: YamlRequest,
   vars: Map<string, string>,
+  variableStore?: VariableStore,
 ): Promise<RequestExecutionResult> {
-  const { url, options } = buildFetchOptions(yaml, vars);
+  // Merge env vars with runtime vars (runtime takes precedence)
+  const effectiveVars = variableStore ? variableStore.merge(vars) : vars;
+
+  const { url, options } = buildFetchOptions(yaml, effectiveVars);
   const name = yaml.info.name;
   const method = yaml.http.method;
 
@@ -240,7 +245,15 @@ async function executeSingleRequest(
     let tests: TestResult[] = [];
     const testScript = getAfterResponseScript(yaml);
     if (testScript) {
-      tests = await TestRunner.runScript(testScript, wrappedResponse);
+      const scriptResult = await TestRunner.runScript(testScript, wrappedResponse);
+      tests = scriptResult.results;
+
+      // Feed extracted variables into the store for cross-request propagation
+      if (variableStore) {
+        for (const [k, v] of Object.entries(scriptResult.variables)) {
+          variableStore.set(k, v as string | number | boolean);
+        }
+      }
     }
 
     return {
@@ -300,9 +313,12 @@ export class RequestExecutor {
       parseErrors = discovery.parseErrors;
     }
 
+    // Create a fresh variable store per run for cross-request variable propagation
+    const variableStore = new VariableStore();
+
     const results: RequestExecutionResult[] = [];
     for (const req of requests) {
-      const result = await executeSingleRequest(req.yaml, vars);
+      const result = await executeSingleRequest(req.yaml, vars, variableStore);
       results.push(result);
     }
 
