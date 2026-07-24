@@ -299,11 +299,20 @@ export interface YamlRuntime {
   scripts: YamlScript[];
 }
 
+export interface TlsSettings {
+  rejectUnauthorized?: boolean;
+  ca?: string;
+  cert?: string;
+  key?: string;
+}
+
 export interface YamlSettings {
   encodeUrl?: boolean;
   timeout?: number;
   followRedirects?: boolean;
   maxRedirects?: number;
+  tls?: TlsSettings;
+  proxy?: string;
 }
 
 export interface YamlRequest {
@@ -398,6 +407,26 @@ export interface TestRunnerOptions {
 export interface ScriptResult {
   results: TestResult[];
   variables: Record<string, unknown>;
+  requestMutations?: RequestMutations;
+}
+
+export interface MockRequestData {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body: unknown;
+}
+
+export interface RequestMutations {
+  url?: string;
+  headers?: Record<string, string>;
+  body?: unknown;
+}
+
+export interface PreRequestScriptResult {
+  variables: Record<string, unknown>;
+  mutations: RequestMutations;
+  error?: string;
 }
 
 // ---------------------------------------------------------------------------

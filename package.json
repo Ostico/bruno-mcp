@@ -30,6 +30,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@usebruno/lang": "^0.36.0",
+    "undici": "^8.4.1",
     "yaml": "^2.9.0",
     "zod": "^3.22.4"
   },

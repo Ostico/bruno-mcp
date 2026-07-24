@@ -114,6 +114,11 @@ describe('run_collection tool', () => {
     expect(tool!.config.inputSchema.requestPath).toBeDefined();
   });
 
+  it('should accept optional parallel input', () => {
+    const tool = getRegisteredTool(server);
+    expect(tool!.config.inputSchema.parallel).toBeDefined();
+  });
+
   describe('successful execution', () => {
     it('should return structured results with summary and per-request detail', async () => {
       const mockResult = createSuccessResult(3, 3, 0);
@@ -173,6 +178,40 @@ describe('run_collection tool', () => {
 
       const parsed = JSON.parse(response.content[0].text);
       expect(parsed.summary.total).toBe(2);
+    });
+
+    it('should pass parallel flag to executor', async () => {
+      const mockResult = createSuccessResult(2, 2, 0);
+      mockedExecutor.executeCollection.mockResolvedValue(mockResult);
+
+      const tool = getRegisteredTool(server)!;
+      await tool.handler({
+        collectionPath: '/path/to/collection',
+        parallel: true,
+      });
+
+      expect(mockedExecutor.executeCollection).toHaveBeenCalledWith(
+        '/path/to/collection',
+        expect.objectContaining({ parallel: true }),
+      );
+    });
+
+    it('should pass parallel as undefined when not specified', async () => {
+      const mockResult = createSuccessResult(2, 2, 0);
+      mockedExecutor.executeCollection.mockResolvedValue(mockResult);
+
+      const tool = getRegisteredTool(server)!;
+      await tool.handler({
+        collectionPath: '/path/to/collection',
+      });
+
+      expect(mockedExecutor.executeCollection).toHaveBeenCalledWith(
+        '/path/to/collection',
+        expect.objectContaining({}),
+      );
+      // parallel is falsy (undefined) when not specified — executor treats it as serial
+      const calledOptions = mockedExecutor.executeCollection.mock.calls[0][1];
+      expect(!calledOptions?.parallel).toBe(true);
     });
 
     it('should work without optional parameters', async () => {

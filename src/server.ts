@@ -1002,7 +1002,8 @@ export class BrunoMcpServer {
           collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to collection root directory. Use the path returned by list_collections.'),
           environment: z.string().optional().describe('Environment name to use (e.g. "dev", "staging"). Get available names from get_collection_stats.'),
           collectionRoot: z.string().optional().describe('Path to collection root for environment resolution (if different from collectionPath)'),
-          requestPath: z.string().optional().describe('Path to a specific .yml or .bru request file, or a subdirectory within the collection. Get file paths from list_requests or get_collection_stats. Omit to run all requests in the collection.')
+          requestPath: z.string().optional().describe('Path to a specific .yml or .bru request file, or a subdirectory within the collection. Get file paths from list_requests or get_collection_stats. Omit to run all requests in the collection.'),
+          parallel: z.boolean().optional().default(false).describe('Run folders in parallel. Requests within each folder still run sequentially by seq order. Default: false.')
         }
       },
       async (args) => {
@@ -1044,6 +1045,7 @@ export class BrunoMcpServer {
               environment: args.environment,
               collectionRoot: args.collectionRoot,
               requestPath: args.requestPath,
+              parallel: args.parallel,
             },
           );
 

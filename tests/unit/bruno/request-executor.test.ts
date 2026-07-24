@@ -25,6 +25,11 @@ jest.mock('../../../src/bruno/url-validator', () => ({
 import { validateUrl } from '../../../src/bruno/url-validator';
 const mockedValidateUrl = jest.mocked(validateUrl);
 
+// Mock fetch-dispatcher — returns undefined by default (plain fetch)
+jest.mock('../../../src/bruno/fetch-dispatcher', () => ({
+  buildDispatcher: jest.fn().mockResolvedValue(undefined),
+}));
+
 // ---------------------------------------------------------------------------
 // Test fixtures
 // ---------------------------------------------------------------------------
@@ -1402,6 +1407,419 @@ http:
       expect(result.results[0].error).toContain('10');
       // fetch called 11 times: 1 + 10 redirect follows (loop exits before 11th redirect fetch)
       expect(mockFetch).toHaveBeenCalledTimes(11);
+    });
+  });
+
+  // =========================================================================
+  // Pre-request script tests
+  // =========================================================================
+
+  describe('pre-request scripts', () => {
+    it('should execute before-request script and apply header mutations', async () => {
+      const REQUEST_WITH_PRE_SCRIPT = `
+info:
+  name: Pre Script Request
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/data"
+runtime:
+  scripts:
+    - type: before-request
+      code: |
+        req.setHeader("Authorization", "Bearer pre-token");
+`;
+      setupFsReaddir(['Pre Script Request.yml']);
+      setupFsReadFile({ 'Pre Script Request.yml': REQUEST_WITH_PRE_SCRIPT });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.summary.total).toBe(1);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const [, fetchOptions] = mockFetch.mock.calls[0];
+      expect(fetchOptions.headers['Authorization']).toBe('Bearer pre-token');
+    });
+
+    it('should apply URL mutation from pre-request script', async () => {
+      const REQUEST_WITH_URL_MUTATION = `
+info:
+  name: URL Mutation
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/original"
+runtime:
+  scripts:
+    - type: before-request
+      code: |
+        req.setUrl("https://api.example.com/overridden");
+`;
+      setupFsReaddir(['URL Mutation.yml']);
+      setupFsReadFile({ 'URL Mutation.yml': REQUEST_WITH_URL_MUTATION });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      await RequestExecutor.executeCollection('/test-collection');
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const [calledUrl] = mockFetch.mock.calls[0];
+      expect(calledUrl).toBe('https://api.example.com/overridden');
+    });
+
+    it('should feed pre-request script variables into VariableStore', async () => {
+      const REQUEST_A = `
+info:
+  name: Pre Set Var
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/init"
+runtime:
+  scripts:
+    - type: before-request
+      code: |
+        bru.setVar("pre_token", "from-pre-script");
+`;
+
+      const REQUEST_B = `
+info:
+  name: Use Pre Var
+  type: http
+  seq: 2
+http:
+  method: GET
+  url: "https://api.example.com/data"
+  headers:
+    - name: Authorization
+      value: "Bearer {{pre_token}}"
+`;
+
+      setupFsReaddir(['Pre Set Var.yml', 'Use Pre Var.yml']);
+      setupFsReadFile({
+        'Pre Set Var.yml': REQUEST_A,
+        'Use Pre Var.yml': REQUEST_B,
+      });
+      setupFsStat(['/test-collection']);
+
+      mockFetch
+        .mockResolvedValueOnce(createMockResponse({ ok: true }))
+        .mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.summary.total).toBe(2);
+      const secondCallOptions = mockFetch.mock.calls[1][1];
+      expect(secondCallOptions.headers['Authorization']).toBe('Bearer from-pre-script');
+    });
+
+    it('should handle requests without pre-request scripts unchanged', async () => {
+      const SIMPLE_REQUEST = `
+info:
+  name: No Pre Script
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/simple"
+`;
+      setupFsReaddir(['No Pre Script.yml']);
+      setupFsReadFile({ 'No Pre Script.yml': SIMPLE_REQUEST });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.summary.total).toBe(1);
+      expect(result.summary.passed).toBe(1);
+      expect(mockFetch.mock.calls[0][0]).toBe('https://api.example.com/simple');
+    });
+
+    it('should run pre-request and after-response scripts together', async () => {
+      const REQUEST_BOTH_SCRIPTS = `
+info:
+  name: Both Scripts
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/both"
+runtime:
+  scripts:
+    - type: before-request
+      code: |
+        req.setHeader("X-Pre", "true");
+    - type: after-response
+      code: |
+        test("status ok", function() {
+          expect(res.getStatus()).to.equal(200);
+        });
+`;
+      setupFsReaddir(['Both Scripts.yml']);
+      setupFsReadFile({ 'Both Scripts.yml': REQUEST_BOTH_SCRIPTS });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.summary.total).toBe(1);
+      expect(result.summary.passed).toBe(1);
+      // Pre-request header applied
+      const [, fetchOptions] = mockFetch.mock.calls[0];
+      expect(fetchOptions.headers['X-Pre']).toBe('true');
+      // After-response test ran
+      expect(result.results[0].tests).toHaveLength(1);
+      expect(result.results[0].tests[0].status).toBe('pass');
+    });
+  });
+
+  // =========================================================================
+  // Parallel folder execution tests
+  // =========================================================================
+
+  describe('parallel folder execution', () => {
+    it('should produce same results as serial when parallel: false (default)', async () => {
+      const REQ_A = `
+info:
+  name: A
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/a"
+`;
+      const REQ_B = `
+info:
+  name: B
+  type: http
+  seq: 2
+http:
+  method: GET
+  url: "https://api.example.com/b"
+`;
+      setupFsReaddir(['A.yml', 'B.yml']);
+      setupFsReadFile({ 'A.yml': REQ_A, 'B.yml': REQ_B });
+      setupFsStat(['/test-collection']);
+
+      mockFetch
+        .mockResolvedValueOnce(createMockResponse({ ok: true }))
+        .mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.summary.total).toBe(2);
+      expect(result.summary.passed).toBe(2);
+      expect(result.results[0].name).toBe('A');
+      expect(result.results[1].name).toBe('B');
+    });
+
+    it('should execute folders in parallel and merge results in folder order', async () => {
+      const FOLDER_A_REQ = `
+info:
+  name: A Request
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/a"
+`;
+      const FOLDER_B_REQ = `
+info:
+  name: B Request
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/b"
+`;
+
+      setupFsReaddirRecursive({
+        '/test-collection': [
+          { name: 'folderA', isFile: false, isDirectory: true },
+          { name: 'folderB', isFile: false, isDirectory: true },
+        ],
+        '/test-collection/folderA': [
+          { name: 'A Request.yml', isFile: true, isDirectory: false },
+        ],
+        '/test-collection/folderB': [
+          { name: 'B Request.yml', isFile: true, isDirectory: false },
+        ],
+      });
+
+      setupFsReadFile({
+        'A Request.yml': FOLDER_A_REQ,
+        'B Request.yml': FOLDER_B_REQ,
+      });
+      setupFsStat(['/test-collection']);
+
+      mockFetch
+        .mockResolvedValueOnce(createMockResponse({ ok: true }))
+        .mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      const result = await RequestExecutor.executeCollection(
+        '/test-collection',
+        { parallel: true },
+      );
+
+      expect(result.summary.total).toBe(2);
+      expect(result.summary.passed).toBe(2);
+      // Results merged in alphabetical folder order: folderA before folderB
+      expect(result.results[0].name).toBe('A Request');
+      expect(result.results[1].name).toBe('B Request');
+    });
+
+    it('should isolate variables between parallel folders', async () => {
+      const FOLDER_A_SETTER = `
+info:
+  name: A Setter
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/a"
+runtime:
+  scripts:
+    - type: after-response
+      code: |
+        bru.setVar("shared_var", "from_a");
+        test("ok", function() { expect(res.getStatus()).to.equal(200); });
+`;
+      const FOLDER_B_GETTER = `
+info:
+  name: B Getter
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/b?val={{shared_var}}"
+`;
+
+      setupFsReaddirRecursive({
+        '/test-collection': [
+          { name: 'folderA', isFile: false, isDirectory: true },
+          { name: 'folderB', isFile: false, isDirectory: true },
+        ],
+        '/test-collection/folderA': [
+          { name: 'A Setter.yml', isFile: true, isDirectory: false },
+        ],
+        '/test-collection/folderB': [
+          { name: 'B Getter.yml', isFile: true, isDirectory: false },
+        ],
+      });
+
+      setupFsReadFile({
+        'A Setter.yml': FOLDER_A_SETTER,
+        'B Getter.yml': FOLDER_B_GETTER,
+      });
+      setupFsStat(['/test-collection']);
+
+      mockFetch
+        .mockResolvedValueOnce(createMockResponse({ ok: true }))
+        .mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      const result = await RequestExecutor.executeCollection(
+        '/test-collection',
+        { parallel: true },
+      );
+
+      expect(result.summary.total).toBe(2);
+
+      // B Getter should NOT have shared_var resolved (variable isolation)
+      const bGetterCall = mockFetch.mock.calls.find(
+        (c: any[]) => c[0].includes('/b?'),
+      );
+      expect(bGetterCall).toBeDefined();
+      expect(bGetterCall![0]).toBe('https://api.example.com/b?val={{shared_var}}');
+    });
+
+    it('should work with single folder when parallel: true', async () => {
+      const REQ = `
+info:
+  name: Single
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/single"
+`;
+      setupFsReaddirRecursive({
+        '/test-collection': [
+          { name: 'folder', isFile: false, isDirectory: true },
+        ],
+        '/test-collection/folder': [
+          { name: 'Single.yml', isFile: true, isDirectory: false },
+        ],
+      });
+
+      setupFsReadFile({ 'Single.yml': REQ });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      const result = await RequestExecutor.executeCollection(
+        '/test-collection',
+        { parallel: true },
+      );
+
+      expect(result.summary.total).toBe(1);
+      expect(result.summary.passed).toBe(1);
+      expect(result.results[0].name).toBe('Single');
+    });
+
+    it('should run requests within a folder serially by seq order in parallel mode', async () => {
+      const REQ_1 = `
+info:
+  name: First
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/first"
+`;
+      const REQ_2 = `
+info:
+  name: Second
+  type: http
+  seq: 2
+http:
+  method: GET
+  url: "https://api.example.com/second"
+`;
+
+      setupFsReaddirRecursive({
+        '/test-collection': [
+          { name: 'folder', isFile: false, isDirectory: true },
+        ],
+        '/test-collection/folder': [
+          { name: 'Second.yml', isFile: true, isDirectory: false },
+          { name: 'First.yml', isFile: true, isDirectory: false },
+        ],
+      });
+
+      setupFsReadFile({ 'First.yml': REQ_1, 'Second.yml': REQ_2 });
+      setupFsStat(['/test-collection']);
+
+      mockFetch
+        .mockResolvedValueOnce(createMockResponse({ ok: true }))
+        .mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      const result = await RequestExecutor.executeCollection(
+        '/test-collection',
+        { parallel: true },
+      );
+
+      expect(result.summary.total).toBe(2);
+      // Sorted by seq within folder: First (seq 1) before Second (seq 2)
+      expect(result.results[0].name).toBe('First');
+      expect(result.results[1].name).toBe('Second');
     });
   });
 });
