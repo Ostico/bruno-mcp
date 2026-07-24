@@ -296,17 +296,12 @@ export class BrunoMcpServer {
             };
           }
 
-          // Merge: load existing vars, overlay the provided ones (anti-clobber).
-          const existing = await this.environmentManager.getEnvironmentVariables(
+          // Partial merge preserving all existing variables (including disabled
+          // ones and their flags); only the provided keys are overlaid.
+          const result = await this.environmentManager.mergeEnvironment(
             args.collectionPath,
             args.name,
-          );
-          const merged = { ...existing, ...args.variables };
-
-          const result = await this.environmentManager.updateEnvironment(
-            args.collectionPath,
-            args.name,
-            merged,
+            args.variables,
           );
 
           if (result.success) {
@@ -358,8 +353,8 @@ export class BrunoMcpServer {
           environment: z.string().min(1, 'Environment name is required').describe('Name of the existing environment.'),
           name: z.string().min(1, 'Variable name is required').describe('Variable key to set.'),
           value: z.union([z.string(), z.number(), z.boolean()]).describe('Variable value.'),
-          enabled: z.boolean().optional().describe('Whether the variable is enabled. Currently informational; not persisted as metadata.'),
-          secret: z.boolean().optional().describe('Whether the variable is a secret. Currently informational; not persisted as metadata.')
+          enabled: z.boolean().optional().describe('Whether the variable is enabled. Persisted: enabled=false is written as a disabled variable.'),
+          secret: z.boolean().optional().describe('Whether the variable is a secret. Ignored — not representable in the environment variable model (EnvVariable) or the YAML format.')
         }
       },
       async (args) => {
@@ -377,6 +372,7 @@ export class BrunoMcpServer {
             args.environment,
             args.name,
             args.value,
+            args.enabled,
           );
 
           if (result.success) {

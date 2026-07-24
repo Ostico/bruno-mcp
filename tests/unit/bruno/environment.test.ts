@@ -382,6 +382,53 @@ describe('EnvironmentManager', () => {
       expect(byName).toEqual({ a: '1', b: '99' });
     });
 
+    it('preserves a pre-existing DISABLED variable (and its flag) when adding a new one', async () => {
+      detectFormat.mockResolvedValue({ format: 'yaml' });
+      fs.readFile.mockResolvedValue('');
+      fs.access.mockResolvedValue(undefined);
+      parseYaml.mockReturnValue({
+        variables: [
+          { name: 'API_KEY', value: 'k' },
+          { name: 'DEBUG_URL', value: 'http://debug', disabled: true },
+        ],
+      });
+
+      await manager.setEnvironmentVariable('/col', 'dev', 'TIMEOUT', '30');
+
+      const envFile = generateYamlEnvironment.mock.calls.at(-1)[0];
+      const byName = Object.fromEntries(envFile.variables.map((v: any) => [v.name, v]));
+      expect(byName['API_KEY']).toEqual({ name: 'API_KEY', value: 'k' });
+      expect(byName['TIMEOUT']).toEqual({ name: 'TIMEOUT', value: '30' });
+      // The disabled var survives with its flag intact.
+      expect(byName['DEBUG_URL']).toEqual({ name: 'DEBUG_URL', value: 'http://debug', disabled: true });
+    });
+
+    it('persists enabled=false as a disabled variable (round-trip)', async () => {
+      detectFormat.mockResolvedValue({ format: 'yaml' });
+      fs.readFile.mockResolvedValue('');
+      fs.access.mockResolvedValue(undefined);
+      parseYaml.mockReturnValue({ variables: [{ name: 'keep', value: 'v' }] });
+
+      await manager.setEnvironmentVariable('/col', 'dev', 'FEATURE', 'off', false);
+
+      const envFile = generateYamlEnvironment.mock.calls.at(-1)[0];
+      const byName = Object.fromEntries(envFile.variables.map((v: any) => [v.name, v]));
+      expect(byName['FEATURE']).toEqual({ name: 'FEATURE', value: 'off', disabled: true });
+    });
+
+    it('enables a previously disabled variable when enabled=true', async () => {
+      detectFormat.mockResolvedValue({ format: 'yaml' });
+      fs.readFile.mockResolvedValue('');
+      fs.access.mockResolvedValue(undefined);
+      parseYaml.mockReturnValue({ variables: [{ name: 'FEATURE', value: 'v', disabled: true }] });
+
+      await manager.setEnvironmentVariable('/col', 'dev', 'FEATURE', 'v', true);
+
+      const envFile = generateYamlEnvironment.mock.calls.at(-1)[0];
+      const feature = envFile.variables.find((v: any) => v.name === 'FEATURE');
+      expect(feature.disabled).toBeUndefined();
+    });
+
     it('should return error on failure', async () => {
       detectFormat.mockRejectedValue(new Error('fail'));
       const result = await manager.setEnvironmentVariable('/col', 'dev', 'k', 'v');
@@ -423,9 +470,75 @@ describe('EnvironmentManager', () => {
       expect(byName).toEqual({ keep: 'yes' });
     });
 
+    it('removing one variable keeps a pre-existing DISABLED variable (and its flag)', async () => {
+      detectFormat.mockResolvedValue({ format: 'yaml' });
+      fs.readFile.mockResolvedValue('');
+      fs.access.mockResolvedValue(undefined);
+      parseYaml.mockReturnValue({
+        variables: [
+          { name: 'X', value: 'gone' },
+          { name: 'Y', value: 'http://debug', disabled: true },
+        ],
+      });
+
+      await manager.removeEnvironmentVariable('/col', 'dev', 'X');
+
+      const envFile = generateYamlEnvironment.mock.calls.at(-1)[0];
+      const byName = Object.fromEntries(envFile.variables.map((v: any) => [v.name, v]));
+      expect(byName['X']).toBeUndefined();
+      expect(byName['Y']).toEqual({ name: 'Y', value: 'http://debug', disabled: true });
+    });
+
     it('should return error on failure', async () => {
       detectFormat.mockRejectedValue(new Error('fail'));
       const result = await manager.removeEnvironmentVariable('/col', 'dev', 'k');
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('mergeEnvironment()', () => {
+    it('adds a new variable while preserving a pre-existing DISABLED variable and its flag', async () => {
+      detectFormat.mockResolvedValue({ format: 'yaml' });
+      fs.readFile.mockResolvedValue('');
+      fs.access.mockResolvedValue(undefined);
+      parseYaml.mockReturnValue({
+        variables: [
+          { name: 'API_KEY', value: 'k' },
+          { name: 'DEBUG_URL', value: 'http://debug', disabled: true },
+        ],
+      });
+
+      const result = await manager.mergeEnvironment('/col', 'dev', { TIMEOUT: '30' });
+      expect(result.success).toBe(true);
+
+      const envFile = generateYamlEnvironment.mock.calls.at(-1)[0];
+      const byName = Object.fromEntries(envFile.variables.map((v: any) => [v.name, v]));
+      expect(byName['API_KEY']).toEqual({ name: 'API_KEY', value: 'k' });
+      expect(byName['TIMEOUT']).toEqual({ name: 'TIMEOUT', value: '30' });
+      // The disabled var is NOT dropped and keeps its flag (the HIGH bug fix).
+      expect(byName['DEBUG_URL']).toEqual({ name: 'DEBUG_URL', value: 'http://debug', disabled: true });
+    });
+
+    it('overriding a disabled variable keeps it disabled', async () => {
+      detectFormat.mockResolvedValue({ format: 'yaml' });
+      fs.readFile.mockResolvedValue('');
+      fs.access.mockResolvedValue(undefined);
+      parseYaml.mockReturnValue({
+        variables: [{ name: 'DEBUG_URL', value: 'old', disabled: true }],
+      });
+
+      await manager.mergeEnvironment('/col', 'dev', { DEBUG_URL: 'new' });
+
+      const envFile = generateYamlEnvironment.mock.calls.at(-1)[0];
+      const debug = envFile.variables.find((v: any) => v.name === 'DEBUG_URL');
+      expect(debug).toEqual({ name: 'DEBUG_URL', value: 'new', disabled: true });
+    });
+
+    it('returns error when the environment does not exist', async () => {
+      detectFormat.mockResolvedValue({ format: 'yaml' });
+      fs.readFile.mockRejectedValue(new Error('ENOENT'));
+
+      const result = await manager.mergeEnvironment('/col', 'missing', { a: '1' });
       expect(result.success).toBe(false);
     });
   });

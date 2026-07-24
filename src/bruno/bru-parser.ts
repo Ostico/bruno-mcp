@@ -9,6 +9,7 @@ import {
   type BruBody,
   type MultipartFormPart,
   type BrunoEnvironment,
+  type EnvVariable,
   type HttpMethod,
   type AuthType,
   type BodyType,
@@ -251,6 +252,61 @@ export function generateBruEnvironment(env: BrunoEnvironment): string {
     name,
     value: String(value),
     enabled: true,
+    secret: false,
+    type: 'text',
+  }));
+
+  try {
+    return envJsonToBruV2({ variables });
+  } catch (err) {
+    throw new BrunoError(
+      `Failed to generate .bru environment: ${err instanceof Error ? err.message : String(err)}`,
+      'GENERATE_ERROR',
+    );
+  }
+}
+
+/**
+ * Parse a .bru environment preserving ALL variables and their enabled/disabled
+ * state (unlike parseBruEnvironment, which drops disabled variables). Used by
+ * the merge/write path so disabled variables survive edits.
+ *
+ * Note: the .bru `secret` flag is not represented in EnvVariable and is dropped.
+ */
+export function parseBruEnvironmentRaw(content: string): EnvVariable[] {
+  let json: BruLangEnvJson;
+  try {
+    json = bruToEnvJsonV2(content) as BruLangEnvJson;
+  } catch (err) {
+    throw new BrunoError(
+      `Failed to parse .bru environment: ${err instanceof Error ? err.message : String(err)}`,
+      'PARSE_ERROR',
+    );
+  }
+
+  const variables: EnvVariable[] = [];
+  if (json.variables && Array.isArray(json.variables)) {
+    for (const v of json.variables) {
+      if (v.name == null || String(v.name) === '') continue;
+      const item: EnvVariable = { name: v.name, value: v.value ?? '' };
+      if (v.enabled === false) item.disabled = true;
+      variables.push(item);
+    }
+  }
+  return variables;
+}
+
+/**
+ * Generate a .bru environment from a full variable list, preserving the
+ * enabled/disabled state of each variable (disabled === true → enabled: false).
+ *
+ * Note: `secret` is not carried by EnvVariable and is written as false.
+ */
+export function generateBruEnvironmentFull(vars: EnvVariable[]): string {
+  const variables = vars.map((v) => ({
+    name: v.name,
+    value: String(v.value ?? ''),
+    enabled: v.disabled !== true,
     secret: false,
     type: 'text',
   }));

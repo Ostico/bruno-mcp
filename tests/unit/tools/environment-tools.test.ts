@@ -11,15 +11,13 @@
 import { BrunoMcpServer } from '../../../src/server';
 
 // EnvironmentManager mock — capture the methods the tools use.
-const mockGetEnvironmentVariables = jest.fn();
-const mockUpdateEnvironment = jest.fn();
+const mockMergeEnvironment = jest.fn();
 const mockSetEnvironmentVariable = jest.fn();
 const mockRemoveEnvironmentVariable = jest.fn();
 jest.mock('../../../src/bruno/environment', () => ({
   createEnvironmentManager: jest.fn(() => ({
     createEnvironment: jest.fn(),
-    getEnvironmentVariables: (...args: unknown[]) => mockGetEnvironmentVariables(...args),
-    updateEnvironment: (...args: unknown[]) => mockUpdateEnvironment(...args),
+    mergeEnvironment: (...args: unknown[]) => mockMergeEnvironment(...args),
     setEnvironmentVariable: (...args: unknown[]) => mockSetEnvironmentVariable(...args),
     removeEnvironmentVariable: (...args: unknown[]) => mockRemoveEnvironmentVariable(...args),
   })),
@@ -110,9 +108,8 @@ describe('environment merge tools', () => {
   });
 
   describe('update_environment', () => {
-    it('merges new variables into existing ones WITHOUT clobbering (anti-clobber)', async () => {
-      mockGetEnvironmentVariables.mockResolvedValue({ keepA: 'a', keepB: 'b' });
-      mockUpdateEnvironment.mockResolvedValue({ success: true, path: '/col/environments/dev.yml' });
+    it('delegates to mergeEnvironment (which preserves unlisted vars incl. disabled)', async () => {
+      mockMergeEnvironment.mockResolvedValue({ success: true, path: '/col/environments/dev.yml' });
 
       const handler = getHandler(server, 'update_environment');
       const res = await handler({
@@ -122,18 +119,14 @@ describe('environment merge tools', () => {
       });
 
       expect(res.isError).toBeFalsy();
-      expect(mockGetEnvironmentVariables).toHaveBeenCalledWith('/col', 'dev');
-      // Merged set: pre-existing keepA preserved, keepB overridden, newC added.
-      expect(mockUpdateEnvironment).toHaveBeenCalledWith('/col', 'dev', {
-        keepA: 'a',
-        keepB: 'override',
+      expect(mockMergeEnvironment).toHaveBeenCalledWith('/col', 'dev', {
         newC: 'c',
+        keepB: 'override',
       });
     });
 
-    it('reports failure when the underlying update fails', async () => {
-      mockGetEnvironmentVariables.mockResolvedValue({});
-      mockUpdateEnvironment.mockResolvedValue({ success: false, error: 'nope' });
+    it('reports failure when the underlying merge fails', async () => {
+      mockMergeEnvironment.mockResolvedValue({ success: false, error: 'nope' });
 
       const handler = getHandler(server, 'update_environment');
       const res = await handler({ collectionPath: '/col', name: 'dev', variables: { x: '1' } });
@@ -154,7 +147,23 @@ describe('environment merge tools', () => {
       });
 
       expect(res.isError).toBeFalsy();
-      expect(mockSetEnvironmentVariable).toHaveBeenCalledWith('/col', 'dev', 'token', 'abc123');
+      expect(mockSetEnvironmentVariable).toHaveBeenCalledWith('/col', 'dev', 'token', 'abc123', undefined);
+    });
+
+    it('forwards the enabled flag so it can be persisted', async () => {
+      mockSetEnvironmentVariable.mockResolvedValue({ success: true, path: '/col/environments/dev.yml' });
+
+      const handler = getHandler(server, 'set_environment_variable');
+      const res = await handler({
+        collectionPath: '/col',
+        environment: 'dev',
+        name: 'FEATURE',
+        value: 'off',
+        enabled: false,
+      });
+
+      expect(res.isError).toBeFalsy();
+      expect(mockSetEnvironmentVariable).toHaveBeenCalledWith('/col', 'dev', 'FEATURE', 'off', false);
     });
   });
 

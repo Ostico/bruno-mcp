@@ -17,7 +17,7 @@ import {
 import { parse as parseYaml } from 'yaml';
 import { detectFormat } from './format-detector.js';
 import { generateYamlEnvironment } from './yaml-generator.js';
-import { parseBruEnvironment } from './bru-parser.js';
+import { parseBruEnvironment, parseBruEnvironmentRaw, generateBruEnvironmentFull } from './bru-parser.js';
 
 export class EnvironmentManager {
 
@@ -94,6 +94,124 @@ export class EnvironmentManager {
         `Failed to load environment ${environmentName}`,
         { originalError: error }
       );
+    }
+  }
+
+  /**
+   * Load an environment preserving ALL variables including DISABLED ones and
+   * their enabled/disabled flag. Unlike loadEnvironment (which returns only the
+   * enabled variables as a flat map for the executor), this is the full-fidelity
+   * read used by the merge/write path so disabled variables are never dropped.
+   */
+  async loadEnvironmentRaw(collectionPath: string, environmentName: string): Promise<EnvVariable[]> {
+    try {
+      const detection = await detectFormat(collectionPath);
+      const ext = detection.format === 'yaml' ? '.yml' : '.bru';
+      const envFilePath = join(collectionPath, 'environments', `${environmentName}${ext}`);
+      const envContent = await fs.readFile(envFilePath, 'utf-8');
+
+      if (detection.format === 'yaml') {
+        const parsed = parseYaml(envContent) as Record<string, unknown>;
+        const variables: EnvVariable[] = [];
+        if (Array.isArray(parsed?.variables)) {
+          for (const v of parsed.variables as Array<Record<string, unknown>>) {
+            if (v.name == null || String(v.name) === '') continue;
+            const item: EnvVariable = {
+              name: String(v.name),
+              value: (v.value as string | number | boolean) ?? '',
+            };
+            if (v.disabled === true) item.disabled = true;
+            variables.push(item);
+          }
+        }
+        return variables;
+      }
+
+      return parseBruEnvironmentRaw(envContent);
+
+    } catch (error) {
+      throw new BruFileError(
+        `Failed to load environment ${environmentName}`,
+        { originalError: error }
+      );
+    }
+  }
+
+  /**
+   * Write the FULL variable list (including disabled entries and their flags)
+   * to an existing environment file. This is the full-fidelity counterpart to
+   * updateEnvironment (which takes a flat enabled-only map).
+   */
+  async updateEnvironmentVariables(
+    collectionPath: string,
+    environmentName: string,
+    variables: EnvVariable[]
+  ): Promise<FileOperationResult> {
+    try {
+      const detection = await detectFormat(collectionPath);
+      const envDir = join(collectionPath, 'environments');
+      const ext = detection.format === 'yaml' ? '.yml' : '.bru';
+      const envFilePath = join(envDir, `${environmentName}${ext}`);
+
+      const exists = await this.fileExists(envFilePath);
+      if (!exists) {
+        throw new BrunoError(
+          `Environment ${environmentName} does not exist`,
+          'NOT_FOUND'
+        );
+      }
+
+      if (detection.format === 'yaml') {
+        const envFile: EnvFile = { name: environmentName, variables };
+        await fs.writeFile(envFilePath, generateYamlEnvironment(envFile));
+      } else {
+        await fs.writeFile(envFilePath, generateBruEnvironmentFull(variables));
+      }
+
+      return { success: true, path: envFilePath };
+
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  /**
+   * Partially merge the given variables into an existing environment WITHOUT
+   * clobbering the others. Pre-existing variables not listed are preserved,
+   * INCLUDING disabled ones and their enabled/disabled flag.
+   */
+  async mergeEnvironment(
+    collectionPath: string,
+    environmentName: string,
+    overrides: Record<string, string | number | boolean>
+  ): Promise<FileOperationResult> {
+    try {
+      const existing = await this.loadEnvironmentRaw(collectionPath, environmentName);
+      const byName = new Map<string, EnvVariable>();
+      for (const v of existing) byName.set(v.name, v);
+
+      for (const [key, value] of Object.entries(overrides)) {
+        const prev = byName.get(key);
+        const entry: EnvVariable = { name: key, value };
+        // Preserve the disabled flag of an existing variable being overridden.
+        if (prev?.disabled === true) entry.disabled = true;
+        byName.set(key, entry);
+      }
+
+      return await this.updateEnvironmentVariables(
+        collectionPath,
+        environmentName,
+        [...byName.values()],
+      );
+
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
     }
   }
 
@@ -248,19 +366,42 @@ export class EnvironmentManager {
   }
 
   /**
-   * Set a specific variable in an environment
+   * Set (add or update) a specific variable in an environment. Reads the FULL
+   * variable set so pre-existing variables — including disabled ones and their
+   * enabled/disabled flag — are preserved on write.
+   *
+   * @param enabled  Optional. When provided, persists the variable's
+   *   enabled/disabled state (enabled === false → written as disabled).
+   *   When omitted, an existing variable keeps its current state and a new
+   *   variable defaults to enabled.
    */
   async setEnvironmentVariable(
     collectionPath: string,
     environmentName: string,
     key: string,
-    value: string | number | boolean
+    value: string | number | boolean,
+    enabled?: boolean
   ): Promise<FileOperationResult> {
     try {
-      const environment = await this.loadEnvironment(collectionPath, environmentName);
-      environment.variables[key] = value;
+      const variables = await this.loadEnvironmentRaw(collectionPath, environmentName);
+      const idx = variables.findIndex(v => v.name === key);
 
-      return await this.updateEnvironment(collectionPath, environmentName, environment.variables);
+      // Resolve the disabled flag: explicit `enabled` wins; otherwise preserve
+      // the existing variable's flag (undefined → enabled for a new variable).
+      const disabled = enabled === undefined
+        ? (idx >= 0 ? variables[idx].disabled : undefined)
+        : !enabled;
+
+      const entry: EnvVariable = { name: key, value };
+      if (disabled === true) entry.disabled = true;
+
+      if (idx >= 0) {
+        variables[idx] = entry;
+      } else {
+        variables.push(entry);
+      }
+
+      return await this.updateEnvironmentVariables(collectionPath, environmentName, variables);
 
     } catch (error) {
       return {
@@ -271,7 +412,8 @@ export class EnvironmentManager {
   }
 
   /**
-   * Remove a variable from an environment
+   * Remove a variable from an environment. Reads the FULL variable set so all
+   * other variables — including disabled ones and their flags — are preserved.
    */
   async removeEnvironmentVariable(
     collectionPath: string,
@@ -279,10 +421,10 @@ export class EnvironmentManager {
     key: string
   ): Promise<FileOperationResult> {
     try {
-      const environment = await this.loadEnvironment(collectionPath, environmentName);
-      delete environment.variables[key];
+      const variables = await this.loadEnvironmentRaw(collectionPath, environmentName);
+      const filtered = variables.filter(v => v.name !== key);
 
-      return await this.updateEnvironment(collectionPath, environmentName, environment.variables);
+      return await this.updateEnvironmentVariables(collectionPath, environmentName, filtered);
 
     } catch (error) {
       return {

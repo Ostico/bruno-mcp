@@ -3,6 +3,8 @@ import {
   generateBruRequest,
   parseBruEnvironment,
   generateBruEnvironment,
+  parseBruEnvironmentRaw,
+  generateBruEnvironmentFull,
   injectBruScript,
 } from '../../../src/bruno/bru-parser.js';
 import { BrunoError } from '../../../src/bruno/types.js';
@@ -348,6 +350,33 @@ script:post-response {
       expect(() =>
         injectBruScript(BASE_BRU, 'post-response', exactScript, 'append'),
       ).not.toThrow();
+    });
+  });
+
+  describe('parseBruEnvironmentRaw()', () => {
+    it('preserves disabled variables (unlike parseBruEnvironment) with their flag', () => {
+      const vars = parseBruEnvironmentRaw(SAMPLE_ENV_BRU);
+      const byName = Object.fromEntries(vars.map(v => [v.name, v]));
+
+      expect(byName['base_url']).toEqual({ name: 'base_url', value: 'https://api.example.com' });
+      expect(byName['api_key']).toEqual({ name: 'api_key', value: 'secret123' });
+      // The disabled var survives and keeps disabled: true.
+      expect(byName['disabled_var']).toEqual({ name: 'disabled_var', value: 'old_value', disabled: true });
+    });
+  });
+
+  describe('generateBruEnvironmentFull()', () => {
+    it('round-trips the disabled flag', () => {
+      const bru = generateBruEnvironmentFull([
+        { name: 'host', value: 'localhost' },
+        { name: 'debug_url', value: 'http://debug', disabled: true },
+      ]);
+
+      const reparsed = parseBruEnvironmentRaw(bru);
+      const byName = Object.fromEntries(reparsed.map(v => [v.name, v]));
+
+      expect(byName['host']).toEqual({ name: 'host', value: 'localhost' });
+      expect(byName['debug_url']).toEqual({ name: 'debug_url', value: 'http://debug', disabled: true });
     });
   });
 });
