@@ -74,10 +74,115 @@ describe('inline scripts round-trip', () => {
 
     expect(before).toHaveLength(1);
     expect(before[0].code).toContain('req.setHeader("x-test", "1");');
-    // post-response and tests both map to after-response in YAML.
+    // post-response and tests share the single after-response slot in YAML, so
+    // they are merged into one block instead of producing two competing entries.
+    expect(after).toHaveLength(1);
+    expect(after[0].code).toContain('res.getStatus()');
+    expect(after[0].code).toContain('res.getBody()');
+  });
+
+  // ── Regression: repeated updates must not accumulate duplicate blocks ───────
+
+  it('replaces the tests script on update instead of appending a second block', async () => {
+    detectFormat.mockResolvedValue({ format: 'yaml' });
+
+    const created = await builder.createRequest({
+      ...baseInput,
+      scripts: { tests: 'test("AAA", () => {});' },
+    });
+
+    await builder.updateRequest(created.path!, {
+      scripts: { tests: 'test("BBB", () => {});' },
+    });
+
+    const scripts = parseYamlRequest(store.get(created.path!)!).runtime?.scripts ?? [];
+    const after = scripts.filter(s => s.type === 'after-response');
+
+    expect(after).toHaveLength(1);
+    expect(after[0].code).toContain('BBB');
+    expect(after[0].code).not.toContain('AAA');
+  });
+
+  it('is idempotent across repeated identical updates', async () => {
+    detectFormat.mockResolvedValue({ format: 'yaml' });
+
+    const created = await builder.createRequest({
+      ...baseInput,
+      scripts: { tests: 'test("AAA", () => {});' },
+    });
+
+    for (let i = 0; i < 3; i++) {
+      await builder.updateRequest(created.path!, {
+        scripts: { tests: 'test("SAME", () => {});' },
+      });
+    }
+
+    const scripts = parseYamlRequest(store.get(created.path!)!).runtime?.scripts ?? [];
+    expect(scripts.filter(s => s.type === 'after-response')).toHaveLength(1);
+  });
+
+  it('accumulates blocks only when scriptMode is append', async () => {
+    detectFormat.mockResolvedValue({ format: 'yaml' });
+
+    const created = await builder.createRequest({
+      ...baseInput,
+      scripts: { tests: 'test("AAA", () => {});' },
+    });
+
+    await builder.updateRequest(created.path!, {
+      scripts: { tests: 'test("BBB", () => {});' },
+      scriptMode: 'append',
+    });
+
+    const scripts = parseYamlRequest(store.get(created.path!)!).runtime?.scripts ?? [];
+    const after = scripts.filter(s => s.type === 'after-response');
+
     expect(after).toHaveLength(2);
-    expect(after.map(s => s.code).join('\n')).toContain('res.getStatus()');
-    expect(after.map(s => s.code).join('\n')).toContain('res.getBody()');
+    expect(after.map(s => s.code).join('\n')).toContain('AAA');
+    expect(after.map(s => s.code).join('\n')).toContain('BBB');
+  });
+
+  it('replaces only the targeted slot, leaving pre-request intact', async () => {
+    detectFormat.mockResolvedValue({ format: 'yaml' });
+
+    const created = await builder.createRequest({
+      ...baseInput,
+      scripts: {
+        'pre-request': 'req.setHeader("x-keep", "1");',
+        tests: 'test("AAA", () => {});',
+      },
+    });
+
+    await builder.updateRequest(created.path!, {
+      scripts: { tests: 'test("BBB", () => {});' },
+    });
+
+    const scripts = parseYamlRequest(store.get(created.path!)!).runtime?.scripts ?? [];
+    expect(scripts.filter(s => s.type === 'before-request')[0].code).toContain('x-keep');
+    expect(scripts.filter(s => s.type === 'after-response')[0].code).toContain('BBB');
+  });
+
+  it('replaces the tests block in .bru files without touching post-response', async () => {
+    detectFormat.mockResolvedValue({ format: 'bru' });
+
+    const created = await builder.createRequest({
+      ...baseInput,
+      scripts: {
+        'post-response': 'bru.setVar("keep", 1);',
+        tests: 'test("AAA", () => {});',
+      },
+    });
+
+    await builder.updateRequest(created.path!, {
+      scripts: { tests: 'test("BBB", () => {});' },
+    });
+
+    // parseBruRequest exposes script bodies as { exec: string[] }
+    const parsed = parseBruRequest(store.get(created.path!)!);
+    const testsCode = JSON.stringify(parsed.tests);
+    expect(testsCode).toContain('BBB');
+    expect(testsCode).not.toContain('AAA');
+    expect(JSON.stringify(parsed.script)).toContain('bru.setVar');
   });
 
   it('normalizes the after-response alias to a post-response (after-response) entry', async () => {

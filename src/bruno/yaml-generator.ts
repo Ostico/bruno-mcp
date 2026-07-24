@@ -145,6 +145,49 @@ export function generateYamlEnvironment(env: EnvFile): string {
  * @param mode        'append' adds to existing scripts, 'replace' replaces scripts of same type
  * @returns Updated YAML content
  */
+/**
+ * Remove every script of the given type from YAML request file content.
+ *
+ * Bruno's .yml dialect has a single `after-response` slot, so removing
+ * 'after-response' removes what the MCP surface calls both post-response
+ * and tests.
+ *
+ * @returns Updated YAML content
+ */
+export function removeYamlScript(
+  content: string,
+  scriptType: 'before-request' | 'after-response',
+): string {
+  if (scriptType !== 'before-request' && scriptType !== 'after-response') {
+    throw new BrunoError(
+      `Invalid script type "${scriptType}": expected "before-request" or "after-response"`,
+      'VALIDATION_ERROR',
+    );
+  }
+
+  const parsed = parseYaml(content) as Record<string, unknown>;
+
+  const runtime = parsed.runtime as Record<string, unknown> | undefined;
+  if (!runtime || typeof runtime !== 'object' || !Array.isArray(runtime.scripts)) {
+    return yamlStringify(parsed, { indent: 2 });
+  }
+
+  const scripts = runtime.scripts as Array<{ type: string; code: string }>;
+  const kept = scripts.filter((s) => s.type !== scriptType);
+
+  if (kept.length === 0) {
+    // Drop the now-empty containers rather than leaving `scripts: []` behind
+    delete runtime.scripts;
+    if (Object.keys(runtime).length === 0) {
+      delete parsed.runtime;
+    }
+  } else {
+    runtime.scripts = kept;
+  }
+
+  return yamlStringify(parsed, { indent: 2 });
+}
+
 export function injectYamlScript(
   content: string,
   scriptType: 'before-request' | 'after-response',

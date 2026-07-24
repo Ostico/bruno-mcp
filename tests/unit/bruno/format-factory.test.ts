@@ -30,6 +30,9 @@ jest.mock('../../../src/bruno/bru-parser.js', () => ({
     (_content: string, _type: string, code: string, _mode: string) =>
       `injected-bru:${code}`,
   ),
+  removeBruScript: jest.fn(
+    (_content: string, type: string) => `removed-bru:${type}`,
+  ),
 }));
 
 // yaml-parser mocks
@@ -48,6 +51,9 @@ jest.mock('../../../src/bruno/yaml-generator.js', () => ({
     (_content: string, _type: string, code: string, _mode: string) =>
       `injected-yaml:${code}`,
   ),
+  removeYamlScript: jest.fn(
+    (_content: string, type: string) => `removed-yaml:${type}`,
+  ),
 }));
 
 // env-loader uses loadEnvironment (file-based), but the factory needs a pure
@@ -58,9 +64,9 @@ jest.mock('../../../src/bruno/yaml-generator.js', () => ({
 // ---------------------------------------------------------------------------
 // Import mocked modules so we can inspect calls
 // ---------------------------------------------------------------------------
-import { parseBruRequest, generateBruRequest, parseBruEnvironment, generateBruEnvironment, injectBruScript } from '../../../src/bruno/bru-parser.js';
+import { parseBruRequest, generateBruRequest, parseBruEnvironment, generateBruEnvironment, injectBruScript, removeBruScript } from '../../../src/bruno/bru-parser.js';
 import { parseYamlRequest } from '../../../src/bruno/yaml-parser.js';
-import { generateYamlRequest, generateYamlEnvironment, injectYamlScript } from '../../../src/bruno/yaml-generator.js';
+import { generateYamlRequest, generateYamlEnvironment, injectYamlScript, removeYamlScript } from '../../../src/bruno/yaml-generator.js';
 
 describe('format-factory', () => {
   // =========================================================================
@@ -359,17 +365,55 @@ describe('format-factory', () => {
   });
 
   // =========================================================================
-  // createWriter — YAML tests+replace safe-mode downgrade
+  // createWriter — YAML shared after-response slot
   // =========================================================================
-  describe('createWriter YAML tests replace safe-mode', () => {
-    it('downgrades replace to append for tests scripts', () => {
+  describe('createWriter YAML tests replace mode', () => {
+    it('passes replace through for tests scripts (no silent downgrade)', () => {
       const writer = createWriter('yaml');
       writer.injectScript('info:\n  name: T\n', 'tests', 'test code', 'replace');
       expect(injectYamlScript).toHaveBeenCalledWith(
         'info:\n  name: T\n',
         'after-response',
         'test code',
-        'append',
+        'replace',
+      );
+    });
+  });
+
+  // =========================================================================
+  // createWriter — removeScript
+  // =========================================================================
+  describe('createWriter removeScript', () => {
+    it('maps tests to after-response for the YAML writer', () => {
+      const writer = createWriter('yaml');
+      writer.removeScript('info:\n  name: T\n', 'tests');
+      expect(removeYamlScript).toHaveBeenCalledWith(
+        'info:\n  name: T\n',
+        'after-response',
+      );
+    });
+
+    it('maps pre-request to before-request for the YAML writer', () => {
+      const writer = createWriter('yaml');
+      writer.removeScript('info:\n  name: T\n', 'pre-request');
+      expect(removeYamlScript).toHaveBeenCalledWith(
+        'info:\n  name: T\n',
+        'before-request',
+      );
+    });
+
+    it('keeps the canonical type for the .bru writer', () => {
+      const writer = createWriter('bru');
+      writer.removeScript('meta {\n  name: T\n}\n', 'tests');
+      expect(removeBruScript).toHaveBeenCalledWith('meta {\n  name: T\n}\n', 'tests');
+    });
+
+    it('maps post-response to post-response for the .bru writer', () => {
+      const writer = createWriter('bru');
+      writer.removeScript('meta {\n  name: T\n}\n', 'post-response');
+      expect(removeBruScript).toHaveBeenCalledWith(
+        'meta {\n  name: T\n}\n',
+        'post-response',
       );
     });
   });

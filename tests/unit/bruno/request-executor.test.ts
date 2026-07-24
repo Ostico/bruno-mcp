@@ -104,6 +104,23 @@ runtime:
         });
 `;
 
+// Assertions at the top level of the script: they execute, but only test()
+// blocks are recorded, so a passing bare expect() reports nothing at all.
+const REQUEST_WITH_BARE_ASSERTION_YAML = `
+info:
+  name: Bare Assert
+  type: http
+  seq: 3
+http:
+  method: GET
+  url: "{{base_url}}/health"
+runtime:
+  scripts:
+    - type: after-response
+      code: |
+        expect(res.getStatus()).to.equal(200);
+`;
+
 const ENV_YAML = `
 variables:
   - name: base_url
@@ -357,6 +374,46 @@ describe('RequestExecutor', () => {
         description: 'should have status field',
         status: 'pass',
       });
+    });
+
+    it('should warn when assertions ran outside a test() block', async () => {
+      setupFsReaddir(['Bare Assert.yml']);
+      setupFsReadFile({
+        'Bare Assert.yml': REQUEST_WITH_BARE_ASSERTION_YAML,
+        'dev.yml': ENV_YAML,
+      });
+      setupFsStat(['/test-collection', '/test-collection/environments']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ status: 'healthy' }));
+
+      const result = await RequestExecutor.executeCollection(
+        '/test-collection',
+        { environment: 'dev' },
+      );
+
+      // The request passes and records no assertions — the warning is the only
+      // signal that the script's expectations were silently dropped.
+      expect(result.results[0].tests).toHaveLength(0);
+      expect(result.results[0].warnings).toHaveLength(1);
+      expect(result.results[0].warnings![0]).toContain('outside a test() block');
+    });
+
+    it('should not attach warnings when assertions are properly wrapped', async () => {
+      setupFsReaddir(['Get Status.yml']);
+      setupFsReadFile({
+        'Get Status.yml': REQUEST_WITH_TESTS_YAML,
+        'dev.yml': ENV_YAML,
+      });
+      setupFsStat(['/test-collection', '/test-collection/environments']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ status: 'healthy' }));
+
+      const result = await RequestExecutor.executeCollection(
+        '/test-collection',
+        { environment: 'dev' },
+      );
+
+      expect(result.results[0].warnings).toBeUndefined();
     });
 
     it('should handle network errors gracefully and continue', async () => {

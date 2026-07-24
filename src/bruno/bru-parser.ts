@@ -327,6 +327,52 @@ export function generateBruEnvironmentFull(vars: EnvVariable[]): string {
   }
 }
 
+/**
+ * Remove a script block of the given type from .bru file content.
+ * Unlike the .yml dialect, .bru has distinct slots for pre-request,
+ * post-response, and tests, so removal is precise.
+ */
+export function removeBruScript(
+  content: string,
+  scriptType: 'pre-request' | 'post-response' | 'tests',
+): string {
+  const validTypes = ['pre-request', 'post-response', 'tests'];
+  if (!validTypes.includes(scriptType)) {
+    throw new BrunoError(`Invalid script type: ${scriptType}`, 'VALIDATION_ERROR');
+  }
+
+  let json: BruLangJson;
+  try {
+    json = bruToJsonV2(content) as BruLangJson;
+  } catch (err) {
+    throw new BrunoError(
+      `Failed to parse .bru file for script removal: ${err instanceof Error ? err.message : String(err)}`,
+      'PARSE_ERROR',
+    );
+  }
+
+  if (scriptType === 'tests') {
+    delete json.tests;
+  } else if (json.script) {
+    const targetField = scriptType === 'pre-request' ? 'req' : 'res';
+    delete json.script[targetField];
+    if (Object.keys(json.script).length === 0) {
+      delete json.script;
+    }
+  }
+
+  try {
+    return jsonToBruV2(json);
+  } catch (err) {
+    /* istanbul ignore next -- defensive: json here comes from bruToJsonV2 of valid
+       content with only tests/script fields deleted, so jsonToBruV2 cannot fail */
+    throw new BrunoError(
+      `Failed to generate .bru file after script removal: ${err instanceof Error ? err.message : String(err)}`,
+      'GENERATE_ERROR',
+    );
+  }
+}
+
 export function injectBruScript(
   content: string,
   scriptType: 'pre-request' | 'post-response' | 'tests',

@@ -407,10 +407,14 @@ async function executeSingleRequest(
     const wrappedResponse = await wrapFetchResponse(response, durationMs);
 
     let tests: TestResult[] = [];
+    let scriptWarnings: string[] | undefined;
     const testScript = getAfterResponseScript(yaml);
     if (testScript) {
       const scriptResult = await TestRunner.runScript(testScript, wrappedResponse);
       tests = scriptResult.results;
+      if (scriptResult.warnings && scriptResult.warnings.length > 0) {
+        scriptWarnings = scriptResult.warnings;
+      }
 
       // Feed extracted variables into the store for cross-request propagation
       if (variableStore) {
@@ -427,6 +431,7 @@ async function executeSingleRequest(
       status: response.status,
       duration_ms: durationMs,
       tests,
+      ...(scriptWarnings ? { warnings: scriptWarnings } : {}),
       error: preScriptError,
     };
 
