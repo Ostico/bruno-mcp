@@ -324,7 +324,7 @@ Update an existing Bruno request file with partial-merge semantics. Only provide
 | `post-response` | `after-response` |
 | `tests` | _(none)_ |
 
-Aliases are normalized to the canonical key when the request is written. `post-response` and `tests` both run after the response is received (in the `.bru` and YAML runtime formats they are stored as separate blocks but concatenated into one after-response script at execution time).
+Aliases are normalized to the canonical key when the request is written. `post-response` and `tests` both run after the response is received. In `.bru` collections they are separate blocks; in `.yml` collections Bruno has a single `after-response` slot, so both compile into one block — supplying both in the same call merges them in the order pre-request, post-response, tests.
 
 **Example:**
 ```json
@@ -335,6 +335,64 @@ Aliases are normalized to the canonical key when the request is written. `post-r
   }
 }
 ```
+
+##### Assertions must be wrapped in `test()`
+
+Only assertions inside a `test(description, callback)` block are recorded. A bare
+top-level `expect()` still *executes*, but a **passing** one produces no result at
+all, so `run_collection` reports `"tests": []` while the request itself counts as
+passed — a run that looks green with nothing actually asserted.
+
+```js
+// ✅ Recorded — shows up in run_collection results
+test("status is 200", function() {
+  expect(res.getStatus()).to.equal(200);
+});
+
+// ❌ Runs, but a passing assertion is never reported
+expect(res.getStatus()).to.equal(200);
+```
+
+The runner detects this and attaches a `warnings` array to the affected entry in
+`run_collection` output, so the silent case is visible:
+
+```json
+{
+  "name": "Get Order",
+  "status": 200,
+  "tests": [],
+  "warnings": [
+    "1 assertion ran outside a test() block and was not recorded. This run therefore reports zero assertions even though the request itself succeeded. Wrap assertions so they appear in results: test(\"descriptive name\", function() { expect(res.getStatus()).to.equal(200); });"
+  ]
+}
+```
+
+A *failing* bare assertion is not silent — it throws out of the script and is
+reported as a `Script error` failure.
+
+**Available in scripts:** `res.getStatus()`, `res.getStatusText()`,
+`res.getHeader(name)`, `res.getHeaders()`, `res.getBody()`,
+`res.getResponseTime()`, `bru.setVar(name, value)`, `bru.getVar(name)`, and
+`expect(actual)` with `.to.equal`, `.to.contain`/`.to.include`,
+`.to.have.property`/`.to.have.lengthOf`, `.to.be.a`/`.an`/`.below`/`.above`,
+plus `.to.not.*` negations. Pre-request scripts instead get `req.getUrl()`,
+`req.setUrl()`, `req.getHeader()`, `req.setHeader()`, `req.getBody()`,
+`req.setBody()`, and `bru.setVar`/`getVar`.
+
+##### Replace vs. append
+
+`modify_request` **replaces** the script of each provided type by default, so
+calling it repeatedly with the same payload is idempotent instead of stacking up
+duplicate blocks. Pass `scriptMode: "append"` when you deliberately want to
+concatenate onto what is already there.
+
+| Tool | Default `scriptMode` |
+|---|---|
+| `modify_request` | `replace` |
+| `add_test_script` | `append` (the tool's purpose is to add) |
+
+In `.yml` collections `post-response` and `tests` share one `after-response`
+block, so replacing either one overwrites that shared block.
 
 ### `create_crud_requests`
 Generate a complete set of CRUD operations (5 requests: List, Get, Create, Update, Delete).
@@ -385,7 +443,34 @@ Add test scripts to existing request files. Format-aware: injects into `.bru` or
 **Parameters:**
 - `bruFilePath` (string): Path to `.bru` or `.yml` request file
 - `scriptType` (string): `"pre-request"`, `"post-response"`, or `"tests"` (aliases `"before-request"` → `pre-request` and `"after-response"` → `post-response` also accepted; see [Inline Scripts](#inline-scripts))
-- `script` (string): JavaScript code (max 50KB)
+- `script` (string): JavaScript code (max 50KB). Wrap assertions in `test("name", function() { ... })` — see [Assertions must be wrapped in `test()`](#assertions-must-be-wrapped-in-test)
+- `scriptMode` (string, optional): `"append"` (default) or `"replace"`
+
+### `remove_script`
+Delete a script from a request, leaving the rest of the request intact. This is the
+way to undo or clean up a script written by `create_request`, `modify_request`, or
+`add_test_script` — including duplicate blocks accumulated by appending.
+
+**Parameters:**
+- `bruFilePath` (string): Path to `.bru` or `.yml` request file
+- `scriptType` (string): `"pre-request"`, `"post-response"`, or `"tests"` (aliases accepted)
+
+Removing the last script also drops the now-empty script container. If there was
+nothing to remove, the tool reports that and does not rewrite the file. In `.yml`
+collections `post-response` and `tests` share one `after-response` block, so
+removing either clears that shared block.
+
+### `delete_request`
+Permanently delete a request file from a collection. Use this to remove a request
+created by mistake; to clear only a script and keep the request, use
+`remove_script` instead.
+
+**Parameters:**
+- `filePath` (string): Path to the `.bru` or `.yml` request file to delete
+- `confirm` (boolean): Must be `true` — explicit acknowledgement that the file is deleted permanently
+
+Only `.yml`/`.bru` files whose extension matches a detected Bruno collection can be
+deleted. The file is unlinked from disk and cannot be recovered through this server.
 
 ### `list_collections`
 Discover Bruno collections from the Bruno app's `workspace.yml`.
@@ -502,8 +587,8 @@ Test scripts run in a sandboxed VM with these globals:
 
 | Global | Description |
 |---|---|
-| `test(description, fn)` | Define a test case. `fn` is called synchronously; exceptions mark the test as failed. |
-| `expect(value)` | Chai `expect` — supports `.to.equal()`, `.to.have.property()`, `.to.be.above()`, etc. |
+| `test(description, fn)` | Define a test case. `fn` is called synchronously; exceptions mark the test as failed. **Required for an assertion to be reported** — see [Assertions must be wrapped in `test()`](#assertions-must-be-wrapped-in-test). |
+| `expect(value)` | Chai-style `expect` — supports `.to.equal()`, `.to.have.property()`, `.to.be.above()`, etc. |
 | `res` | Response object (see methods below) |
 | `bru` | Variable store for cross-request chaining (see methods below) |
 

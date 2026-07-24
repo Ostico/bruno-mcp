@@ -179,6 +179,39 @@ describe('modify_request tool handler', () => {
       expect(updates).not.toHaveProperty('headers');
     });
 
+    it('defaults inline scripts to replace so repeated calls are idempotent', async () => {
+      await handler({
+        filePath: '/workspace/collection/get-users.yml',
+        scripts: { tests: 'test("ok", function() {});' },
+      });
+
+      const [, updates] = mockUpdateRequest.mock.calls[0];
+      expect(updates.scripts).toEqual({ tests: 'test("ok", function() {});' });
+      expect(updates.scriptMode).toBe('replace');
+    });
+
+    it('honours an explicit append scriptMode', async () => {
+      await handler({
+        filePath: '/workspace/collection/get-users.yml',
+        scripts: { tests: 'test("ok", function() {});' },
+        scriptMode: 'append',
+      });
+
+      const [, updates] = mockUpdateRequest.mock.calls[0];
+      expect(updates.scriptMode).toBe('append');
+    });
+
+    it('omits scriptMode when no scripts are provided', async () => {
+      await handler({
+        filePath: '/workspace/collection/get-users.yml',
+        url: 'https://updated.example.com',
+        scriptMode: 'append',
+      });
+
+      const [, updates] = mockUpdateRequest.mock.calls[0];
+      expect(updates).not.toHaveProperty('scriptMode');
+    });
+
     it('works with .bru files in BRU collections', async () => {
       mockDetectFormat.mockResolvedValue({
         format: 'bru',

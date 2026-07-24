@@ -8,7 +8,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 
 import path from 'path';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile, unlink } from 'node:fs/promises';
 
 // Import our Bruno modules
 import { createCollectionManager } from './bruno/collection.js';
@@ -30,6 +30,7 @@ import {
   BodyType
 } from './bruno/types.js';
 import { findCollectionRoot, detectFormat } from './bruno/format-detector.js';
+import type { CollectionFormat } from './bruno/format-detector.js';
 import { createWriter, normalizeScriptType } from './bruno/format-factory.js';
 
 /**
@@ -46,7 +47,14 @@ const inlineScriptsSchema = z.object({
   'after-response': z.string().optional(),
 }).optional().describe(
   'Inline scripts to persist with the request. Keys: pre-request, post-response, tests ' +
-  '(aliases before-request/after-response accepted). Avoids a separate add_test_script call.',
+  '(aliases before-request/after-response accepted). Avoids a separate add_test_script call. ' +
+  'IMPORTANT for tests/post-response: only assertions inside a test() block are reported. ' +
+  'Write test("status is 200", function() { expect(res.getStatus()).to.equal(200); }); — a bare ' +
+  'expect() at the top level still runs, but a passing one records nothing, so run_collection ' +
+  'reports "tests": [] and the request looks green with no assertions. Available in scripts: ' +
+  'res.getStatus()/getStatusText()/getHeader(name)/getHeaders()/getBody()/getResponseTime(), ' +
+  'bru.setVar(name, value)/getVar(name), and expect(actual) with .to.equal/.contain/.include, ' +
+  '.to.have.property/.lengthOf, .to.be.a/.an/.below/.above, and .to.not.* negations.',
 );
 
 export class BrunoMcpServer {
@@ -121,6 +129,8 @@ export class BrunoMcpServer {
     this.setupCreateRequestTool();
     this.setupModifyRequestTool();
     this.setupAddTestScriptTool();
+    this.setupRemoveScriptTool();
+    this.setupDeleteRequestTool();
     this.setupCreateTestSuiteTool();
     this.setupCreateCrudRequestsTool();
     this.setupListCollectionsTool();
@@ -587,7 +597,7 @@ export class BrunoMcpServer {
       'modify_request',
       {
         title: 'Modify Request',
-        description: 'Update an existing Bruno request file with partial-merge semantics. Only provided fields are updated; all other fields are preserved. Supports multipart/form-data with file uploads and per-part contentType, and inline scripts (pre-request/post-response/tests) appended to the request.',
+        description: 'Update an existing Bruno request file with partial-merge semantics. Only provided fields are updated; all other fields are preserved. Supports multipart/form-data with file uploads and per-part contentType. Inline scripts REPLACE the existing script of the same type by default (idempotent — repeated calls do not accumulate duplicate blocks); pass scriptMode:"append" to concatenate instead. Use remove_script to clear a script entirely.',
         inputSchema: {
           filePath: z.string().min(1, 'File path is required').describe('Absolute path to the .yml or .bru request file to modify. Get from list_requests or get_collection_stats.'),
           name: z.string().optional(),
@@ -609,7 +619,14 @@ export class BrunoMcpServer {
             config: z.record(z.string())
           }).optional(),
           query: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
-          scripts: inlineScriptsSchema
+          scripts: inlineScriptsSchema,
+          scriptMode: z.enum(['replace', 'append']).optional().default('replace').describe(
+            'How to write the scripts field. "replace" (default) overwrites the existing script ' +
+            'of each provided type, so calling modify_request repeatedly is idempotent. "append" ' +
+            'concatenates onto the existing script, which accumulates blocks across calls. ' +
+            'In .yml collections post-response and tests share one after-response slot, so ' +
+            'replacing either overwrites that shared block; supplying both in one call merges them.',
+          )
         }
       },
       async (args) => {
@@ -671,7 +688,12 @@ export class BrunoMcpServer {
             };
           }
           if (args.query !== undefined) updates.query = args.query;
-          if (args.scripts !== undefined) updates.scripts = args.scripts as Record<string, string>;
+          if (args.scripts !== undefined) {
+            updates.scripts = args.scripts as Record<string, string>;
+            // Default explicitly: the zod default only applies when the SDK
+            // validates input, not when the handler is invoked directly.
+            updates.scriptMode = args.scriptMode ?? 'replace';
+          }
 
           // 6. Call updateRequest with partial merge
           const result = await this.requestBuilder.updateRequest(args.filePath, updates);
@@ -719,11 +741,21 @@ export class BrunoMcpServer {
       'add_test_script',
       {
         title: 'Add Test Script',
-        description: 'Add pre-request, post-response, or tests scripts to a Bruno request. Canonical scriptType values are pre-request/post-response/tests; the aliases before-request (→ pre-request) and after-response (→ post-response) are also accepted.',
+        description: 'Add pre-request, post-response, or tests scripts to a Bruno request. Canonical scriptType values are pre-request/post-response/tests; the aliases before-request (→ pre-request) and after-response (→ post-response) are also accepted. Appends to any existing script of that type by default — pass scriptMode:"replace" to overwrite it, or use remove_script to clear it. Assertions must be wrapped in test("name", function() { ... }) to be reported.',
         inputSchema: {
           bruFilePath: z.string().min(1, 'BRU file path is required').describe('Absolute path to the .yml or .bru request file. Get from list_requests or get_collection_stats.'),
           scriptType: z.enum(['pre-request', 'post-response', 'tests', 'before-request', 'after-response']).describe('Script type. Canonical: pre-request, post-response, tests. Aliases: before-request (→ pre-request), after-response (→ post-response).'),
-          script: z.string().min(1, 'Script content is required')
+          script: z.string().min(1, 'Script content is required').describe(
+            'Script body. For post-response/tests, wrap every assertion in a test() block — ' +
+            'test("status is 200", function() { expect(res.getStatus()).to.equal(200); }); — ' +
+            'because only test() blocks are recorded in run_collection results. A bare passing ' +
+            'expect() at the top level records nothing and the run reports "tests": [].',
+          ),
+          scriptMode: z.enum(['append', 'replace']).optional().default('append').describe(
+            'How to write the script. "append" (default) concatenates onto any existing script ' +
+            'of this type; "replace" overwrites it. In .yml collections post-response and tests ' +
+            'share one after-response slot, so replacing either overwrites that shared block.',
+          )
         }
       },
       async (args) => {
@@ -789,7 +821,10 @@ export class BrunoMcpServer {
           // 8. Normalize aliases to canonical script type, then inject
           const canonicalScriptType = normalizeScriptType(args.scriptType);
           const writer = createWriter(detection.format);
-          const updated = writer.injectScript(content, canonicalScriptType, args.script, 'append');
+          // Default explicitly: the zod default only applies when the SDK
+          // validates input, not when the handler is invoked directly.
+          const scriptMode = args.scriptMode ?? 'append';
+          const updated = writer.injectScript(content, canonicalScriptType, args.script, scriptMode);
 
           // 9. Write back
           await writeFile(args.bruFilePath, updated);
@@ -799,7 +834,10 @@ export class BrunoMcpServer {
             content: [
               {
                 type: 'text',
-                text: `Successfully added ${canonicalScriptType} script to ${path.basename(args.bruFilePath)} (${detection.format} format)`
+                text: `Successfully ${scriptMode === 'replace' ? 'replaced' : 'appended'} ${canonicalScriptType} script in ${path.basename(args.bruFilePath)} (${detection.format} format)`
+                  + (detection.format === 'yaml' && (canonicalScriptType === 'tests' || canonicalScriptType === 'post-response')
+                    ? '. Note: .yml collections store post-response and tests in one shared after-response block.'
+                    : '')
               }
             ]
           };
@@ -809,6 +847,182 @@ export class BrunoMcpServer {
               {
                 type: 'text',
                 text: `❌ Error adding test script: ${error instanceof Error ? error.message : 'Unknown error'}`
+              }
+            ],
+            isError: true
+          };
+        }
+      }
+    );
+  }
+
+  /**
+   * Shared preflight for tools that operate on an existing request file:
+   * path traversal / null bytes, extension, collection root, format match.
+   */
+  private async resolveRequestFile(
+    filePath: string,
+    argName: string,
+  ): Promise<
+    | { ok: true; format: CollectionFormat }
+    | { ok: false; message: string }
+  > {
+    const pathCheck = this.validateToolPath(filePath);
+    if (!pathCheck.valid) {
+      return { ok: false, message: `Invalid ${argName}: ${pathCheck.reason}` };
+    }
+
+    const ext = path.extname(filePath).toLowerCase();
+    if (ext !== '.bru' && ext !== '.yml') {
+      return {
+        ok: false,
+        message: `Invalid file extension "${ext}": expected .bru or .yml`,
+      };
+    }
+
+    const collectionRoot = await findCollectionRoot(filePath);
+    if (!collectionRoot) {
+      return {
+        ok: false,
+        message:
+          'Could not determine collection format: no opencollection.yml or bruno.json found within 10 parent directories',
+      };
+    }
+
+    const detection = await detectFormat(collectionRoot);
+    const expectedExt = detection.format === 'yaml' ? '.yml' : '.bru';
+    if (ext !== expectedExt) {
+      return {
+        ok: false,
+        message: `File extension "${ext}" does not match collection format "${detection.format}" (expected "${expectedExt}")`,
+      };
+    }
+
+    return { ok: true, format: detection.format };
+  }
+
+  /**
+   * Tool: remove_script
+   */
+  private setupRemoveScriptTool(): void {
+    this.server.registerTool(
+      'remove_script',
+      {
+        title: 'Remove Script',
+        description: 'Delete a pre-request, post-response, or tests script from a Bruno request, leaving the rest of the request intact. Use this to undo or clean up a script written by create_request/modify_request/add_test_script — including duplicate blocks accumulated by appending. Canonical scriptType values are pre-request/post-response/tests; the aliases before-request and after-response are accepted. Removing all scripts also drops the now-empty script container.',
+        inputSchema: {
+          bruFilePath: z.string().min(1, 'BRU file path is required').describe('Absolute path to the .yml or .bru request file. Get from list_requests or get_collection_stats.'),
+          scriptType: z.enum(['pre-request', 'post-response', 'tests', 'before-request', 'after-response']).describe(
+            'Which script to remove. In .yml collections post-response and tests share one ' +
+            'after-response block, so removing either clears that shared block; .bru files keep ' +
+            'the three slots separate and removal is precise.',
+          )
+        }
+      },
+      async (args) => {
+        try {
+          const resolved = await this.resolveRequestFile(args.bruFilePath, 'bruFilePath');
+          if (!resolved.ok) {
+            return {
+              content: [{ type: 'text', text: resolved.message }],
+              isError: true,
+            };
+          }
+
+          // Read-modify-write is not atomic; single-client MCP usage is safe.
+          const content = await readFile(args.bruFilePath, 'utf-8');
+          const canonicalScriptType = normalizeScriptType(args.scriptType);
+          const writer = createWriter(resolved.format);
+          const updated = writer.removeScript(content, canonicalScriptType);
+
+          if (updated === content) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `No ${canonicalScriptType} script found in ${path.basename(args.bruFilePath)} — nothing to remove.`
+                }
+              ]
+            };
+          }
+
+          await writeFile(args.bruFilePath, updated);
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Removed ${canonicalScriptType} script from ${path.basename(args.bruFilePath)} (${resolved.format} format)`
+                  + (resolved.format === 'yaml' && (canonicalScriptType === 'tests' || canonicalScriptType === 'post-response')
+                    ? '. Note: .yml collections store post-response and tests in one shared after-response block, so both are now cleared.'
+                    : '')
+              }
+            ]
+          };
+        } catch (error) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `❌ Error removing script: ${error instanceof Error ? error.message : 'Unknown error'}`
+              }
+            ],
+            isError: true
+          };
+        }
+      }
+    );
+  }
+
+  /**
+   * Tool: delete_request
+   */
+  private setupDeleteRequestTool(): void {
+    this.server.registerTool(
+      'delete_request',
+      {
+        title: 'Delete Request',
+        description: 'Permanently delete a Bruno request file from a collection. Use this to remove a request created by mistake; the file is unlinked from disk and cannot be recovered through this server. Only .yml/.bru files inside a detected Bruno collection can be deleted. To clear just a script and keep the request, use remove_script instead.',
+        inputSchema: {
+          filePath: z.string().min(1, 'File path is required').describe('Absolute path to the .yml or .bru request file to delete. Get from list_requests or get_collection_stats.'),
+          confirm: z.literal(true).describe('Must be true. Explicit acknowledgement that the file is deleted permanently.')
+        }
+      },
+      async (args) => {
+        try {
+          // Re-checked here, not only in the schema: deletion is irreversible
+          // and the handler must not depend on upstream validation.
+          if (args.confirm !== true) {
+            return {
+              content: [{ type: 'text', text: 'Refusing to delete: confirm must be true.' }],
+              isError: true,
+            };
+          }
+
+          const resolved = await this.resolveRequestFile(args.filePath, 'filePath');
+          if (!resolved.ok) {
+            return {
+              content: [{ type: 'text', text: resolved.message }],
+              isError: true,
+            };
+          }
+
+          await unlink(args.filePath);
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Deleted request ${path.basename(args.filePath)} (${resolved.format} format)`
+              }
+            ]
+          };
+        } catch (error) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `❌ Error deleting request: ${error instanceof Error ? error.message : 'Unknown error'}`
               }
             ],
             isError: true

@@ -450,9 +450,11 @@ describe('add_test_script tool handler', () => {
         'test("ok", () => {});',
         'append',
       );
-      // Success message reports the canonical type, not the alias.
-      expect(res.content[0].text).toMatch(/post-response/);
-      expect(res.content[0].text).not.toMatch(/after-response/);
+      // Success message reports the canonical type, not the alias. ('after-response'
+      // still appears in the trailing .yml shared-slot note, which is about the file
+      // format rather than the script type that was requested.)
+      expect(res.content[0].text).toMatch(/appended post-response script/);
+      expect(res.content[0].text).not.toMatch(/appended after-response script/);
     });
 
     it('accepts the before-request alias and injects it as pre-request', async () => {

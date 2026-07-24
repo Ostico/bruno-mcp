@@ -211,7 +211,12 @@ export class RequestBuilder {
 
       if (updates.scripts) {
         const format: CollectionFormat = filePath.endsWith('.yml') ? 'yaml' : 'bru';
-        await this.applyInlineScripts(filePath, format, updates.scripts);
+        await this.applyInlineScripts(
+          filePath,
+          format,
+          updates.scripts,
+          updates.scriptMode ?? 'replace',
+        );
       }
 
       return {
@@ -668,19 +673,55 @@ export class RequestBuilder {
    * script-injection path as add_test_script. Script-type keys may use the
    * canonical values (pre-request/post-response/tests) or the aliases
    * before-request (→ pre-request) and after-response (→ post-response).
+   *
+   * Scripts that land in the same underlying slot are merged into one code
+   * string before a single write, so a 'replace' never discards a sibling
+   * script supplied in the same call. This matters for the .yml dialect, where
+   * post-response and tests both compile to one `after-response` entry.
+   *
+   * @param mode 'replace' overwrites the existing script(s) in each targeted
+   *             slot; 'append' concatenates onto what is already there.
    */
   private async applyInlineScripts(
     filePath: string,
     format: CollectionFormat,
     scripts: Record<string, string>,
+    mode: 'append' | 'replace' = 'replace',
   ): Promise<void> {
     const writer = createWriter(format);
     let content = await fs.readFile(filePath, 'utf-8');
+
+    // Deterministic order so merged slots read the same way every run
+    const ORDER = ['pre-request', 'post-response', 'tests'] as const;
+    const byCanonical = new Map<string, string[]>();
+
     for (const [rawType, code] of Object.entries(scripts)) {
       if (code === undefined || code === null || code === '') continue;
       const canonical = normalizeScriptType(rawType);
-      content = writer.injectScript(content, canonical, code, 'append');
+      const bucket = byCanonical.get(canonical);
+      if (bucket) bucket.push(code);
+      else byCanonical.set(canonical, [code]);
     }
+
+    // Group canonical types by the slot they actually occupy in this format.
+    // In YAML, post-response and tests share the single after-response slot.
+    const slots = new Map<string, { scriptType: string; codes: string[] }>();
+    for (const canonical of ORDER) {
+      const codes = byCanonical.get(canonical);
+      if (!codes) continue;
+      const slotKey =
+        format === 'yaml' && (canonical === 'post-response' || canonical === 'tests')
+          ? 'after-response'
+          : canonical;
+      const slot = slots.get(slotKey);
+      if (slot) slot.codes.push(...codes);
+      else slots.set(slotKey, { scriptType: canonical, codes: [...codes] });
+    }
+
+    for (const { scriptType, codes } of slots.values()) {
+      content = writer.injectScript(content, scriptType, codes.join('\n'), mode);
+    }
+
     await fs.writeFile(filePath, content);
   }
 

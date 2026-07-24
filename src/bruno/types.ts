@@ -167,6 +167,12 @@ export interface CreateRequestInput {
    * are also accepted and normalized.
    */
   scripts?: Record<string, string>;
+  /**
+   * How `scripts` is written on update: 'replace' (default) overwrites the
+   * existing script in each targeted slot, 'append' concatenates onto it.
+   * Ignored on creation, where the file has no prior scripts.
+   */
+  scriptMode?: 'append' | 'replace';
 }
 
 // Collection creation input
@@ -419,6 +425,11 @@ export interface ScriptResult {
   results: TestResult[];
   variables: Record<string, unknown>;
   requestMutations?: RequestMutations;
+  /**
+   * Non-fatal diagnostics about the script itself — e.g. assertions that ran
+   * outside a test() block and therefore produced no reportable result.
+   */
+  warnings?: string[];
 }
 
 export interface MockRequestData {
@@ -487,6 +498,11 @@ export interface RequestExecutionResult {
   status: number;
   duration_ms: number;
   tests: TestResult[];
+  /**
+   * Non-fatal diagnostics for this request — surfaced so a run that recorded
+   * zero assertions does not read as an unqualified pass.
+   */
+  warnings?: string[];
   error?: string;
   response_body?: string;
   response_body_truncated?: boolean;

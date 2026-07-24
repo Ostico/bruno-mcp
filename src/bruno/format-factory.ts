@@ -13,12 +13,14 @@ import {
   parseBruEnvironment,
   generateBruEnvironment,
   injectBruScript,
+  removeBruScript,
 } from './bru-parser.js';
 import { parseYamlRequest } from './yaml-parser.js';
 import {
   generateYamlRequest,
   generateYamlEnvironment,
   injectYamlScript,
+  removeYamlScript,
 } from './yaml-generator.js';
 import {
   BrunoError,
@@ -51,6 +53,14 @@ export interface FormatWriter {
     code: string,
     mode: 'append' | 'replace',
   ): string;
+  /**
+   * Remove every script block of the given type.
+   *
+   * Note for the 'yaml' format: Bruno's .yml dialect has no separate `tests`
+   * slot — both 'post-response' and 'tests' compile to a single
+   * `after-response` entry, so removing either removes that shared block.
+   */
+  removeScript(content: string, scriptType: string): string;
   getRequestExtension(): '.bru' | '.yml';
 }
 
@@ -225,14 +235,24 @@ export function createWriter(format: CollectionFormat): FormatWriter {
           scriptType as GenericScriptType,
           'yaml',
         );
-        // Guard: 'tests' and 'post-response' both map to 'after-response' in YAML.
-        // Replace mode would wipe both — force append to prevent data loss.
-        const safeMode = (scriptType === 'tests' && mode === 'replace') ? 'append' : mode;
+        // NOTE: 'tests' and 'post-response' both map to 'after-response' in
+        // YAML — Bruno's .yml dialect has one slot for both. 'replace'
+        // therefore replaces that shared block. Callers that write several
+        // script types in a single operation must merge them into one code
+        // string first (see RequestBuilder.applyInlineScripts) so the second
+        // write does not discard the first.
         return injectYamlScript(
           content,
           mapped as 'before-request' | 'after-response',
           code,
-          safeMode,
+          mode,
+        );
+      },
+      removeScript: (content: string, scriptType: string) => {
+        const mapped = mapScriptType(scriptType as GenericScriptType, 'yaml');
+        return removeYamlScript(
+          content,
+          mapped as 'before-request' | 'after-response',
         );
       },
       getRequestExtension: () => '.yml',
@@ -260,6 +280,13 @@ export function createWriter(format: CollectionFormat): FormatWriter {
           mapped as 'pre-request' | 'post-response' | 'tests',
           code,
           mode,
+        );
+      },
+      removeScript: (content: string, scriptType: string) => {
+        const mapped = mapScriptType(scriptType as GenericScriptType, 'bru');
+        return removeBruScript(
+          content,
+          mapped as 'pre-request' | 'post-response' | 'tests',
         );
       },
       getRequestExtension: () => '.bru',
