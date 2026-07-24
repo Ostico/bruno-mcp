@@ -113,7 +113,7 @@ jobs:
         uses: ostico/test-guard@v1
         with:
           coverage-file: clover.xml
-          coverage-threshold: '80'
+          coverage-threshold: '95'
           extra-exclude-patterns: '.github/**, dist/**, tests/**, coverage/**, **/*.d.ts, src/index.ts'
           ai-enabled: 'true'
           ai-model: 'openai/gpt-4.1-mini'
