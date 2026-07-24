@@ -1,6 +1,6 @@
 {
   "name": "@ostico/bruno-mcp",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "MCP server for generating Bruno API testing files",
   "main": "dist/index.js",
   "type": "module",
