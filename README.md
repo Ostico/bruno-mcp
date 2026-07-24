@@ -524,8 +524,31 @@ my-collection/
 ### SSRF Protection
 All outbound requests from `run_collection` are validated:
 - **Private IP blocking**: Requests to `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, and IPv6 equivalents (including IPv4-mapped `::ffff:x.x.x.x`) are blocked
+- **DNS resolution before check**: Hostnames are resolved to their IP address(es) *before* the private-range check, so a public-looking domain that resolves to an internal address (e.g. `filters.example.com` → `10.x.x.x`) is blocked. If any resolved address is private/reserved, the request is blocked
 - **Scheme validation**: Only `http:` and `https:` schemes allowed
+- **Blocked hostnames**: `localhost`, `*.local`, and `metadata.google.internal`
 - **Redirect TOCTOU protection**: Each redirect hop is re-validated against SSRF rules (prevents DNS rebinding via redirects to internal IPs)
+
+> **Known residual risk — DNS rebinding:** validation resolves the hostname, but the subsequent HTTP request re-resolves DNS independently and could connect to a different address. Full mitigation (pinning the validated IP at connect time) is tracked as a follow-up.
+
+#### Allowlisting internal targets — `BRUNO_SSRF_ALLOWLIST`
+To reach a known internal service on purpose (e.g. an internal API on `10.x`), set the `BRUNO_SSRF_ALLOWLIST` environment variable **when launching the server** (in your MCP client config `env` block). It is a comma-separated list of explicit exceptions:
+
+| Entry form | Example |
+|---|---|
+| Exact hostname | `orders-api.internal.example` |
+| IPv4 / IPv6 literal | `10.20.30.40`, `fd00::1` |
+| CIDR range (v4/v6) | `10.144.0.0/16`, `fd00::/8` |
+
+```jsonc
+// claude_desktop_config.json / mcp.json
+"env": { "BRUNO_SSRF_ALLOWLIST": "10.20.30.40,orders-api.internal.example" }
+```
+
+Security properties:
+- **Operator-controlled only.** The variable is read **once at startup** and can NOT be set or altered via tool-call arguments — the AI agent cannot add to or read the allowlist. Only the human who launched the server decides what is permitted.
+- **Explicit entries only.** Wildcards (any entry containing `*`) are rejected with a warning; you must name a specific host, IP, or CIDR. Malformed entries are ignored with a warning (warnings go to stderr).
+- A request is allowed if its hostname matches an allowlisted host entry, **or** every resolved IP matches an allowlisted IP/CIDR.
 
 ### Path Traversal Prevention
 All tool inputs that accept file paths are validated:

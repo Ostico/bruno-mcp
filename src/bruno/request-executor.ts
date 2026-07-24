@@ -171,7 +171,7 @@ async function executeSingleRequest(
   const method = yaml.http.method;
 
   // SSRF protection: validate URL before making the request
-  const urlCheck = validateUrl(url);
+  const urlCheck = await validateUrl(url);
   if (!urlCheck.valid) {
     return {
       name,
@@ -208,7 +208,7 @@ async function executeSingleRequest(
       const redirectUrl = new URL(location, currentUrl).toString();
 
       // SSRF check on redirect target
-      const redirectCheck = validateUrl(redirectUrl);
+      const redirectCheck = await validateUrl(redirectUrl);
       if (!redirectCheck.valid) {
         return {
           name,
