@@ -347,8 +347,8 @@ describe('validateUrl', () => {
   // -----------------------------------------------------------------------
   describe('resolves hostnames before the SSRF check', () => {
     it('blocks a public-looking hostname that resolves to a private IP', async () => {
-      dnsMap['filters.development.matecat.cloud'] = ['10.144.4.252'];
-      const result = await validateUrl('https://filters.development.matecat.cloud/health');
+      dnsMap['10.20.30.40.sslip.io'] = ['10.20.30.40'];
+      const result = await validateUrl('https://10.20.30.40.sslip.io/health');
       expect(result.valid).toBe(false);
       expect(result.reason).toMatch(/private/i);
     });
@@ -385,47 +385,47 @@ describe('validateUrl', () => {
   // -----------------------------------------------------------------------
   describe('BRUNO_SSRF_ALLOWLIST', () => {
     it('allows a private IP literal that is explicitly allowlisted', async () => {
-      process.env.BRUNO_SSRF_ALLOWLIST = '10.144.4.252';
+      process.env.BRUNO_SSRF_ALLOWLIST = '10.20.30.40';
       resetAllowlistCache();
-      const result = await validateUrl('http://10.144.4.252/health');
+      const result = await validateUrl('http://10.20.30.40/health');
       expect(result.valid).toBe(true);
     });
 
     it('still blocks a private IP NOT in the allowlist', async () => {
-      process.env.BRUNO_SSRF_ALLOWLIST = '10.144.4.252';
+      process.env.BRUNO_SSRF_ALLOWLIST = '10.20.30.40';
       resetAllowlistCache();
-      const result = await validateUrl('http://10.144.4.253/health');
+      const result = await validateUrl('http://10.20.30.41/health');
       expect(result.valid).toBe(false);
       expect(result.reason).toMatch(/private/i);
     });
 
     it('allows a hostname resolving to an allowlisted private IP', async () => {
-      process.env.BRUNO_SSRF_ALLOWLIST = '10.144.4.252';
+      process.env.BRUNO_SSRF_ALLOWLIST = '10.20.30.40';
       resetAllowlistCache();
-      dnsMap['filters.development.matecat.cloud'] = ['10.144.4.252'];
-      const result = await validateUrl('https://filters.development.matecat.cloud/health');
+      dnsMap['10.20.30.40.sslip.io'] = ['10.20.30.40'];
+      const result = await validateUrl('https://10.20.30.40.sslip.io/health');
       expect(result.valid).toBe(true);
     });
 
     it('allows an exact hostname entry regardless of resolved IP', async () => {
-      process.env.BRUNO_SSRF_ALLOWLIST = 'filters.development.matecat.cloud';
+      process.env.BRUNO_SSRF_ALLOWLIST = '10.20.30.40.sslip.io';
       resetAllowlistCache();
-      dnsMap['filters.development.matecat.cloud'] = ['10.144.4.252'];
-      const result = await validateUrl('https://filters.development.matecat.cloud/health');
+      dnsMap['10.20.30.40.sslip.io'] = ['10.20.30.40'];
+      const result = await validateUrl('https://10.20.30.40.sslip.io/health');
       expect(result.valid).toBe(true);
     });
 
     it('allows a private IP within an allowlisted CIDR range', async () => {
-      process.env.BRUNO_SSRF_ALLOWLIST = '10.144.0.0/16';
+      process.env.BRUNO_SSRF_ALLOWLIST = '10.20.0.0/16';
       resetAllowlistCache();
-      const result = await validateUrl('http://10.144.4.252/health');
+      const result = await validateUrl('http://10.20.30.40/health');
       expect(result.valid).toBe(true);
     });
 
     it('blocks a private IP outside an allowlisted CIDR range', async () => {
-      process.env.BRUNO_SSRF_ALLOWLIST = '10.144.0.0/16';
+      process.env.BRUNO_SSRF_ALLOWLIST = '10.20.0.0/16';
       resetAllowlistCache();
-      const result = await validateUrl('http://10.145.0.1/health');
+      const result = await validateUrl('http://10.21.0.1/health');
       expect(result.valid).toBe(false);
       expect(result.reason).toMatch(/private/i);
     });
@@ -491,7 +491,7 @@ describe('parseAllowlist', () => {
   });
 
   it('parses mixed hosts, IPs, and CIDRs', () => {
-    const a = parseAllowlist('filters.dev.example.com, 10.144.4.252, 10.0.0.0/8, fd00::1, fd00::/8');
+    const a = parseAllowlist('filters.dev.example.com, 10.20.30.40, 10.0.0.0/8, fd00::1, fd00::/8');
     expect(a.hosts.has('filters.dev.example.com')).toBe(true);
     expect(a.ipv4.size).toBe(1);
     expect(a.ipv6.size).toBe(1);
