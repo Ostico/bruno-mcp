@@ -24,6 +24,15 @@ interface ExecutionOptions {
   collectionRoot?: string;
   requestPath?: string;
   parallel?: boolean;
+  includeResponseBody?: boolean;
+  maxResponseBodyBytes?: number;
+}
+
+const DEFAULT_MAX_RESPONSE_BODY_BYTES = 10240;
+
+interface BodyCaptureOptions {
+  includeResponseBody: boolean;
+  maxResponseBodyBytes: number;
 }
 
 interface ParsedRequest {
@@ -240,10 +249,23 @@ function getAfterResponseScript(yaml: YamlRequest): string | null {
   return afterScripts.length > 0 ? afterScripts.join('\n') : null;
 }
 
+/** Truncate a response body to a maximum byte length (UTF-8). */
+function capResponseBody(
+  rawBody: string,
+  maxBytes: number,
+): { body: string; truncated: boolean } {
+  const buf = Buffer.from(rawBody, 'utf8');
+  if (buf.byteLength <= maxBytes) {
+    return { body: rawBody, truncated: false };
+  }
+  return { body: buf.subarray(0, maxBytes).toString('utf8'), truncated: true };
+}
+
 async function executeSingleRequest(
   yaml: YamlRequest,
   vars: Map<string, string>,
   variableStore?: VariableStore,
+  bodyCapture?: BodyCaptureOptions,
 ): Promise<RequestExecutionResult> {
   // Merge env vars with runtime vars (runtime takes precedence)
   const effectiveVars = variableStore ? variableStore.merge(vars) : vars;
@@ -388,7 +410,7 @@ async function executeSingleRequest(
       }
     }
 
-    return {
+    const result: RequestExecutionResult = {
       name,
       method,
       url,
@@ -397,6 +419,16 @@ async function executeSingleRequest(
       tests,
       error: preScriptError,
     };
+
+    if (bodyCapture?.includeResponseBody) {
+      const rawBody = wrappedResponse.rawBody ?? '';
+      const { body, truncated } = capResponseBody(rawBody, bodyCapture.maxResponseBodyBytes);
+      result.response_body = body;
+      result.response_body_truncated = truncated;
+      result.response_content_type = wrappedResponse.headers['content-type'] ?? '';
+    }
+
+    return result;
   } catch (error: unknown) {
     const durationMs = Date.now() - startTime;
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -419,6 +451,11 @@ export class RequestExecutor {
     options?: ExecutionOptions,
   ): Promise<CollectionRunResult> {
     const startTime = Date.now();
+
+    const bodyCapture: BodyCaptureOptions = {
+      includeResponseBody: options?.includeResponseBody ?? true,
+      maxResponseBodyBytes: options?.maxResponseBodyBytes ?? DEFAULT_MAX_RESPONSE_BODY_BYTES,
+    };
 
     let vars = new Map<string, string>();
     if (options?.environment) {
@@ -481,7 +518,7 @@ export class RequestExecutor {
           const folderStore = new VariableStore();
           const folderRes: RequestExecutionResult[] = [];
           for (const req of folderRequests) {
-            const result = await executeSingleRequest(req.yaml, vars, folderStore);
+            const result = await executeSingleRequest(req.yaml, vars, folderStore, bodyCapture);
             folderRes.push(result);
           }
           return folderRes;
@@ -500,7 +537,7 @@ export class RequestExecutor {
       const variableStore = new VariableStore();
       results = [];
       for (const req of requests) {
-        const result = await executeSingleRequest(req.yaml, vars, variableStore);
+        const result = await executeSingleRequest(req.yaml, vars, variableStore, bodyCapture);
         results.push(result);
       }
     }

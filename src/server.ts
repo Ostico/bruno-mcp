@@ -30,7 +30,24 @@ import {
   BodyType
 } from './bruno/types.js';
 import { findCollectionRoot, detectFormat } from './bruno/format-detector.js';
-import { createWriter } from './bruno/format-factory.js';
+import { createWriter, normalizeScriptType } from './bruno/format-factory.js';
+
+/**
+ * Inline-scripts input schema shared by create_request and modify_request.
+ * Canonical keys are pre-request/post-response/tests; the aliases
+ * before-request (→ pre-request) and after-response (→ post-response) are
+ * also accepted and normalized when persisted.
+ */
+const inlineScriptsSchema = z.object({
+  'pre-request': z.string().optional(),
+  'post-response': z.string().optional(),
+  tests: z.string().optional(),
+  'before-request': z.string().optional(),
+  'after-response': z.string().optional(),
+}).optional().describe(
+  'Inline scripts to persist with the request. Keys: pre-request, post-response, tests ' +
+  '(aliases before-request/after-response accepted). Avoids a separate add_test_script call.',
+);
 
 export class BrunoMcpServer {
   private server: McpServer;
@@ -98,6 +115,9 @@ export class BrunoMcpServer {
   private setupTools(): void {
     this.setupCreateCollectionTool();
     this.setupCreateEnvironmentTool();
+    this.setupUpdateEnvironmentTool();
+    this.setupSetEnvironmentVariableTool();
+    this.setupRemoveEnvironmentVariableTool();
     this.setupCreateRequestTool();
     this.setupModifyRequestTool();
     this.setupAddTestScriptTool();
@@ -252,6 +272,215 @@ export class BrunoMcpServer {
   }
 
   /**
+   * Tool: update_environment
+   */
+  private setupUpdateEnvironmentTool(): void {
+    this.server.registerTool(
+      'update_environment',
+      {
+        title: 'Update Bruno Environment',
+        description: 'Partially update an existing Bruno environment by MERGING the provided variables into the existing ones. Pre-existing variables not listed are preserved (unlike create_environment, which replaces the whole file).',
+        inputSchema: {
+          collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to existing collection directory.'),
+          name: z.string().min(1, 'Environment name is required').describe('Name of the existing environment to update.'),
+          variables: z.record(z.union([z.string(), z.number(), z.boolean()])).describe('Variables to merge into the environment. Existing variables not listed here are kept.')
+        }
+      },
+      async (args) => {
+        try {
+          const pathCheck = this.validateToolPath(args.collectionPath);
+          if (!pathCheck.valid) {
+            return {
+              content: [{ type: 'text', text: `Invalid collectionPath: ${pathCheck.reason}` }],
+              isError: true,
+            };
+          }
+
+          // Merge: load existing vars, overlay the provided ones (anti-clobber).
+          const existing = await this.environmentManager.getEnvironmentVariables(
+            args.collectionPath,
+            args.name,
+          );
+          const merged = { ...existing, ...args.variables };
+
+          const result = await this.environmentManager.updateEnvironment(
+            args.collectionPath,
+            args.name,
+            merged,
+          );
+
+          if (result.success) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `✅ Environment "${args.name}" updated (merged) at: ${result.path}`
+                }
+              ]
+            };
+          } else {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `❌ Failed to update environment: ${result.error}`
+                }
+              ],
+              isError: true
+            };
+          }
+        } catch (error) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `❌ Error updating environment: ${error instanceof Error ? error.message : 'Unknown error'}`
+              }
+            ],
+            isError: true
+          };
+        }
+      }
+    );
+  }
+
+  /**
+   * Tool: set_environment_variable
+   */
+  private setupSetEnvironmentVariableTool(): void {
+    this.server.registerTool(
+      'set_environment_variable',
+      {
+        title: 'Set Environment Variable',
+        description: 'Set (add or update) a single variable in an existing Bruno environment. MERGES into the environment — all other variables are preserved.',
+        inputSchema: {
+          collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to existing collection directory.'),
+          environment: z.string().min(1, 'Environment name is required').describe('Name of the existing environment.'),
+          name: z.string().min(1, 'Variable name is required').describe('Variable key to set.'),
+          value: z.union([z.string(), z.number(), z.boolean()]).describe('Variable value.'),
+          enabled: z.boolean().optional().describe('Whether the variable is enabled. Currently informational; not persisted as metadata.'),
+          secret: z.boolean().optional().describe('Whether the variable is a secret. Currently informational; not persisted as metadata.')
+        }
+      },
+      async (args) => {
+        try {
+          const pathCheck = this.validateToolPath(args.collectionPath);
+          if (!pathCheck.valid) {
+            return {
+              content: [{ type: 'text', text: `Invalid collectionPath: ${pathCheck.reason}` }],
+              isError: true,
+            };
+          }
+
+          const result = await this.environmentManager.setEnvironmentVariable(
+            args.collectionPath,
+            args.environment,
+            args.name,
+            args.value,
+          );
+
+          if (result.success) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `✅ Variable "${args.name}" set in environment "${args.environment}" at: ${result.path}`
+                }
+              ]
+            };
+          } else {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `❌ Failed to set variable: ${result.error}`
+                }
+              ],
+              isError: true
+            };
+          }
+        } catch (error) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `❌ Error setting variable: ${error instanceof Error ? error.message : 'Unknown error'}`
+              }
+            ],
+            isError: true
+          };
+        }
+      }
+    );
+  }
+
+  /**
+   * Tool: remove_environment_variable
+   */
+  private setupRemoveEnvironmentVariableTool(): void {
+    this.server.registerTool(
+      'remove_environment_variable',
+      {
+        title: 'Remove Environment Variable',
+        description: 'Remove a single variable from an existing Bruno environment. MERGES into the environment — all other variables are preserved.',
+        inputSchema: {
+          collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to existing collection directory.'),
+          environment: z.string().min(1, 'Environment name is required').describe('Name of the existing environment.'),
+          name: z.string().min(1, 'Variable name is required').describe('Variable key to remove.')
+        }
+      },
+      async (args) => {
+        try {
+          const pathCheck = this.validateToolPath(args.collectionPath);
+          if (!pathCheck.valid) {
+            return {
+              content: [{ type: 'text', text: `Invalid collectionPath: ${pathCheck.reason}` }],
+              isError: true,
+            };
+          }
+
+          const result = await this.environmentManager.removeEnvironmentVariable(
+            args.collectionPath,
+            args.environment,
+            args.name,
+          );
+
+          if (result.success) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `✅ Variable "${args.name}" removed from environment "${args.environment}" at: ${result.path}`
+                }
+              ]
+            };
+          } else {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `❌ Failed to remove variable: ${result.error}`
+                }
+              ],
+              isError: true
+            };
+          }
+        } catch (error) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `❌ Error removing variable: ${error instanceof Error ? error.message : 'Unknown error'}`
+              }
+            ],
+            isError: true
+          };
+        }
+      }
+    );
+  }
+
+  /**
    * Tool: create_request
    */
   private setupCreateRequestTool(): void {
@@ -259,7 +488,7 @@ export class BrunoMcpServer {
       'create_request',
       {
         title: 'Create Bruno Request',
-        description: 'Generate request files for API testing (supports .bru and .yml formats)',
+        description: 'Generate request files for API testing (supports .bru and .yml formats). Supports multipart/form-data with file uploads and per-part contentType (body.type "form-data" with formData entries of type "file"), and inline scripts (pre-request/post-response/tests) so no separate add_test_script call is needed.',
         inputSchema: {
           collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to existing collection directory.'),
           name: z.string().min(1, 'Request name is required'),
@@ -282,7 +511,8 @@ export class BrunoMcpServer {
           }).optional(),
           query: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
           folder: z.string().optional(),
-          sequence: z.number().optional()
+          sequence: z.number().optional(),
+          scripts: inlineScriptsSchema
         }
       },
       async (args) => {
@@ -312,7 +542,8 @@ export class BrunoMcpServer {
             } : undefined,
             query: args.query,
             folder: args.folder,
-            sequence: args.sequence
+            sequence: args.sequence,
+            scripts: args.scripts as Record<string, string> | undefined
           };
 
           const result = await this.requestBuilder.createRequest(input);
@@ -360,7 +591,7 @@ export class BrunoMcpServer {
       'modify_request',
       {
         title: 'Modify Request',
-        description: 'Update an existing Bruno request file with partial-merge semantics. Only provided fields are updated; all other fields are preserved.',
+        description: 'Update an existing Bruno request file with partial-merge semantics. Only provided fields are updated; all other fields are preserved. Supports multipart/form-data with file uploads and per-part contentType, and inline scripts (pre-request/post-response/tests) appended to the request.',
         inputSchema: {
           filePath: z.string().min(1, 'File path is required').describe('Absolute path to the .yml or .bru request file to modify. Get from list_requests or get_collection_stats.'),
           name: z.string().optional(),
@@ -381,7 +612,8 @@ export class BrunoMcpServer {
             type: z.enum(['none', 'bearer', 'basic', 'oauth2', 'api-key', 'digest']),
             config: z.record(z.string())
           }).optional(),
-          query: z.record(z.union([z.string(), z.number(), z.boolean()])).optional()
+          query: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+          scripts: inlineScriptsSchema
         }
       },
       async (args) => {
@@ -443,6 +675,7 @@ export class BrunoMcpServer {
             };
           }
           if (args.query !== undefined) updates.query = args.query;
+          if (args.scripts !== undefined) updates.scripts = args.scripts as Record<string, string>;
 
           // 6. Call updateRequest with partial merge
           const result = await this.requestBuilder.updateRequest(args.filePath, updates);
@@ -490,10 +723,10 @@ export class BrunoMcpServer {
       'add_test_script',
       {
         title: 'Add Test Script',
-        description: 'Add pre-request or post-response scripts to Bruno requests',
+        description: 'Add pre-request, post-response, or tests scripts to a Bruno request. Canonical scriptType values are pre-request/post-response/tests; the aliases before-request (→ pre-request) and after-response (→ post-response) are also accepted.',
         inputSchema: {
           bruFilePath: z.string().min(1, 'BRU file path is required').describe('Absolute path to the .yml or .bru request file. Get from list_requests or get_collection_stats.'),
-          scriptType: z.enum(['pre-request', 'post-response', 'tests']),
+          scriptType: z.enum(['pre-request', 'post-response', 'tests', 'before-request', 'after-response']).describe('Script type. Canonical: pre-request, post-response, tests. Aliases: before-request (→ pre-request), after-response (→ post-response).'),
           script: z.string().min(1, 'Script content is required')
         }
       },
@@ -557,9 +790,10 @@ export class BrunoMcpServer {
           // may lose data. Single-client MCP usage is safe; multi-client needs locking.
           const content = await readFile(args.bruFilePath, 'utf-8');
 
-          // 8. Get format writer and inject script
+          // 8. Normalize aliases to canonical script type, then inject
+          const canonicalScriptType = normalizeScriptType(args.scriptType);
           const writer = createWriter(detection.format);
-          const updated = writer.injectScript(content, args.scriptType, args.script, 'append');
+          const updated = writer.injectScript(content, canonicalScriptType, args.script, 'append');
 
           // 9. Write back
           await writeFile(args.bruFilePath, updated);
@@ -569,7 +803,7 @@ export class BrunoMcpServer {
             content: [
               {
                 type: 'text',
-                text: `Successfully added ${args.scriptType} script to ${path.basename(args.bruFilePath)} (${detection.format} format)`
+                text: `Successfully added ${canonicalScriptType} script to ${path.basename(args.bruFilePath)} (${detection.format} format)`
               }
             ]
           };
@@ -999,13 +1233,15 @@ export class BrunoMcpServer {
       'run_collection',
       {
         title: 'Run Collection',
-        description: 'Execute requests in a Bruno collection and run test scripts. Omit requestPath to run ALL requests. Provide requestPath as a .yml/.bru file to run one request, or as a subdirectory to run all requests in that folder.',
+        description: 'Execute requests in a Bruno collection and run test scripts. Omit requestPath to run ALL requests. Provide requestPath as a .yml/.bru file to run one request, or as a subdirectory to run all requests in that folder. Each result includes the response body (response_body, response_content_type, response_body_truncated) by default — disable with includeResponseBody=false or cap the size with maxResponseBodyBytes.',
         inputSchema: {
           collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to collection root directory. Use the path returned by list_collections.'),
           environment: z.string().optional().describe('Environment name to use (e.g. "dev", "staging"). Get available names from get_collection_stats.'),
           collectionRoot: z.string().optional().describe('Path to collection root for environment resolution (if different from collectionPath)'),
           requestPath: z.string().optional().describe('Path to a specific .yml or .bru request file, or a subdirectory within the collection. Get file paths from list_requests or get_collection_stats. Omit to run all requests in the collection.'),
-          parallel: z.boolean().optional().default(false).describe('Run folders in parallel. Requests within each folder still run sequentially by seq order. Default: false.')
+          parallel: z.boolean().optional().default(false).describe('Run folders in parallel. Requests within each folder still run sequentially by seq order. Default: false.'),
+          includeResponseBody: z.boolean().optional().default(true).describe('Include the response body of each request in the results. Default: true.'),
+          maxResponseBodyBytes: z.number().optional().default(10240).describe('Maximum response body size (bytes) to return per request; longer bodies are truncated and response_body_truncated is set. Default: 10240.')
         }
       },
       async (args) => {
@@ -1048,6 +1284,8 @@ export class BrunoMcpServer {
               collectionRoot: args.collectionRoot,
               requestPath: args.requestPath,
               parallel: args.parallel,
+              includeResponseBody: args.includeResponseBody,
+              maxResponseBodyBytes: args.maxResponseBodyBytes,
             },
           );
 

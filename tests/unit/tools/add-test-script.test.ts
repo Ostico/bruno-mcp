@@ -43,6 +43,8 @@ jest.mock('../../../src/bruno/format-factory', () => ({
   createWriter: (...args: unknown[]) => mockCreateWriter(...args),
   createReader: jest.fn(),
   mapScriptType: jest.fn(),
+  // Use the real normalizer so alias handling is exercised end-to-end.
+  normalizeScriptType: jest.requireActual('../../../src/bruno/format-factory').normalizeScriptType,
 }));
 
 // Modules not under test — simple stubs so BrunoMcpServer constructs
@@ -417,6 +419,46 @@ describe('add_test_script tool handler', () => {
       const res = await handler({
         bruFilePath: '/workspace/collection/request.bru',
         scriptType: 'pre-request',
+        script: 'console.log("before");',
+      });
+
+      expect(res.isError).toBeUndefined();
+      expect(mockInjectScript).toHaveBeenCalledWith(
+        expect.any(String),
+        'pre-request',
+        'console.log("before");',
+        'append',
+      );
+    });
+  });
+
+  // ── Script-type alias normalization ─────────────────────────────────────
+
+  describe('script type alias normalization', () => {
+    it('accepts the after-response alias and injects it as post-response', async () => {
+      const res = await handler({
+        bruFilePath: '/workspace/collection/request.yml',
+        scriptType: 'after-response',
+        script: 'test("ok", () => {});',
+      });
+
+      expect(res.isError).toBeUndefined();
+      // Alias is normalized to the canonical generic type before injection.
+      expect(mockInjectScript).toHaveBeenCalledWith(
+        expect.any(String),
+        'post-response',
+        'test("ok", () => {});',
+        'append',
+      );
+      // Success message reports the canonical type, not the alias.
+      expect(res.content[0].text).toMatch(/post-response/);
+      expect(res.content[0].text).not.toMatch(/after-response/);
+    });
+
+    it('accepts the before-request alias and injects it as pre-request', async () => {
+      const res = await handler({
+        bruFilePath: '/workspace/collection/request.yml',
+        scriptType: 'before-request',
         script: 'console.log("before");',
       });
 

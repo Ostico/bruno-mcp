@@ -160,6 +160,13 @@ export interface CreateRequestInput {
   query?: Record<string, string | number | boolean>;
   folder?: string;
   sequence?: number;
+  /**
+   * Inline scripts to persist on creation. Keys are script types; canonical
+   * values are 'pre-request', 'post-response', 'tests', but the aliases
+   * 'before-request' (→ pre-request) and 'after-response' (→ post-response)
+   * are also accepted and normalized.
+   */
+  scripts?: Record<string, string>;
 }
 
 // Collection creation input
@@ -390,6 +397,8 @@ export interface MockResponseData {
   headers: Record<string, string>;
   body: unknown;
   responseTime: number;
+  /** Raw response text before any JSON parsing (consumed once from the stream). */
+  rawBody?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -479,6 +488,9 @@ export interface RequestExecutionResult {
   duration_ms: number;
   tests: TestResult[];
   error?: string;
+  response_body?: string;
+  response_body_truncated?: boolean;
+  response_content_type?: string;
 }
 
 export interface CollectionRunSummary {

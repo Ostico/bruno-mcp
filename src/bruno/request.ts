@@ -21,6 +21,8 @@ import {
 } from './types.js';
 import { MultipartFormPart } from './types.js';
 import { detectFormat } from './format-detector.js';
+import type { CollectionFormat } from './format-detector.js';
+import { createWriter, normalizeScriptType } from './format-factory.js';
 
 /** True for body types that serialize as multipart/form-data. */
 function isMultipartBodyType(type: string): boolean {
@@ -63,6 +65,9 @@ export class RequestBuilder {
         await this.ensureDirectory(dirname(filePath));
         const yamlContent = generateYamlRequest(yamlRequest);
         await fs.writeFile(filePath, yamlContent);
+        if (input.scripts) {
+          await this.applyInlineScripts(filePath, detection.format, input.scripts);
+        }
         return { success: true, path: filePath };
       } else {
         // Build BRU file structure and write .bru file
@@ -71,6 +76,9 @@ export class RequestBuilder {
         await this.ensureDirectory(dirname(filePath));
         const bruContent = generateBruRequest(bruFile);
         await fs.writeFile(filePath, bruContent);
+        if (input.scripts) {
+          await this.applyInlineScripts(filePath, detection.format, input.scripts);
+        }
         return { success: true, path: filePath };
       }
 
@@ -199,6 +207,11 @@ export class RequestBuilder {
         // Generate and write updated content
         const bruContent = generateBruRequest(updatedBru);
         await fs.writeFile(filePath, bruContent);
+      }
+
+      if (updates.scripts) {
+        const format: CollectionFormat = filePath.endsWith('.yml') ? 'yaml' : 'bru';
+        await this.applyInlineScripts(filePath, format, updates.scripts);
       }
 
       return {
@@ -648,6 +661,27 @@ export class RequestBuilder {
         }
         break;
     }
+  }
+
+  /**
+   * Persist inline scripts to an already-written request file using the same
+   * script-injection path as add_test_script. Script-type keys may use the
+   * canonical values (pre-request/post-response/tests) or the aliases
+   * before-request (→ pre-request) and after-response (→ post-response).
+   */
+  private async applyInlineScripts(
+    filePath: string,
+    format: CollectionFormat,
+    scripts: Record<string, string>,
+  ): Promise<void> {
+    const writer = createWriter(format);
+    let content = await fs.readFile(filePath, 'utf-8');
+    for (const [rawType, code] of Object.entries(scripts)) {
+      if (code === undefined || code === null || code === '') continue;
+      const canonical = normalizeScriptType(rawType);
+      content = writer.injectScript(content, canonical, code, 'append');
+    }
+    await fs.writeFile(filePath, content);
   }
 
   /**

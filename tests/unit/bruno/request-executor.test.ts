@@ -231,6 +231,58 @@ describe('RequestExecutor', () => {
     mockedValidateUrl.mockReturnValue({ valid: true });
   });
 
+  describe('response body capture', () => {
+    beforeEach(() => {
+      setupFsReaddir(['Get Users.yml']);
+      setupFsReadFile({ 'Get Users.yml': GET_REQUEST_YAML, 'dev.yml': ENV_YAML });
+      setupFsStat(['/test-collection', '/test-collection/environments']);
+    });
+
+    it('returns the response body and content-type by default', async () => {
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ hello: 'world' }, 200, 'OK', 'application/json'),
+      );
+
+      const result = await RequestExecutor.executeCollection('/test-collection', {
+        environment: 'dev',
+      });
+
+      expect(result.results[0].response_body).toBe(JSON.stringify({ hello: 'world' }));
+      expect(result.results[0].response_content_type).toBe('application/json');
+      expect(result.results[0].response_body_truncated).toBe(false);
+    });
+
+    it('truncates the body when it exceeds maxResponseBodyBytes', async () => {
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse('abcdefghijklmnop', 200, 'OK', 'text/plain'),
+      );
+
+      const result = await RequestExecutor.executeCollection('/test-collection', {
+        environment: 'dev',
+        maxResponseBodyBytes: 5,
+      });
+
+      expect(result.results[0].response_body).toBe('abcde');
+      expect(Buffer.byteLength(result.results[0].response_body!, 'utf8')).toBeLessThanOrEqual(5);
+      expect(result.results[0].response_body_truncated).toBe(true);
+    });
+
+    it('omits body fields when includeResponseBody is false', async () => {
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ hello: 'world' }, 200, 'OK', 'application/json'),
+      );
+
+      const result = await RequestExecutor.executeCollection('/test-collection', {
+        environment: 'dev',
+        includeResponseBody: false,
+      });
+
+      expect(result.results[0].response_body).toBeUndefined();
+      expect(result.results[0].response_body_truncated).toBeUndefined();
+      expect(result.results[0].response_content_type).toBeUndefined();
+    });
+  });
+
   describe('executeCollection', () => {
     it('should execute all requests in a folder sorted by seq', async () => {
       // Setup: 2 request files + env

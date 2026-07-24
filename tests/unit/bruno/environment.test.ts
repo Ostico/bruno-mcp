@@ -35,6 +35,7 @@ jest.mock('yaml', () => ({
 const fs = require('fs').promises;
 const { detectFormat } = require('../../../src/bruno/format-detector.js');
 const { parse: parseYaml } = require('yaml');
+const { generateYamlEnvironment } = require('../../../src/bruno/yaml-generator.js');
 
 describe('EnvironmentManager', () => {
   let manager: EnvironmentManager;
@@ -348,6 +349,39 @@ describe('EnvironmentManager', () => {
       expect(result.success).toBe(true);
     });
 
+    it('preserves pre-existing variables when adding a new one (anti-clobber)', async () => {
+      detectFormat.mockResolvedValue({ format: 'yaml' });
+      fs.readFile.mockResolvedValue('');
+      fs.access.mockResolvedValue(undefined);
+      parseYaml.mockReturnValue({
+        variables: [{ name: 'existing', value: 'old' }],
+      });
+
+      await manager.setEnvironmentVariable('/col', 'dev', 'newKey', 'newVal');
+
+      const envFile = generateYamlEnvironment.mock.calls.at(-1)[0];
+      const byName = Object.fromEntries(envFile.variables.map((v: any) => [v.name, v.value]));
+      expect(byName).toEqual({ existing: 'old', newKey: 'newVal' });
+    });
+
+    it('updates an existing variable value while keeping the rest', async () => {
+      detectFormat.mockResolvedValue({ format: 'yaml' });
+      fs.readFile.mockResolvedValue('');
+      fs.access.mockResolvedValue(undefined);
+      parseYaml.mockReturnValue({
+        variables: [
+          { name: 'a', value: '1' },
+          { name: 'b', value: '2' },
+        ],
+      });
+
+      await manager.setEnvironmentVariable('/col', 'dev', 'b', '99');
+
+      const envFile = generateYamlEnvironment.mock.calls.at(-1)[0];
+      const byName = Object.fromEntries(envFile.variables.map((v: any) => [v.name, v.value]));
+      expect(byName).toEqual({ a: '1', b: '99' });
+    });
+
     it('should return error on failure', async () => {
       detectFormat.mockRejectedValue(new Error('fail'));
       const result = await manager.setEnvironmentVariable('/col', 'dev', 'k', 'v');
@@ -369,6 +403,24 @@ describe('EnvironmentManager', () => {
 
       const result = await manager.removeEnvironmentVariable('/col', 'dev', 'remove');
       expect(result.success).toBe(true);
+    });
+
+    it('removes only the target variable and preserves the others (anti-clobber)', async () => {
+      detectFormat.mockResolvedValue({ format: 'yaml' });
+      fs.readFile.mockResolvedValue('');
+      fs.access.mockResolvedValue(undefined);
+      parseYaml.mockReturnValue({
+        variables: [
+          { name: 'keep', value: 'yes' },
+          { name: 'remove', value: 'no' },
+        ],
+      });
+
+      await manager.removeEnvironmentVariable('/col', 'dev', 'remove');
+
+      const envFile = generateYamlEnvironment.mock.calls.at(-1)[0];
+      const byName = Object.fromEntries(envFile.variables.map((v: any) => [v.name, v.value]));
+      expect(byName).toEqual({ keep: 'yes' });
     });
 
     it('should return error on failure', async () => {
