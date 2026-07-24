@@ -86,9 +86,13 @@ jobs:
     name: Test adequacy gate
     runs-on: ubuntu-latest
     needs: test
+    # Run only for same-repo PRs (head repo == this repo). NOTE: this repo is
+    # itself a fork, so head.repo.fork is always true here — a `.fork` check
+    # would skip every PR. Compare full_name instead to still exclude PRs
+    # opened from external forks (no token access for the AI review).
     if: >-
       github.event_name == 'pull_request' &&
-      !github.event.pull_request.head.repo.fork &&
+      github.event.pull_request.head.repo.full_name == github.event.repository.full_name &&
       !contains(github.event.pull_request.labels.*.name, 'test-guard-exception')
     concurrency:
       group: bruno-mcp-test-guard-${{ github.ref }}
