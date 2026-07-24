@@ -143,6 +143,39 @@ extensions:
       - .git
 `;
 
+const MULTIPART_REQUEST_YAML = `
+info:
+  name: Multipart
+  type: http
+http:
+  method: POST
+  url: https://example.com/upload
+  body:
+    type: multipart-form
+    data:
+      - name: caption
+        value: hello
+        type: text
+        contentType: text/plain
+      - name: files
+        value:
+          - /path/a
+          - /path/b
+        type: file
+      - null
+`;
+
+const DEFAULTS_REQUEST_YAML = `
+info: {}
+http:
+  headers:
+    - {}
+  auth: 42
+runtime:
+  scripts:
+    - {}
+`;
+
 describe('yaml-parser', () => {
   describe('parseYamlRequest', () => {
     it('parses a GET request with headers', () => {
@@ -204,6 +237,54 @@ describe('yaml-parser', () => {
       expect(result.settings!.maxRedirects).toBe(5);
     });
 
+    it('parses settings.tls and settings.proxy into YamlSettings', () => {
+      const TLS_PROXY_REQUEST_YAML = `
+info:
+  name: TLS Proxy
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://example.com/api"
+settings:
+  tls:
+    rejectUnauthorized: false
+    ca: ca-pem-data
+    cert: cert-pem-data
+    key: key-pem-data
+  proxy: "http://proxy.example.com:8080"
+`;
+      const result = parseYamlRequest(TLS_PROXY_REQUEST_YAML);
+      expect(result.settings).toBeDefined();
+      // Exact shape consumed by buildDispatcher (fetch-dispatcher.ts)
+      expect(result.settings!.tls).toEqual({
+        rejectUnauthorized: false,
+        ca: 'ca-pem-data',
+        cert: 'cert-pem-data',
+        key: 'key-pem-data',
+      });
+      expect(result.settings!.proxy).toBe('http://proxy.example.com:8080');
+    });
+
+    it('omits settings.tls when no recognized tls fields are present', () => {
+      const NO_TLS_FIELDS_YAML = `
+info:
+  name: Empty TLS
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://example.com/api"
+settings:
+  tls:
+    unknownField: value
+`;
+      const result = parseYamlRequest(NO_TLS_FIELDS_YAML);
+      expect(result.settings).toBeDefined();
+      expect(result.settings!.tls).toBeUndefined();
+      expect(result.settings!.proxy).toBeUndefined();
+    });
+
     it('parses docs string', () => {
       const result = parseYamlRequest(GET_REQUEST_YAML);
       expect(result.docs).toBe('Returns the JSON validation schema for context-url payloads');
@@ -253,6 +334,42 @@ describe('yaml-parser', () => {
       const noAuth = `\ninfo:\n  name: NoAuth\n  type: http\n  seq: 1\n\nhttp:\n  method: GET\n  url: https://example.com\n`;
       const result = parseYamlRequest(noAuth);
       expect(result.http.auth).toBeUndefined();
+    });
+  });
+
+  describe('parseYamlRequest — edge cases', () => {
+    it('parses a multipart/form-data body with mixed part shapes', () => {
+      const result = parseYamlRequest(MULTIPART_REQUEST_YAML);
+      const data = result.http.body!.data as Array<Record<string, unknown>>;
+      expect(Array.isArray(data)).toBe(true);
+      expect(data).toHaveLength(3);
+      expect(data[0]).toEqual({ name: 'caption', value: 'hello', type: 'text', contentType: 'text/plain' });
+      expect(data[1].type).toBe('file');
+      expect(data[1].value).toEqual(['/path/a', '/path/b']);
+      // A null list entry is coerced to an empty text part.
+      expect(data[2]).toEqual({ name: '', value: '', type: 'text' });
+    });
+
+    it('applies defaults for missing optional fields', () => {
+      const result = parseYamlRequest(DEFAULTS_REQUEST_YAML);
+      expect(result.info.name).toBe('');
+      expect(result.http.method).toBe('');
+      expect(result.http.url).toBe('');
+      expect(result.http.headers).toEqual([{ name: '', value: '' }]);
+      // auth given as a non-string/non-object (number) is ignored.
+      expect(result.http.auth).toBeUndefined();
+      expect(result.runtime!.scripts[0]).toEqual({ type: 'after-response', code: '' });
+    });
+
+    it('omits runtime when scripts is an empty array', () => {
+      const yaml = `\ninfo:\n  name: X\n  type: http\nhttp:\n  method: GET\n  url: https://example.com\nruntime:\n  scripts: []\n`;
+      const result = parseYamlRequest(yaml);
+      expect(result.runtime).toBeUndefined();
+    });
+
+    it('throws BrunoError when the YAML does not produce an object', () => {
+      expect(() => parseYamlRequest('42')).toThrow(BrunoError);
+      expect(() => parseYamlRequest('42')).toThrow(/object/i);
     });
   });
 
@@ -324,6 +441,11 @@ describe('yaml-parser', () => {
     it('throws BrunoError when info section is missing', () => {
       const noInfo = `\nopencollection: 1.0.0\nbundled: false\n`;
       expect(() => parseYamlCollection(noInfo)).toThrow(BrunoError);
+    });
+
+    it('defaults info name to empty string when name is absent', () => {
+      const result = parseYamlCollection('opencollection: 1.0.0\ninfo: {}\n');
+      expect(result.info.name).toBe('');
     });
 
     it('throws BrunoError on empty input', () => {

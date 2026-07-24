@@ -1,5 +1,5 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
-import { join, basename } from 'node:path';
+import { join, basename, relative, dirname } from 'node:path';
 import { parseYamlRequest } from './yaml-parser.js';
 import { parseBruRequest } from './bru-parser.js';
 import { loadEnvironment, substitute } from './env-loader.js';
@@ -7,18 +7,32 @@ import { TestRunner } from './test-runner.js';
 import { wrapFetchResponse } from './response-wrapper.js';
 import { validateUrl } from './url-validator.js';
 import { VariableStore } from './variable-store.js';
+import { buildDispatcher } from './fetch-dispatcher.js';
 import type {
   BruFile,
   YamlRequest,
+  YamlSettings,
+  MockRequestData,
   CollectionRunResult,
   RequestExecutionResult,
   TestResult,
+  MultipartFormPart,
 } from './types.js';
 
 interface ExecutionOptions {
   environment?: string;
   collectionRoot?: string;
   requestPath?: string;
+  parallel?: boolean;
+  includeResponseBody?: boolean;
+  maxResponseBodyBytes?: number;
+}
+
+const DEFAULT_MAX_RESPONSE_BODY_BYTES = 10240;
+
+interface BodyCaptureOptions {
+  includeResponseBody: boolean;
+  maxResponseBodyBytes: number;
 }
 
 interface ParsedRequest {
@@ -80,7 +94,23 @@ function bruFileToYamlRequest(bru: BruFile): YamlRequest {
     ? Object.entries(bru.headers).map(([name, value]) => ({ name, value }))
     : undefined;
 
-  const body = bru.body?.content ? { type: bru.body.type, data: bru.body.content } : undefined;
+  let body: YamlRequest['http']['body'];
+  if (bru.body?.formData && bru.body.formData.length > 0) {
+    body = {
+      type: 'multipart-form',
+      data: bru.body.formData.map((part): MultipartFormPart => {
+        const item: MultipartFormPart = {
+          name: part.name,
+          value: part.value,
+          type: part.type ?? 'text',
+        };
+        if (part.contentType) item.contentType = part.contentType;
+        return item;
+      }),
+    };
+  } else if (bru.body?.content) {
+    body = { type: bru.body.type, data: bru.body.content };
+  }
 
   return {
     info: { name: bru.meta.name, type: bru.meta.type, seq: bru.meta.seq },
@@ -106,6 +136,7 @@ async function discoverRequests(dirPath: string): Promise<DiscoveryResult> {
       } else if (filePath.endsWith('.bru')) {
         yaml = bruFileToYamlRequest(parseBruRequest(content));
       } else {
+        /* istanbul ignore next -- unreachable: findYmlFilesRecursive only yields .yml/.bru paths, so this defensive else is dead code */
         continue;
       }
       requests.push({ yaml, filePath });
@@ -123,10 +154,18 @@ async function discoverRequests(dirPath: string): Promise<DiscoveryResult> {
   return { requests, parseErrors };
 }
 
-function buildFetchOptions(
+function isMultipartBody(body: YamlRequest['http']['body']): boolean {
+  return (
+    !!body &&
+    (body.type === 'multipart-form' || body.type === 'form-data') &&
+    Array.isArray(body.data)
+  );
+}
+
+export async function buildFetchOptions(
   yaml: YamlRequest,
   vars: Map<string, string>,
-): { url: string; options: RequestInit } {
+): Promise<{ url: string; options: RequestInit }> {
   const url = substitute(yaml.http.url, vars);
 
   const headers: Record<string, string> = {};
@@ -141,11 +180,64 @@ function buildFetchOptions(
     headers,
   };
 
-  if (yaml.http.body?.data) {
-    options.body = substitute(yaml.http.body.data, vars);
+  const body = yaml.http.body;
+  if (isMultipartBody(body)) {
+    const form = new FormData();
+    const parts = body!.data as MultipartFormPart[];
+
+    for (const part of parts) {
+      const contentType = part.contentType
+        ? substitute(part.contentType, vars)
+        : undefined;
+
+      if (part.type === 'file') {
+        const paths = Array.isArray(part.value) ? part.value : [part.value];
+        for (const rawPath of paths) {
+          const filePath = substitute(String(rawPath), vars);
+          const buf = await readFile(filePath);
+          form.append(
+            part.name,
+            new Blob([buf], { type: contentType || 'application/octet-stream' }),
+            basename(filePath),
+          );
+        }
+      } else {
+        const values = Array.isArray(part.value) ? part.value : [part.value];
+        for (const rawValue of values) {
+          const value = substitute(String(rawValue), vars);
+          if (contentType) {
+            form.append(part.name, new Blob([value], { type: contentType }));
+          } else {
+            form.append(part.name, value);
+          }
+        }
+      }
+    }
+
+    options.body = form;
+
+    // undici sets the multipart boundary itself; a user-provided Content-Type
+    // header would clobber the boundary, so strip it.
+    for (const key of Object.keys(headers)) {
+      if (key.toLowerCase() === 'content-type') {
+        delete headers[key];
+      }
+    }
+  } else if (typeof body?.data === 'string') {
+    options.body = substitute(body.data, vars);
   }
 
   return { url, options };
+}
+
+function getBeforeRequestScript(yaml: YamlRequest): string | null {
+  if (!yaml.runtime?.scripts) return null;
+
+  const beforeScripts = yaml.runtime.scripts
+    .filter(s => s.type === 'before-request')
+    .map(s => s.code);
+
+  return beforeScripts.length > 0 ? beforeScripts.join('\n') : null;
 }
 
 function getAfterResponseScript(yaml: YamlRequest): string | null {
@@ -158,17 +250,70 @@ function getAfterResponseScript(yaml: YamlRequest): string | null {
   return afterScripts.length > 0 ? afterScripts.join('\n') : null;
 }
 
+/** Truncate a response body to a maximum byte length (UTF-8). */
+function capResponseBody(
+  rawBody: string,
+  maxBytes: number,
+): { body: string; truncated: boolean } {
+  const buf = Buffer.from(rawBody, 'utf8');
+  if (buf.byteLength <= maxBytes) {
+    return { body: rawBody, truncated: false };
+  }
+  return { body: buf.subarray(0, maxBytes).toString('utf8'), truncated: true };
+}
+
 async function executeSingleRequest(
   yaml: YamlRequest,
   vars: Map<string, string>,
   variableStore?: VariableStore,
+  bodyCapture?: BodyCaptureOptions,
 ): Promise<RequestExecutionResult> {
   // Merge env vars with runtime vars (runtime takes precedence)
   const effectiveVars = variableStore ? variableStore.merge(vars) : vars;
 
-  const { url, options } = buildFetchOptions(yaml, effectiveVars);
+  // eslint-disable-next-line prefer-const -- url is reassigned by pre-request script mutations below
+  let { url, options } = await buildFetchOptions(yaml, effectiveVars);
   const name = yaml.info.name;
   const method = yaml.http.method;
+
+  // Run pre-request scripts (before fetch, may mutate url/headers/body)
+  const preScript = getBeforeRequestScript(yaml);
+  let preScriptError: string | undefined;
+  if (preScript) {
+    const mockReqData: MockRequestData = {
+      url,
+      method: options.method as string,
+      headers: { ...(options.headers as Record<string, string>) },
+      body: options.body ?? null,
+    };
+    const preResult = await TestRunner.runPreRequestScript(preScript, mockReqData, {
+      timeout: yaml.settings?.timeout ?? 5000,
+    });
+
+    // Apply mutations
+    if (preResult.mutations.url) {
+      url = preResult.mutations.url;
+    }
+    if (preResult.mutations.headers) {
+      Object.assign(options.headers as Record<string, string>, preResult.mutations.headers);
+    }
+    if (preResult.mutations.body !== undefined) {
+      options.body = typeof preResult.mutations.body === 'string'
+        ? preResult.mutations.body
+        : JSON.stringify(preResult.mutations.body);
+    }
+
+    // Feed variables into store
+    if (variableStore) {
+      for (const [k, v] of Object.entries(preResult.variables)) {
+        variableStore.set(k, v as string | number | boolean);
+      }
+    }
+
+    if (preResult.error) {
+      preScriptError = preResult.error;
+    }
+  }
 
   // SSRF protection: validate URL before making the request
   const urlCheck = await validateUrl(url);
@@ -191,16 +336,35 @@ async function executeSingleRequest(
     fetchOpts.signal = AbortSignal.timeout(timeout);
   }
 
+  // Build custom dispatcher for TLS/proxy settings
+  const dispatcherResult = yaml.settings
+    ? await buildDispatcher(yaml.settings)
+    : undefined;
+
+  const fetchFn = dispatcherResult ? dispatcherResult.fetch : fetch;
+  if (dispatcherResult) {
+    (fetchOpts as any).dispatcher = dispatcherResult.dispatcher;
+  }
+
   const startTime = Date.now();
 
-  const MAX_REDIRECTS = 10;
+  // Redirect handling honors request settings:
+  //   followRedirects === false -> return the 3xx response as-is (no follow)
+  //   maxRedirects -> hop cap (defaults to 10 when unset)
+  const followRedirects = yaml.settings?.followRedirects !== false;
+  const maxRedirects = yaml.settings?.maxRedirects ?? 10;
 
   try {
-    let response = await fetch(url, fetchOpts);
+    let response = await fetchFn(url, fetchOpts);
     let currentUrl = url;
     let redirectCount = 0;
 
-    while (response.status >= 300 && response.status < 400 && redirectCount < MAX_REDIRECTS) {
+    while (
+      followRedirects &&
+      response.status >= 300 &&
+      response.status < 400 &&
+      redirectCount < maxRedirects
+    ) {
       const location = response.headers.get('location');
       if (!location) break;
 
@@ -221,12 +385,12 @@ async function executeSingleRequest(
         };
       }
 
-      response = await fetch(redirectUrl, fetchOpts);
+      response = await fetchFn(redirectUrl, fetchOpts);
       currentUrl = redirectUrl;
       redirectCount++;
     }
 
-    if (redirectCount >= MAX_REDIRECTS) {
+    if (followRedirects && redirectCount >= maxRedirects) {
       return {
         name,
         method,
@@ -234,7 +398,7 @@ async function executeSingleRequest(
         status: 0,
         duration_ms: Date.now() - startTime,
         tests: [],
-        error: `Too many redirects (max ${MAX_REDIRECTS})`,
+        error: `Too many redirects (max ${maxRedirects})`,
       };
     }
 
@@ -256,14 +420,25 @@ async function executeSingleRequest(
       }
     }
 
-    return {
+    const result: RequestExecutionResult = {
       name,
       method,
       url,
       status: response.status,
       duration_ms: durationMs,
       tests,
+      error: preScriptError,
     };
+
+    if (bodyCapture?.includeResponseBody) {
+      const rawBody = wrappedResponse.rawBody ?? '';
+      const { body, truncated } = capResponseBody(rawBody, bodyCapture.maxResponseBodyBytes);
+      result.response_body = body;
+      result.response_body_truncated = truncated;
+      result.response_content_type = wrappedResponse.headers['content-type'] ?? '';
+    }
+
+    return result;
   } catch (error: unknown) {
     const durationMs = Date.now() - startTime;
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -286,6 +461,11 @@ export class RequestExecutor {
     options?: ExecutionOptions,
   ): Promise<CollectionRunResult> {
     const startTime = Date.now();
+
+    const bodyCapture: BodyCaptureOptions = {
+      includeResponseBody: options?.includeResponseBody ?? true,
+      maxResponseBodyBytes: options?.maxResponseBodyBytes ?? DEFAULT_MAX_RESPONSE_BODY_BYTES,
+    };
 
     let vars = new Map<string, string>();
     if (options?.environment) {
@@ -324,13 +504,52 @@ export class RequestExecutor {
       parseErrors = discovery.parseErrors;
     }
 
-    // Create a fresh variable store per run for cross-request variable propagation
-    const variableStore = new VariableStore();
+    let results: RequestExecutionResult[];
 
-    const results: RequestExecutionResult[] = [];
-    for (const req of requests) {
-      const result = await executeSingleRequest(req.yaml, vars, variableStore);
-      results.push(result);
+    if (options?.parallel) {
+      // Group requests by folder (derived from file path relative to collectionPath)
+      const folderMap = new Map<string, ParsedRequest[]>();
+      for (const req of requests) {
+        const relPath = relative(collectionPath, req.filePath);
+        const folder = dirname(relPath) === '.' ? '' : dirname(relPath);
+        if (!folderMap.has(folder)) {
+          folderMap.set(folder, []);
+        }
+        folderMap.get(folder)!.push(req);
+      }
+
+      // Sort folder names alphabetically for deterministic merge order
+      const sortedFolders = [...folderMap.keys()].sort();
+
+      // Execute folders in parallel, serial within each folder
+      const folderResults = await Promise.allSettled(
+        sortedFolders.map(async (folder) => {
+          const folderRequests = folderMap.get(folder)!;
+          const folderStore = new VariableStore();
+          const folderRes: RequestExecutionResult[] = [];
+          for (const req of folderRequests) {
+            const result = await executeSingleRequest(req.yaml, vars, folderStore, bodyCapture);
+            folderRes.push(result);
+          }
+          return folderRes;
+        }),
+      );
+
+      // Merge results in folder order
+      results = [];
+      for (const outcome of folderResults) {
+        if (outcome.status === 'fulfilled') {
+          results.push(...outcome.value);
+        }
+      }
+    } else {
+      // Serial execution (default)
+      const variableStore = new VariableStore();
+      results = [];
+      for (const req of requests) {
+        const result = await executeSingleRequest(req.yaml, vars, variableStore, bodyCapture);
+        results.push(result);
+      }
     }
 
     const totalDuration = Date.now() - startTime;

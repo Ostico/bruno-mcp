@@ -2,6 +2,7 @@ import {
   createReader,
   createWriter,
   mapScriptType,
+  normalizeScriptType,
   type FormatReader,
   type FormatWriter,
 } from '../../../src/bruno/format-factory.js';
@@ -295,6 +296,81 @@ describe('format-factory', () => {
 
     it('throws BrunoError for invalid format', () => {
       expect(() => mapScriptType('pre-request', 'xml' as any)).toThrow(BrunoError);
+    });
+  });
+
+  // =========================================================================
+  // normalizeScriptType
+  // =========================================================================
+  describe('normalizeScriptType', () => {
+    it('returns canonical script types unchanged', () => {
+      expect(normalizeScriptType('pre-request')).toBe('pre-request');
+      expect(normalizeScriptType('post-response')).toBe('post-response');
+      expect(normalizeScriptType('tests')).toBe('tests');
+    });
+
+    it('maps aliases to their canonical type', () => {
+      expect(normalizeScriptType('before-request')).toBe('pre-request');
+      expect(normalizeScriptType('after-response')).toBe('post-response');
+    });
+
+    it('throws a VALIDATION_ERROR for an unknown script type', () => {
+      expect(() => normalizeScriptType('bogus')).toThrow(BrunoError);
+      try {
+        normalizeScriptType('bogus');
+      } catch (e) {
+        expect((e as BrunoError).code).toBe('VALIDATION_ERROR');
+      }
+    });
+  });
+
+  // =========================================================================
+  // YAML environment content parsing (inline)
+  // =========================================================================
+  describe('yaml environment parsing', () => {
+    it('parses variables with name, value, and disabled fields', () => {
+      const reader = createReader('yaml');
+      const envYaml =
+        'name: dev\nvariables:\n  - name: base_url\n    value: http://localhost\n    disabled: true\n  - {}\n';
+      const result = reader.parseEnvironment(envYaml, 'ignored') as any;
+      expect(result.name).toBe('dev');
+      expect(result.variables).toHaveLength(2);
+      expect(result.variables[0]).toEqual({ name: 'base_url', value: 'http://localhost', disabled: true });
+      // The empty entry falls back to defaults.
+      expect(result.variables[1]).toEqual({ name: '', value: undefined, disabled: undefined });
+    });
+
+    it('returns an empty variables list when content is not an object', () => {
+      const reader = createReader('yaml');
+      const result = reader.parseEnvironment('42', 'dev') as any;
+      expect(result).toEqual({ variables: [] });
+    });
+
+    it('returns an empty variables list when variables is not an array', () => {
+      const reader = createReader('yaml');
+      const result = reader.parseEnvironment('name: x\nvariables: nope\n', 'dev') as any;
+      expect(result.variables).toEqual([]);
+    });
+
+    it('throws PARSE_ERROR on malformed YAML content', () => {
+      const reader = createReader('yaml');
+      expect(() => reader.parseEnvironment('{ unclosed: [', 'dev')).toThrow(BrunoError);
+    });
+  });
+
+  // =========================================================================
+  // createWriter — YAML tests+replace safe-mode downgrade
+  // =========================================================================
+  describe('createWriter YAML tests replace safe-mode', () => {
+    it('downgrades replace to append for tests scripts', () => {
+      const writer = createWriter('yaml');
+      writer.injectScript('info:\n  name: T\n', 'tests', 'test code', 'replace');
+      expect(injectYamlScript).toHaveBeenCalledWith(
+        'info:\n  name: T\n',
+        'after-response',
+        'test code',
+        'append',
+      );
     });
   });
 });

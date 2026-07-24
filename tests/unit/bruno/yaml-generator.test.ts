@@ -256,4 +256,32 @@ describe('yaml-generator', () => {
       expect(result).toContain('before-request');
     });
   });
+
+  describe('stripEmpty pruning (empty collections collapse to undefined)', () => {
+    it('drops an array field that becomes empty after cleaning', () => {
+      // body.data is an empty array → stripEmpty returns undefined for it,
+      // so the emitted body keeps only `type`.
+      const yaml = generateYamlRequest({
+        info: { name: 'R' },
+        http: {
+          method: 'GET',
+          url: 'https://example.com',
+          body: { type: 'json', data: [] as unknown as string },
+        },
+      });
+      expect(yaml).toContain('type: json');
+      expect(yaml).not.toMatch(/data:/);
+    });
+
+    it('drops an object field that becomes empty after cleaning', () => {
+      // settings is a truthy but empty object → stripEmpty returns undefined,
+      // so no `settings:` key is emitted.
+      const yaml = generateYamlRequest({
+        info: { name: 'R' },
+        http: { method: 'GET', url: 'https://example.com' },
+        settings: {},
+      });
+      expect(yaml).not.toMatch(/settings:/);
+    });
+  });
 });

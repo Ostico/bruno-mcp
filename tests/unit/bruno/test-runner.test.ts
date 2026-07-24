@@ -1,4 +1,4 @@
-import { TestRunner, TestResult, ScriptResult } from '../../../src/bruno/test-runner';
+import { TestRunner, TestResult, ScriptResult, PreRequestScriptResult } from '../../../src/bruno/test-runner';
 
 describe('TestRunner', () => {
   describe('runScript', () => {
@@ -64,6 +64,39 @@ describe('TestRunner', () => {
       expect(results[0].status).toBe('fail');
       expect(results[0].error!.toLowerCase()).toContain('timed out');
     }, 10000);
+
+    it('should report an out-of-range timeout as a failing script error', async () => {
+      // An out-of-range timeout makes vm.runInContext throw; the runner reports it
+      // as a script error rather than crashing.
+      const script = `test("noop", function() {});`;
+      const mockResponse = { status: 200, statusText: 'OK', headers: {}, body: null, responseTime: 10 };
+      const { results } = await TestRunner.runScript(script, mockResponse, { timeout: -1 });
+      expect(results).toHaveLength(1);
+      expect(results[0].status).toBe('fail');
+      expect(results[0].error).toContain('out of range');
+    });
+
+    it('should fall back to empty results when the script nullifies __results', async () => {
+      // A script can reassign the internal results accumulator to a falsy value;
+      // the runner must defensively return [] rather than null.
+      const script = `__results = null;`;
+      const mockResponse = { status: 200, statusText: 'OK', headers: {}, body: null, responseTime: 10 };
+      const { results } = await TestRunner.runScript(script, mockResponse);
+      expect(results).toEqual([]);
+    });
+
+    it('should label a thrown value whose constructor has no name as a generic Error', async () => {
+      // Top-level throw of a non-Error object whose constructor exposes no name
+      // exercises the String(error) and `?? "Error"` fallback branches.
+      const script = `throw { constructor: {} };`;
+      const mockResponse = { status: 200, statusText: 'OK', headers: {}, body: null, responseTime: 10 };
+      const { results } = await TestRunner.runScript(script, mockResponse);
+      expect(results).toHaveLength(1);
+      expect(results[0].status).toBe('fail');
+      expect(results[0].description).toBe('Script error');
+      expect(results[0].error).toContain('Error:');
+      expect(results[0].error!.toLowerCase()).not.toContain('timed out');
+    });
 
     it('should provide res.getBody() in VM context', async () => {
       const script = `test("body check", function() { var body = res.getBody(); expect(body.items).to.be.an("array"); expect(body.items).to.have.lengthOf(2); });`;
@@ -376,6 +409,180 @@ describe('TestRunner', () => {
       expect(results).toHaveLength(2);
       expect(results[0].status).toBe('pass');
       expect(results[1].status).toBe('fail');
+    });
+  });
+
+  describe('runPreRequestScript', () => {
+    const mockRequest = {
+      url: 'https://api.example.com/users',
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+      body: null,
+    };
+
+    it('should return empty result for empty script', async () => {
+      const result = await TestRunner.runPreRequestScript('', mockRequest);
+      expect(result.variables).toEqual({});
+      expect(result.mutations).toEqual({});
+      expect(result.error).toBeUndefined();
+    });
+
+    it('should read request data via req.getUrl()', async () => {
+      const script = `
+        var url = req.getUrl();
+        bru.setVar("captured_url", url);
+      `;
+      const result = await TestRunner.runPreRequestScript(script, mockRequest);
+      expect(result.variables.captured_url).toBe('https://api.example.com/users');
+    });
+
+    it('should read request method via req.getMethod()', async () => {
+      const script = `bru.setVar("m", req.getMethod());`;
+      const result = await TestRunner.runPreRequestScript(script, mockRequest);
+      expect(result.variables.m).toBe('GET');
+    });
+
+    it('should read headers via req.getHeaders() and req.getHeader()', async () => {
+      const script = `
+        bru.setVar("all_headers", JSON.stringify(req.getHeaders()));
+        bru.setVar("ct", req.getHeader("Content-Type"));
+        bru.setVar("missing", req.getHeader("X-Missing"));
+      `;
+      const result = await TestRunner.runPreRequestScript(script, mockRequest);
+      expect(JSON.parse(result.variables.all_headers as string)).toEqual({ 'Content-Type': 'application/json' });
+      expect(result.variables.ct).toBe('application/json');
+      expect(result.variables.missing).toBeNull();
+    });
+
+    it('should read body via req.getBody()', async () => {
+      const script = `bru.setVar("body", req.getBody());`;
+      const result = await TestRunner.runPreRequestScript(script, mockRequest);
+      expect(result.variables.body).toBeNull();
+    });
+
+    it('should capture URL mutation via req.setUrl()', async () => {
+      const script = `req.setUrl("https://modified.com/api");`;
+      const result = await TestRunner.runPreRequestScript(script, mockRequest);
+      expect(result.mutations.url).toBe('https://modified.com/api');
+    });
+
+    it('should capture header mutations via req.setHeader()', async () => {
+      const script = `
+        req.setHeader("Authorization", "Bearer token123");
+        req.setHeader("X-Custom", "value");
+      `;
+      const result = await TestRunner.runPreRequestScript(script, mockRequest);
+      expect(result.mutations.headers).toEqual({
+        Authorization: 'Bearer token123',
+        'X-Custom': 'value',
+      });
+    });
+
+    it('should capture body mutation via req.setBody()', async () => {
+      const script = `req.setBody({ name: "test" });`;
+      const result = await TestRunner.runPreRequestScript(script, mockRequest);
+      expect(result.mutations.body).toEqual({ name: 'test' });
+    });
+
+    it('should capture combined mutations', async () => {
+      const script = `
+        req.setUrl("https://modified.com");
+        req.setHeader("Authorization", "Bearer token123");
+        req.setBody({ key: "value" });
+      `;
+      const result = await TestRunner.runPreRequestScript(script, mockRequest);
+      expect(result.mutations).toEqual({
+        url: 'https://modified.com',
+        headers: { Authorization: 'Bearer token123' },
+        body: { key: 'value' },
+      });
+    });
+
+    it('should reflect mutations in subsequent getter calls', async () => {
+      const script = `
+        req.setUrl("https://new.com");
+        bru.setVar("url_after", req.getUrl());
+        req.setHeader("X-New", "yes");
+        bru.setVar("header_after", req.getHeader("X-New"));
+      `;
+      const result = await TestRunner.runPreRequestScript(script, mockRequest);
+      expect(result.variables.url_after).toBe('https://new.com');
+      expect(result.variables.header_after).toBe('yes');
+    });
+
+    it('should support bru.setVar/getVar', async () => {
+      const script = `
+        bru.setVar("token", "abc123");
+        bru.setVar("check", bru.getVar("token"));
+      `;
+      const result = await TestRunner.runPreRequestScript(script, mockRequest);
+      expect(result.variables).toEqual({ token: 'abc123', check: 'abc123' });
+    });
+
+    it('should return error for script syntax errors', async () => {
+      const script = `var = }`;
+      const result = await TestRunner.runPreRequestScript(script, mockRequest);
+      expect(result.error).toBeDefined();
+      expect(result.error).toContain('SyntaxError');
+      expect(result.mutations).toEqual({});
+    });
+
+    it('should return error on timeout', async () => {
+      const script = `while(true) {}`;
+      const result = await TestRunner.runPreRequestScript(script, mockRequest, { timeout: 100 });
+      expect(result.error).toBeDefined();
+      expect(result.error!.toLowerCase()).toContain('timed out');
+    }, 10000);
+
+    it('should preserve variables set before an error', async () => {
+      const script = `
+        bru.setVar("before", "saved");
+        var x = undefined;
+        x.foo;
+      `;
+      const result = await TestRunner.runPreRequestScript(script, mockRequest);
+      expect(result.error).toBeDefined();
+      expect(result.variables.before).toBe('saved');
+    });
+
+    it('should not have test(), expect(), or res in sandbox', async () => {
+      const script = `
+        bru.setVar("hasTest", typeof test !== 'undefined');
+        bru.setVar("hasExpect", typeof expect !== 'undefined');
+        bru.setVar("hasRes", typeof res !== 'undefined');
+      `;
+      const result = await TestRunner.runPreRequestScript(script, mockRequest);
+      expect(result.variables.hasTest).toBe(false);
+      expect(result.variables.hasExpect).toBe(false);
+      expect(result.variables.hasRes).toBe(false);
+    });
+
+    it('should report an out-of-range timeout as an error', async () => {
+      // An out-of-range timeout makes vm.runInContext throw; the runner reports it
+      // as an error rather than crashing.
+      const script = `req.setHeader("X-Test", "1");`;
+      const result = await TestRunner.runPreRequestScript(script, mockRequest, { timeout: -1 });
+      expect(result.error).toBeDefined();
+      expect(result.error).toContain('out of range');
+    });
+
+    it('should fall back to empty mutations when the script nullifies __reqMutations', async () => {
+      // A script can reassign the internal mutations accumulator to a falsy value;
+      // the runner must defensively fall back to {} rather than returning null.
+      const script = `__reqMutations = null;`;
+      const result = await TestRunner.runPreRequestScript(script, mockRequest);
+      expect(result.error).toBeUndefined();
+      expect(result.mutations).toEqual({});
+    });
+
+    it('should label a thrown value whose constructor has no name as a generic Error', async () => {
+      // Thrown object is not an Error instance (String(error) branch) and its
+      // constructor exposes no name, exercising the `?? "Error"` fallback.
+      const script = `throw { constructor: {} };`;
+      const result = await TestRunner.runPreRequestScript(script, mockRequest);
+      expect(result.error).toBeDefined();
+      expect(result.error).toContain('Error:');
+      expect(result.error!.toLowerCase()).not.toContain('timed out');
     });
   });
 });

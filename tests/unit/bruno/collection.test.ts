@@ -1,5 +1,5 @@
 import { CollectionManager, createCollectionManager } from '../../../src/bruno/collection';
-import { BrunoError, BruFileError } from '../../../src/bruno/types';
+import { BrunoError, BruFileError, BruValidationError } from '../../../src/bruno/types';
 
 jest.mock('fs', () => ({
   promises: {
@@ -26,6 +26,17 @@ jest.mock('../../../src/bruno/yaml-parser.js', () => ({
 const fs = require('fs').promises;
 const { detectFormat } = require('../../../src/bruno/format-detector.js');
 const { parseYamlCollection } = require('../../../src/bruno/yaml-parser.js');
+
+describe('BruValidationError (types)', () => {
+  it('sets code VALIDATION_ERROR, name, message and details', () => {
+    const err = new BruValidationError('bad input', { field: 'name' });
+    expect(err).toBeInstanceOf(BrunoError);
+    expect(err.name).toBe('BruValidationError');
+    expect(err.code).toBe('VALIDATION_ERROR');
+    expect(err.message).toBe('bad input');
+    expect(err.details).toEqual({ field: 'name' });
+  });
+});
 
 describe('CollectionManager', () => {
   let manager: CollectionManager;
@@ -248,6 +259,32 @@ describe('CollectionManager', () => {
       detectFormat.mockRejectedValue(new Error('fail'));
       const result = await manager.updateCollection('/c', { name: 'x' });
       expect(result.success).toBe(false);
+    });
+
+    it('should return error when the updated name is empty', async () => {
+      detectFormat.mockResolvedValue({ format: 'yaml', configPath: '/c/opencollection.yml', collectionName: 'api' });
+      fs.readFile.mockResolvedValue('');
+      parseYamlCollection.mockReturnValue({
+        opencollection: '1',
+        info: { name: 'api' },
+      });
+
+      const result = await manager.updateCollection('/c', { name: '   ' });
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/name is required/i);
+    });
+
+    it('should return error when the updated version is empty', async () => {
+      detectFormat.mockResolvedValue({ format: 'yaml', configPath: '/c/opencollection.yml', collectionName: 'api' });
+      fs.readFile.mockResolvedValue('');
+      parseYamlCollection.mockReturnValue({
+        opencollection: '1',
+        info: { name: 'api' },
+      });
+
+      const result = await manager.updateCollection('/c', { version: '' });
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/version is required/i);
     });
   });
 

@@ -94,5 +94,6 @@ export async function wrapFetchResponse(
     headers,
     body,
     responseTime: durationMs,
+    rawBody: rawText,
   };
 }

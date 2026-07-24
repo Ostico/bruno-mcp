@@ -12,6 +12,8 @@ import {
   type YamlBody,
   type YamlScript,
   type YamlInfo,
+  type MultipartFormPart,
+  type TlsSettings,
 } from './types.js';
 
 function safeParse(content: string, label: string): Record<string, unknown> {
@@ -77,9 +79,31 @@ function parseHeaders(raw: unknown): YamlHeader[] | undefined {
 function parseBody(raw: unknown): YamlBody | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const obj = raw as Record<string, unknown>;
+
+  let data: YamlBody['data'];
+  if (Array.isArray(obj.data)) {
+    // multipart/form-data parts
+    data = obj.data.map((entry) => {
+      const part = (entry ?? {}) as Record<string, unknown>;
+      const item: MultipartFormPart = {
+        name: String(part.name ?? ''),
+        value: Array.isArray(part.value)
+          ? part.value.map(String)
+          : String(part.value ?? ''),
+        type: part.type === 'file' ? 'file' : 'text',
+      };
+      if (part.contentType !== undefined) {
+        item.contentType = String(part.contentType);
+      }
+      return item;
+    });
+  } else if (obj.data !== undefined) {
+    data = String(obj.data);
+  }
+
   return {
     type: String(obj.type ?? ''),
-    data: obj.data !== undefined ? String(obj.data) : undefined,
+    data,
   };
 }
 
@@ -119,10 +143,23 @@ function parseRuntime(raw: unknown): YamlRuntime | undefined {
   return { scripts };
 }
 
+function parseTlsSettings(raw: unknown): TlsSettings | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const obj = raw as Record<string, unknown>;
+  const tls: TlsSettings = {};
+  if (typeof obj.rejectUnauthorized === 'boolean') {
+    tls.rejectUnauthorized = obj.rejectUnauthorized;
+  }
+  if (typeof obj.ca === 'string') tls.ca = obj.ca;
+  if (typeof obj.cert === 'string') tls.cert = obj.cert;
+  if (typeof obj.key === 'string') tls.key = obj.key;
+  return Object.keys(tls).length > 0 ? tls : undefined;
+}
+
 function parseSettings(raw: unknown): YamlSettings | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const obj = raw as Record<string, unknown>;
-  return {
+  const settings: YamlSettings = {
     encodeUrl:
       typeof obj.encodeUrl === 'boolean' ? obj.encodeUrl : undefined,
     timeout: typeof obj.timeout === 'number' ? obj.timeout : undefined,
@@ -133,6 +170,12 @@ function parseSettings(raw: unknown): YamlSettings | undefined {
     maxRedirects:
       typeof obj.maxRedirects === 'number' ? obj.maxRedirects : undefined,
   };
+
+  const tls = parseTlsSettings(obj.tls);
+  if (tls) settings.tls = tls;
+  if (typeof obj.proxy === 'string') settings.proxy = obj.proxy;
+
+  return settings;
 }
 
 export function parseYamlRequest(content: string): YamlRequest {

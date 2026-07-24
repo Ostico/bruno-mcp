@@ -1,6 +1,6 @@
 import { promises as fs } from 'fs';
 import { join } from 'path';
-import { WorkspaceResolver } from '../../../src/bruno/workspace.js';
+import { WorkspaceResolver, createWorkspaceResolver } from '../../../src/bruno/workspace.js';
 
 jest.mock('fs', () => ({
   promises: {
@@ -252,6 +252,46 @@ describe('WorkspaceResolver', () => {
           delete process.env.APPDATA;
         }
       });
+    });
+
+    describe('win32 default path without APPDATA env var', () => {
+      it('should fall back to the AppData/Roaming path under home', () => {
+        Object.defineProperty(process, 'platform', { value: 'win32' });
+        const originalAppData = process.env.APPDATA;
+        delete process.env.APPDATA;
+
+        const path = resolver.getDefaultPath();
+        expect(path).toContain('AppData');
+        expect(path).toContain('Roaming');
+
+        if (originalAppData !== undefined) {
+          process.env.APPDATA = originalAppData;
+        }
+      });
+    });
+
+    describe('parseWorkspaceYaml filtering', () => {
+      it('drops collection entries missing a name or path', () => {
+        const yaml = [
+          'collections:',
+          '  - name: "Valid"',
+          '    path: "/abs/valid"',
+          '  - name: "NoPath"',
+          '  - path: "/abs/no-name"',
+          '  - "just-a-string"',
+        ].join('\n');
+
+        const result = resolver.parseWorkspaceYaml(yaml);
+
+        expect(result).toEqual([{ name: 'Valid', path: '/abs/valid' }]);
+      });
+    });
+  });
+
+  describe('createWorkspaceResolver()', () => {
+    it('returns a WorkspaceResolver instance', () => {
+      const instance = createWorkspaceResolver();
+      expect(instance).toBeInstanceOf(WorkspaceResolver);
     });
   });
 });

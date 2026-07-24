@@ -19,7 +19,28 @@ import {
   AuthType,
   BodyType
 } from './types.js';
+import { MultipartFormPart } from './types.js';
 import { detectFormat } from './format-detector.js';
+import type { CollectionFormat } from './format-detector.js';
+import { createWriter, normalizeScriptType } from './format-factory.js';
+
+/** True for body types that serialize as multipart/form-data. */
+function isMultipartBodyType(type: string): boolean {
+  return type === 'form-data' || type === 'multipart-form';
+}
+
+/** Normalize input form-data parts into the canonical multipart YAML shape. */
+function toMultipartData(parts: MultipartFormPart[]): MultipartFormPart[] {
+  return parts.map((part) => {
+    const normalized: MultipartFormPart = {
+      name: part.name,
+      value: part.value,
+      type: part.type ?? 'text',
+    };
+    if (part.contentType) normalized.contentType = part.contentType;
+    return normalized;
+  });
+}
 import { generateYamlRequest } from './yaml-generator.js';
 import { parseBruRequest, generateBruRequest } from './bru-parser.js';
 import { parseYamlRequest } from './yaml-parser.js';
@@ -44,6 +65,9 @@ export class RequestBuilder {
         await this.ensureDirectory(dirname(filePath));
         const yamlContent = generateYamlRequest(yamlRequest);
         await fs.writeFile(filePath, yamlContent);
+        if (input.scripts) {
+          await this.applyInlineScripts(filePath, detection.format, input.scripts);
+        }
         return { success: true, path: filePath };
       } else {
         // Build BRU file structure and write .bru file
@@ -52,6 +76,9 @@ export class RequestBuilder {
         await this.ensureDirectory(dirname(filePath));
         const bruContent = generateBruRequest(bruFile);
         await fs.writeFile(filePath, bruContent);
+        if (input.scripts) {
+          await this.applyInlineScripts(filePath, detection.format, input.scripts);
+        }
         return { success: true, path: filePath };
       }
 
@@ -153,7 +180,14 @@ export class RequestBuilder {
           );
         }
         if (updates.body && updates.body.type !== 'none') {
-          yamlReq.http.body = { type: updates.body.type, data: updates.body.content };
+          if (isMultipartBodyType(updates.body.type) && updates.body.formData) {
+            yamlReq.http.body = {
+              type: 'multipart-form',
+              data: toMultipartData(updates.body.formData),
+            };
+          } else {
+            yamlReq.http.body = { type: updates.body.type, data: updates.body.content };
+          }
         }
         if (updates.auth && updates.auth.type !== 'none') {
           const authObj: Record<string, unknown> = { type: updates.auth.type };
@@ -173,6 +207,11 @@ export class RequestBuilder {
         // Generate and write updated content
         const bruContent = generateBruRequest(updatedBru);
         await fs.writeFile(filePath, bruContent);
+      }
+
+      if (updates.scripts) {
+        const format: CollectionFormat = filePath.endsWith('.yml') ? 'yaml' : 'bru';
+        await this.applyInlineScripts(filePath, format, updates.scripts);
       }
 
       return {
@@ -378,12 +417,16 @@ export class RequestBuilder {
 
       // Handle form data
       if (input.body.formData) {
-        bruFile.body.formData = input.body.formData.map(field => ({
-          name: field.name,
-          value: field.value,
-          type: field.type || 'text',
-          enabled: true
-        }));
+        bruFile.body.formData = input.body.formData.map(field => {
+          const part: MultipartFormPart = {
+            name: field.name,
+            value: field.value,
+            type: field.type || 'text',
+            enabled: true,
+          };
+          if (field.contentType) part.contentType = field.contentType;
+          return part;
+        });
       }
     }
 
@@ -444,10 +487,17 @@ export class RequestBuilder {
 
     // Add body
     if (input.body && input.body.type !== 'none') {
-      yamlRequest.http.body = {
-        type: input.body.type,
-        data: input.body.content,
-      };
+      if (isMultipartBodyType(input.body.type) && input.body.formData) {
+        yamlRequest.http.body = {
+          type: 'multipart-form',
+          data: toMultipartData(input.body.formData),
+        };
+      } else {
+        yamlRequest.http.body = {
+          type: input.body.type,
+          data: input.body.content,
+        };
+      }
     }
 
     // Add query params
@@ -611,6 +661,27 @@ export class RequestBuilder {
         }
         break;
     }
+  }
+
+  /**
+   * Persist inline scripts to an already-written request file using the same
+   * script-injection path as add_test_script. Script-type keys may use the
+   * canonical values (pre-request/post-response/tests) or the aliases
+   * before-request (→ pre-request) and after-response (→ post-response).
+   */
+  private async applyInlineScripts(
+    filePath: string,
+    format: CollectionFormat,
+    scripts: Record<string, string>,
+  ): Promise<void> {
+    const writer = createWriter(format);
+    let content = await fs.readFile(filePath, 'utf-8');
+    for (const [rawType, code] of Object.entries(scripts)) {
+      if (code === undefined || code === null || code === '') continue;
+      const canonical = normalizeScriptType(rawType);
+      content = writer.injectScript(content, canonical, code, 'append');
+    }
+    await fs.writeFile(filePath, content);
   }
 
   /**

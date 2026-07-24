@@ -25,7 +25,11 @@ Requires **Node.js >= 18.0.0**.
 - **Request Modification**: Partial-merge updates to existing request files
 - **Variable Chaining**: `bru.setVar()`/`bru.getVar()` for cross-request variable flow
 - **Dependency Ordering**: Topological sort for test suite execution order
-- **Request Execution**: Execute requests and run tests with structured results
+- **Request Execution**: Execute requests and run tests with structured results, including captured response bodies
+- **Multipart Uploads**: `multipart/form-data` bodies with per-part `Content-Type` and multi-file fields
+- **Flexible Environment Updates**: Replace, merge, or patch a single variable in an environment
+- **Inline Scripts**: Attach pre-request/post-response/test scripts directly on `create_request`/`modify_request`
+- **Parallel Execution**: Run collection folders in parallel via `run_collection`'s `parallel` option
 - **Security Hardening**: SSRF protection, path traversal prevention, VM sandbox for test scripts
 
 ## Installation
@@ -109,7 +113,7 @@ Create a new Bruno collection with configuration.
 ```
 
 ### `create_environment`
-Create environment configuration files.
+Create environment configuration files. **Replaces the whole environment file** — if an environment with this name already exists, its previous variables are discarded and replaced by `variables`.
 
 **Parameters:**
 - `collectionPath` (string): Path to Bruno collection
@@ -129,6 +133,62 @@ Create environment configuration files.
 }
 ```
 
+### `update_environment`
+Partially update an existing environment by **merging** the given variables into the existing set. Unlike `create_environment`, variables not listed here (including disabled ones) are preserved as-is.
+
+**Parameters:**
+- `collectionPath` (string): Path to Bruno collection
+- `name` (string): Name of the existing environment to update
+- `variables` (object): Variables to merge in; existing variables not listed here are kept
+
+**Example:**
+```json
+{
+  "collectionPath": "./collections/my-api-tests",
+  "name": "production",
+  "variables": { "apiKey": "prod-key-456" }
+}
+```
+
+### `set_environment_variable`
+Set (add or update) a single variable in an existing environment. Merges into the environment — all other variables are preserved.
+
+**Parameters:**
+- `collectionPath` (string): Path to Bruno collection
+- `environment` (string): Name of the existing environment
+- `name` (string): Variable key to set
+- `value` (string | number | boolean): Variable value
+- `enabled` (boolean, optional): Whether the variable is enabled. This is persisted — `enabled: false` writes the variable as disabled.
+- `secret` (boolean, optional): Whether the variable is a secret. **Accepted but not persisted** — the environment file format has no place to store it, so this flag is currently a no-op.
+
+**Example:**
+```json
+{
+  "collectionPath": "./collections/my-api-tests",
+  "environment": "production",
+  "name": "featureFlag",
+  "value": true,
+  "enabled": true
+}
+```
+
+### `remove_environment_variable`
+Remove a single variable from an existing environment, preserving the rest.
+
+**Parameters:**
+- `collectionPath` (string): Path to Bruno collection
+- `environment` (string): Name of the existing environment
+- `name` (string): Variable key to remove
+
+**Example:**
+```json
+{
+  "collectionPath": "./collections/my-api-tests",
+  "environment": "production",
+  "name": "featureFlag"
+}
+```
+
 ### `create_request`
 Generate request files (`.bru` or `.yml` based on collection format).
 
@@ -143,6 +203,7 @@ Generate request files (`.bru` or `.yml` based on collection format).
 - `query` (object, optional): Query parameters as `Record<string, string | number | boolean>`
 - `folder` (string, optional): Subfolder within collection
 - `sequence` (number, optional): Execution order
+- `scripts` (object, optional): Inline pre-request/post-response/test scripts to persist with the request — see [Inline Scripts](#inline-scripts)
 
 **Example:**
 ```json
@@ -186,7 +247,7 @@ Generate request files (`.bru` or `.yml` based on collection format).
 | `json` | `content`: JSON string | JSON body |
 | `text` | `content`: plain text | Plain text body |
 | `xml` | `content`: XML string | XML body |
-| `form-data` | `formData`: `[{name, value, type?}]` | Multipart form (`type`: `"text"` or `"file"`) |
+| `form-data` | `formData`: `[{name, value, type?, contentType?}]` | Multipart form (`type`: `"text"` or `"file"`; `value` is a string, or an array of strings for multiple files under one field name; `contentType` sets that part's MIME type) |
 | `form-urlencoded` | `content`: URL-encoded string | URL-encoded form |
 | `binary` | `content`: file path | Binary body |
 | `none` | _(omit `body` entirely)_ | No body |
@@ -196,10 +257,32 @@ Generate request files (`.bru` or `.yml` based on collection format).
 { "body": { "type": "json", "content": "{\"name\": \"test\"}" } }
 ```
 
-**Example (form-data):**
+**Example (form-data — text field + file with contentType):**
 ```json
-{ "body": { "type": "form-data", "formData": [{"name": "file", "value": "photo.jpg", "type": "file"}] } }
+{
+  "body": {
+    "type": "form-data",
+    "formData": [
+      { "name": "description", "value": "profile photo", "type": "text" },
+      { "name": "avatar", "value": "/tmp/photo.jpg", "type": "file", "contentType": "image/jpeg" }
+    ]
+  }
+}
 ```
+
+**Example (form-data — multiple files under one field):**
+```json
+{
+  "body": {
+    "type": "form-data",
+    "formData": [
+      { "name": "attachments", "value": ["/tmp/a.pdf", "/tmp/b.pdf"], "type": "file", "contentType": "application/pdf" }
+    ]
+  }
+}
+```
+
+A request with a `form-data` body is sent as real `multipart/form-data` at execution time: file `value`s are read from disk (each array entry becomes its own part with the same field name), and each part's `Content-Type` header is set from `contentType` when provided (defaults to `application/octet-stream` for files, or none for `text` parts).
 
 > **Note:** `create_test_suite` supports a subset of auth types (`bearer`, `basic`, `oauth2`, `api-key`) and body types (`json`, `text`, `xml`, `form-data`, `form-urlencoded`). `digest` auth and `binary` body are only available in `create_request`.
 
@@ -215,6 +298,7 @@ Update an existing Bruno request file with partial-merge semantics. Only provide
 - `body` (object, optional): Request body -- same shape as `create_request` body
 - `auth` (object, optional): Authentication -- same shape as `create_request` auth
 - `query` (object, optional): Query parameters to merge (`Record<string, string | number | boolean>`)
+- `scripts` (object, optional): Inline pre-request/post-response/test scripts appended to the request -- see [Inline Scripts](#inline-scripts)
 
 **Example:**
 ```json
@@ -226,6 +310,28 @@ Update an existing Bruno request file with partial-merge semantics. Only provide
   },
   "query": {
     "limit": 50
+  }
+}
+```
+
+#### Inline Scripts
+
+`create_request` and `modify_request` accept an optional `scripts` object to attach pre-request, post-response, and test scripts without a separate `add_test_script` call.
+
+| Canonical key | Alias accepted |
+|---|---|
+| `pre-request` | `before-request` |
+| `post-response` | `after-response` |
+| `tests` | _(none)_ |
+
+Aliases are normalized to the canonical key when the request is written. `post-response` and `tests` both run after the response is received (in the `.bru` and YAML runtime formats they are stored as separate blocks but concatenated into one after-response script at execution time).
+
+**Example:**
+```json
+{
+  "scripts": {
+    "pre-request": "req.setHeader('X-Request-Id', String(Date.now()));",
+    "tests": "test(\"Status is 200\", function() { expect(res.getStatus()).to.equal(200); });"
   }
 }
 ```
@@ -278,7 +384,7 @@ Add test scripts to existing request files. Format-aware: injects into `.bru` or
 
 **Parameters:**
 - `bruFilePath` (string): Path to `.bru` or `.yml` request file
-- `scriptType` (string): `"pre-request"`, `"post-response"`, or `"tests"`
+- `scriptType` (string): `"pre-request"`, `"post-response"`, or `"tests"` (aliases `"before-request"` → `pre-request` and `"after-response"` → `post-response` also accepted; see [Inline Scripts](#inline-scripts))
 - `script` (string): JavaScript code (max 50KB)
 
 ### `list_collections`
@@ -331,13 +437,16 @@ Execute all requests in a collection (or a single request) and run test scripts.
 - `collectionPath` (string): Path to collection or subfolder
 - `environment` (string, optional): Environment name (loads from `environments/<name>.yml`)
 - `collectionRoot` (string, optional): Collection root for environment resolution
-- `requestPath` (string, optional): Run a single request file instead of the full collection
+- `requestPath` (string, optional): Path to a single `.yml`/`.bru` request file, or a subdirectory, to run instead of the full collection
+- `parallel` (boolean, optional, default `false`): Run folders in parallel (grouped by the request file's parent directory). Requests within a folder still run serially, in `seq` order. Each folder gets its own variable store while running in parallel — `bru.setVar()` in one folder is **not** visible to another folder until results are merged; use serial mode (the default) if requests in different folders depend on each other's variables
+- `includeResponseBody` (boolean, optional, default `true`): Include each request's response body in the results
+- `maxResponseBodyBytes` (number, optional, default `10240`): Maximum response body size (bytes) returned per request; longer bodies are truncated
 
 **Execution Flow:**
-1. Find all `.yml` request files, sort by `seq` field
+1. Find all `.yml`/`.bru` request files, sort by `seq` field
 2. Load environment variables (if specified)
-3. For each request: substitute `{{variables}}` (env + runtime) in URL, headers, and body → execute via `fetch()` → run test scripts → extract `bru.setVar()` variables for next request
-4. Requests execute serially in sequence order; variables accumulate across the run
+3. For each request: run the pre-request script (if any) → substitute `{{variables}}` (env + runtime) in URL, headers, and body → execute via `fetch()` → run post-response/test scripts → extract `bru.setVar()` variables for next request
+4. Requests execute serially in sequence order (or per-folder in parallel, see `parallel` above); variables accumulate across the run
 5. **On failure**: network errors or HTTP errors are recorded in the result — execution continues to the next request (never stops early)
 6. Requests with no test scripts report zero tests (still counted in `summary.total`)
 
@@ -355,11 +464,16 @@ Execute all requests in a collection (or a single request) and run test scripts.
       "tests": [
         { "description": "Status is 200", "status": "pass" },
         { "description": "Body is JSON", "status": "pass" }
-      ]
+      ],
+      "response_body": "{\"openapi\":\"3.0.0\", ...}",
+      "response_body_truncated": false,
+      "response_content_type": "application/json"
     }
   ]
 }
 ```
+
+`response_body`, `response_body_truncated`, and `response_content_type` are included per result unless `includeResponseBody` is set to `false`.
 
 ## Environment Variables
 
@@ -401,6 +515,19 @@ Test scripts run in a sandboxed VM with these globals:
 | `bru.getVar(name)` | Retrieve a previously set variable. Returns `undefined` if not set. |
 
 Variables set via `bru.setVar()` are merged with environment variables for `{{substitution}}` in subsequent requests. Runtime variables take precedence over environment variables with the same name.
+
+**Pre-request scripts** run in a separate sandbox, before the request is sent, with `req` and `bru` (no `test()`, `expect()`, or `res` — there is no response yet). Mutating `req` changes what is actually sent.
+
+| Method | Description |
+|---|---|
+| `req.getUrl()` | Get the current request URL |
+| `req.getMethod()` | Get the HTTP method |
+| `req.getHeaders()` | Get all request headers |
+| `req.getHeader(name)` | Get a single header, or `null` if unset |
+| `req.getBody()` | Get the current request body |
+| `req.setUrl(url)` | Override the request URL |
+| `req.setHeader(name, value)` | Set/override a request header |
+| `req.setBody(body)` | Override the request body |
 
 **`res` methods:**
 
@@ -501,6 +628,21 @@ tests {
 }
 ```
 
+### Advanced Request Settings
+
+A request's `.yml` (opencollection) file supports a `settings` block; it is not currently supported in the legacy `.bru` format:
+
+```yaml
+settings:
+  timeout: 5000    # ms; 0 means no timeout. Read and applied by run_collection.
+```
+
+`timeout` is the only field here that's fully wired end-to-end today: `run_collection` reads it per request (default 30000ms if omitted) and aborts the request if it's exceeded.
+
+Redirects are always followed automatically regardless of settings — up to 10 hops, with each redirect target re-validated against the [SSRF rules](#ssrf-protection) before the request follows it.
+
+> **Not yet usable via the request file — flagging for verification:** `src/bruno/types.ts` and `src/bruno/fetch-dispatcher.ts` define additional `settings` fields — `followRedirects` (boolean), `maxRedirects` (number), `proxy` (a URL string, dispatched through `undici`'s `ProxyAgent`), and `tls` (`{ rejectUnauthorized?, ca?, cert?, key? }`, dispatched through `undici`'s `Agent`) — and `request-executor.ts` calls `buildDispatcher(yaml.settings)` to use them when present. However, the `.yml` parser (`parseSettings` in `src/bruno/yaml-parser.ts`) currently only reads `encodeUrl`, `timeout`, `followRedirects`, and `maxRedirects` out of a request file — it does not read `tls` or `proxy`, so setting them in a request file's `settings` block has no effect yet. `followRedirects`/`maxRedirects` are parsed but not read anywhere in `request-executor.ts` either (redirects always auto-follow as described above). Treat TLS/proxy support as executor-internal/in-progress rather than an end-user-facing feature until this wiring lands.
+
 ### Generated Collection Structure
 ```
 my-collection/
@@ -577,7 +719,7 @@ npm test           # Run 591 unit tests (95%+ coverage)
 ```
 src/
 ├── index.ts                # Main entry point & exports
-├── server.ts               # MCP server (10 tools)
+├── server.ts               # MCP server (13 documented tools; see Available MCP Tools)
 └── bruno/
     ├── types.ts             # TypeScript interfaces
     ├── collection.ts        # Collection management

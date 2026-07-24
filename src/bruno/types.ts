@@ -71,16 +71,22 @@ export interface BruAuth {
   };
 }
 
+// A single multipart/form-data part.
+// `value` is a string for text parts; for file parts it is a file path
+// (or an array of paths for repeated / multiple-file parts).
+export interface MultipartFormPart {
+  name: string;
+  value: string | string[];
+  type?: 'text' | 'file';
+  contentType?: string;
+  enabled?: boolean;
+}
+
 // Request body configurations
 export interface BruBody {
   type: BodyType;
   content?: string;
-  formData?: Array<{
-    name: string;
-    value: string;
-    type: 'text' | 'file';
-    enabled?: boolean;
-  }>;
+  formData?: MultipartFormPart[];
   formUrlEncoded?: Array<{
     name: string;
     value: string;
@@ -145,11 +151,7 @@ export interface CreateRequestInput {
   body?: {
     type: BodyType;
     content?: string;
-    formData?: Array<{
-      name: string;
-      value: string;
-      type?: 'text' | 'file';
-    }>;
+    formData?: MultipartFormPart[];
   };
   auth?: {
     type: AuthType;
@@ -158,6 +160,13 @@ export interface CreateRequestInput {
   query?: Record<string, string | number | boolean>;
   folder?: string;
   sequence?: number;
+  /**
+   * Inline scripts to persist on creation. Keys are script types; canonical
+   * values are 'pre-request', 'post-response', 'tests', but the aliases
+   * 'before-request' (→ pre-request) and 'after-response' (→ post-response)
+   * are also accepted and normalized.
+   */
+  scripts?: Record<string, string>;
 }
 
 // Collection creation input
@@ -261,7 +270,7 @@ export interface YamlHeader {
 
 export interface YamlBody {
   type: string;
-  data?: string;
+  data?: string | MultipartFormPart[];
 }
 
 export type YamlAuth =
@@ -299,11 +308,20 @@ export interface YamlRuntime {
   scripts: YamlScript[];
 }
 
+export interface TlsSettings {
+  rejectUnauthorized?: boolean;
+  ca?: string;
+  cert?: string;
+  key?: string;
+}
+
 export interface YamlSettings {
   encodeUrl?: boolean;
   timeout?: number;
   followRedirects?: boolean;
   maxRedirects?: number;
+  tls?: TlsSettings;
+  proxy?: string;
 }
 
 export interface YamlRequest {
@@ -379,6 +397,8 @@ export interface MockResponseData {
   headers: Record<string, string>;
   body: unknown;
   responseTime: number;
+  /** Raw response text before any JSON parsing (consumed once from the stream). */
+  rawBody?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -398,6 +418,26 @@ export interface TestRunnerOptions {
 export interface ScriptResult {
   results: TestResult[];
   variables: Record<string, unknown>;
+  requestMutations?: RequestMutations;
+}
+
+export interface MockRequestData {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body: unknown;
+}
+
+export interface RequestMutations {
+  url?: string;
+  headers?: Record<string, string>;
+  body?: unknown;
+}
+
+export interface PreRequestScriptResult {
+  variables: Record<string, unknown>;
+  mutations: RequestMutations;
+  error?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -448,6 +488,9 @@ export interface RequestExecutionResult {
   duration_ms: number;
   tests: TestResult[];
   error?: string;
+  response_body?: string;
+  response_body_truncated?: boolean;
+  response_content_type?: string;
 }
 
 export interface CollectionRunSummary {

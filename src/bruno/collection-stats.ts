@@ -83,6 +83,7 @@ function hasTestScripts(content: string): boolean {
       (s) => s.type === 'after-response' && s.code.trim().length > 0,
     );
   } catch {
+    /* istanbul ignore next -- unreachable: in getCollectionStats this runs only after parseYamlRequest already succeeded on identical content, and parseRuntime coerces every script code to a string so .trim() cannot throw */
     return false;
   }
 }
@@ -134,6 +135,7 @@ export async function getCollectionStats(collectionPath: string): Promise<Collec
         seq = parsed.info.seq ?? 0;
         testsFound = hasTestScripts(content);
       } else {
+        /* istanbul ignore next -- unreachable: findRequestFiles only ever collects files ending in .yml or .bru, so this else can never execute */
         continue;
       }
     } catch {

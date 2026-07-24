@@ -64,6 +64,9 @@ export async function validateUrl(url: string): Promise<UrlValidationResult> {
   // 2. Reject empty hostname
   // Note: some URL parsers treat 'http:///path' as hostname='path', so also
   // check if the original URL had an authority section with empty host.
+  /* istanbul ignore next -- defensive: the WHATWG URL parser requires a non-empty
+     host for http/https (an empty authority throws), so a successfully-parsed
+     http(s) URL never reaches here with an empty hostname */
   if (!rawHostname) {
     return { valid: false, reason: 'Invalid URL: empty hostname' };
   }

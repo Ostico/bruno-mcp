@@ -7,7 +7,9 @@ import {
   type BruAuth,
   type BruHeaders,
   type BruBody,
+  type MultipartFormPart,
   type BrunoEnvironment,
+  type EnvVariable,
   type HttpMethod,
   type AuthType,
   type BodyType,
@@ -76,10 +78,32 @@ export function parseBruRequest(content: string): BruFile {
 
   let body: BruBody | undefined;
   if (json.body && Object.keys(json.body).length > 0) {
-    body = { type: http.body };
-    const bodyContent = json.body[http.body];
-    if (typeof bodyContent === 'string') {
-      body.content = bodyContent;
+    const multipart = (json.body as Record<string, unknown>).multipartForm;
+    if (Array.isArray(multipart)) {
+      // Normalize the non-standard 'multipartForm' body type to 'form-data'.
+      http.body = 'form-data';
+      body = {
+        type: 'form-data',
+        formData: multipart.map((entry) => {
+          const part = (entry ?? {}) as Record<string, unknown>;
+          const item: MultipartFormPart = {
+            name: String(part.name ?? ''),
+            value: Array.isArray(part.value)
+              ? part.value.map(String)
+              : String(part.value ?? ''),
+            type: part.type === 'file' ? 'file' : 'text',
+            enabled: part.enabled !== false,
+          };
+          if (part.contentType) item.contentType = String(part.contentType);
+          return item;
+        }),
+      };
+    } else {
+      body = { type: http.body };
+      const bodyContent = json.body[http.body];
+      if (typeof bodyContent === 'string') {
+        body.content = bodyContent;
+      }
     }
   }
 
@@ -139,7 +163,35 @@ export function generateBruRequest(bruFile: BruFile): string {
     }
   }
 
-  if (bruFile.body?.content) {
+  if (
+    bruFile.body?.formData &&
+    (bruFile.http.body === 'form-data' || bruFile.http.body === 'multipart-form')
+  ) {
+    // @usebruno/lang expects http.body === 'multipartForm' and a
+    // body.multipartForm array of { name, value, enabled, type, contentType }.
+    (json.http as Record<string, unknown>).body = 'multipartForm';
+    json.body = {
+      multipartForm: bruFile.body.formData.map((field) => {
+        const isFile = (field.type ?? 'text') === 'file';
+        // @usebruno/lang expects file values as an array of paths and text
+        // values as a plain string.
+        const value = isFile
+          ? Array.isArray(field.value)
+            ? field.value
+            : [field.value]
+          : Array.isArray(field.value)
+            ? String(field.value[0] ?? '')
+            : field.value;
+        return {
+          name: field.name,
+          value,
+          type: field.type ?? 'text',
+          contentType: field.contentType ?? '',
+          enabled: field.enabled !== false,
+        };
+      }),
+    };
+  } else if (bruFile.body?.content) {
     json.body = { [bruFile.http.body]: bruFile.body.content };
   }
 
@@ -207,6 +259,67 @@ export function generateBruEnvironment(env: BrunoEnvironment): string {
   try {
     return envJsonToBruV2({ variables });
   } catch (err) {
+    /* istanbul ignore next -- defensive: envJsonToBruV2 is handed an internally
+       constructed variables[] whose names are object keys / EnvVariable.name and
+       whose values are String()-coerced, so the library never throws here */
+    throw new BrunoError(
+      `Failed to generate .bru environment: ${err instanceof Error ? err.message : String(err)}`,
+      'GENERATE_ERROR',
+    );
+  }
+}
+
+/**
+ * Parse a .bru environment preserving ALL variables and their enabled/disabled
+ * state (unlike parseBruEnvironment, which drops disabled variables). Used by
+ * the merge/write path so disabled variables survive edits.
+ *
+ * Note: the .bru `secret` flag is not represented in EnvVariable and is dropped.
+ */
+export function parseBruEnvironmentRaw(content: string): EnvVariable[] {
+  let json: BruLangEnvJson;
+  try {
+    json = bruToEnvJsonV2(content) as BruLangEnvJson;
+  } catch (err) {
+    throw new BrunoError(
+      `Failed to parse .bru environment: ${err instanceof Error ? err.message : String(err)}`,
+      'PARSE_ERROR',
+    );
+  }
+
+  const variables: EnvVariable[] = [];
+  if (json.variables && Array.isArray(json.variables)) {
+    for (const v of json.variables) {
+      if (v.name == null || String(v.name) === '') continue;
+      const item: EnvVariable = { name: v.name, value: v.value ?? '' };
+      if (v.enabled === false) item.disabled = true;
+      variables.push(item);
+    }
+  }
+  return variables;
+}
+
+/**
+ * Generate a .bru environment from a full variable list, preserving the
+ * enabled/disabled state of each variable (disabled === true → enabled: false).
+ *
+ * Note: `secret` is not carried by EnvVariable and is written as false.
+ */
+export function generateBruEnvironmentFull(vars: EnvVariable[]): string {
+  const variables = vars.map((v) => ({
+    name: v.name,
+    value: String(v.value ?? ''),
+    enabled: v.disabled !== true,
+    secret: false,
+    type: 'text',
+  }));
+
+  try {
+    return envJsonToBruV2({ variables });
+  } catch (err) {
+    /* istanbul ignore next -- defensive: envJsonToBruV2 is handed an internally
+       constructed variables[] whose names are object keys / EnvVariable.name and
+       whose values are String()-coerced, so the library never throws here */
     throw new BrunoError(
       `Failed to generate .bru environment: ${err instanceof Error ? err.message : String(err)}`,
       'GENERATE_ERROR',
@@ -264,6 +377,8 @@ export function injectBruScript(
   try {
     return jsonToBruV2(json);
   } catch (err) {
+    /* istanbul ignore next -- defensive: json here comes from bruToJsonV2 of valid
+       content with only string tests/script fields mutated, so jsonToBruV2 cannot fail */
     throw new BrunoError(
       `Failed to generate .bru file after script injection: ${err instanceof Error ? err.message : String(err)}`,
       'GENERATE_ERROR',

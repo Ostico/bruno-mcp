@@ -60,6 +60,35 @@ export interface FormatWriter {
 
 type GenericScriptType = 'pre-request' | 'post-response' | 'tests';
 
+// Canonical MCP-surface script types plus accepted aliases. The executor/YAML
+// vocabulary ('before-request'/'after-response') is accepted at the MCP surface
+// and normalized to the canonical types here.
+const SCRIPT_TYPE_ALIASES: Record<string, GenericScriptType> = {
+  'pre-request': 'pre-request',
+  'post-response': 'post-response',
+  tests: 'tests',
+  'before-request': 'pre-request',
+  'after-response': 'post-response',
+};
+
+/**
+ * Normalize a caller-supplied script type to the canonical generic type.
+ * Accepts the aliases 'before-request' (→ pre-request) and
+ * 'after-response' (→ post-response).
+ *
+ * @throws {BrunoError} If the value is not a recognized script type or alias.
+ */
+export function normalizeScriptType(inputType: string): GenericScriptType {
+  const normalized = SCRIPT_TYPE_ALIASES[inputType];
+  if (!normalized) {
+    throw new BrunoError(
+      `Unknown script type "${inputType}": expected one of pre-request, post-response, tests, before-request, after-response`,
+      'VALIDATION_ERROR',
+    );
+  }
+  return normalized;
+}
+
 // In opencollection YAML format, both post-response and tests map to 'after-response'
 // runtime.scripts entries. This is per-spec but means replace mode cannot distinguish them.
 const YAML_SCRIPT_MAP: Record<GenericScriptType, string> = {
