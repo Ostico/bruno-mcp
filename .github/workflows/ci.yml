@@ -119,7 +119,13 @@ jobs:
         with:
           coverage-file: clover.xml
           coverage-threshold: '95'
-          extra-exclude-patterns: '.github/**, dist/**, tests/**, coverage/**, **/*.d.ts, src/index.ts'
+          # src/bruno/types.ts is interfaces and type aliases (plus three tiny
+          # Error subclasses). A diff there is normally non-executable lines, so
+          # there is no diff-coverage data to judge and the gate reports the file
+          # as missing from the coverage report. Excluded for the same reason as
+          # **/*.d.ts. Keep that file declarations-only; real logic belongs in a
+          # module the gate can measure.
+          extra-exclude-patterns: '.github/**, dist/**, tests/**, coverage/**, **/*.d.ts, src/index.ts, src/bruno/types.ts'
           ai-enabled: 'true'
           ai-model: 'openai/gpt-4.1-mini'
           test-patterns: |
