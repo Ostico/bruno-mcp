@@ -71,16 +71,22 @@ export interface BruAuth {
   };
 }
 
+// A single multipart/form-data part.
+// `value` is a string for text parts; for file parts it is a file path
+// (or an array of paths for repeated / multiple-file parts).
+export interface MultipartFormPart {
+  name: string;
+  value: string | string[];
+  type?: 'text' | 'file';
+  contentType?: string;
+  enabled?: boolean;
+}
+
 // Request body configurations
 export interface BruBody {
   type: BodyType;
   content?: string;
-  formData?: Array<{
-    name: string;
-    value: string;
-    type: 'text' | 'file';
-    enabled?: boolean;
-  }>;
+  formData?: MultipartFormPart[];
   formUrlEncoded?: Array<{
     name: string;
     value: string;
@@ -145,11 +151,7 @@ export interface CreateRequestInput {
   body?: {
     type: BodyType;
     content?: string;
-    formData?: Array<{
-      name: string;
-      value: string;
-      type?: 'text' | 'file';
-    }>;
+    formData?: MultipartFormPart[];
   };
   auth?: {
     type: AuthType;
@@ -261,7 +263,7 @@ export interface YamlHeader {
 
 export interface YamlBody {
   type: string;
-  data?: string;
+  data?: string | MultipartFormPart[];
 }
 
 export type YamlAuth =

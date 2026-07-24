@@ -7,6 +7,7 @@ import {
   type BruAuth,
   type BruHeaders,
   type BruBody,
+  type MultipartFormPart,
   type BrunoEnvironment,
   type HttpMethod,
   type AuthType,
@@ -76,10 +77,32 @@ export function parseBruRequest(content: string): BruFile {
 
   let body: BruBody | undefined;
   if (json.body && Object.keys(json.body).length > 0) {
-    body = { type: http.body };
-    const bodyContent = json.body[http.body];
-    if (typeof bodyContent === 'string') {
-      body.content = bodyContent;
+    const multipart = (json.body as Record<string, unknown>).multipartForm;
+    if (Array.isArray(multipart)) {
+      // Normalize the non-standard 'multipartForm' body type to 'form-data'.
+      http.body = 'form-data';
+      body = {
+        type: 'form-data',
+        formData: multipart.map((entry) => {
+          const part = (entry ?? {}) as Record<string, unknown>;
+          const item: MultipartFormPart = {
+            name: String(part.name ?? ''),
+            value: Array.isArray(part.value)
+              ? part.value.map(String)
+              : String(part.value ?? ''),
+            type: part.type === 'file' ? 'file' : 'text',
+            enabled: part.enabled !== false,
+          };
+          if (part.contentType) item.contentType = String(part.contentType);
+          return item;
+        }),
+      };
+    } else {
+      body = { type: http.body };
+      const bodyContent = json.body[http.body];
+      if (typeof bodyContent === 'string') {
+        body.content = bodyContent;
+      }
     }
   }
 
@@ -139,7 +162,35 @@ export function generateBruRequest(bruFile: BruFile): string {
     }
   }
 
-  if (bruFile.body?.content) {
+  if (
+    bruFile.body?.formData &&
+    (bruFile.http.body === 'form-data' || bruFile.http.body === 'multipart-form')
+  ) {
+    // @usebruno/lang expects http.body === 'multipartForm' and a
+    // body.multipartForm array of { name, value, enabled, type, contentType }.
+    (json.http as Record<string, unknown>).body = 'multipartForm';
+    json.body = {
+      multipartForm: bruFile.body.formData.map((field) => {
+        const isFile = (field.type ?? 'text') === 'file';
+        // @usebruno/lang expects file values as an array of paths and text
+        // values as a plain string.
+        const value = isFile
+          ? Array.isArray(field.value)
+            ? field.value
+            : [field.value]
+          : Array.isArray(field.value)
+            ? String(field.value[0] ?? '')
+            : field.value;
+        return {
+          name: field.name,
+          value,
+          type: field.type ?? 'text',
+          contentType: field.contentType ?? '',
+          enabled: field.enabled !== false,
+        };
+      }),
+    };
+  } else if (bruFile.body?.content) {
     json.body = { [bruFile.http.body]: bruFile.body.content };
   }
 

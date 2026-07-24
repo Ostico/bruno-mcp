@@ -249,8 +249,16 @@ export class BruGenerator {
     if (body.type === 'form-data' && body.formData) {
       const lines = ['body:multipart-form {'];
       body.formData.forEach(field => {
-        if (field.enabled !== false) {
-          lines.push(this.indent(`${field.name}: ${this.escapeString(field.value)}`));
+        if (field.enabled === false) return;
+        const values = Array.isArray(field.value) ? field.value : [field.value];
+        const suffix = field.contentType ? ` @contentType(${field.contentType})` : '';
+        if ((field.type ?? 'text') === 'file') {
+          const fileTokens = values.map(v => `@file(${v})`).join(' ');
+          lines.push(this.indent(`${field.name}: ${fileTokens}${suffix}`));
+        } else {
+          values.forEach(v => {
+            lines.push(this.indent(`${field.name}: ${this.escapeString(v)}${suffix}`));
+          });
         }
       });
       lines.push('}');
