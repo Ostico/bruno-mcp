@@ -33,6 +33,18 @@ jobs:
     - name: Build
       run: npm run build
 
+    # The tag is the single source of truth for the released version.
+    # npm publish reads package.json, so without this the manifest version
+    # decides what npm receives and a tag whose version was never committed
+    # fails with "cannot publish over the previously published versions".
+    # Not committed back: the working copy is discarded after the run, so
+    # package.json on main can lag behind the published version.
+    - name: Set version from tag
+      run: |
+        V="${GITHUB_REF_NAME#v}"
+        npm version "$V" --no-git-tag-version --allow-same-version
+        echo "Publishing $(node -p "require('./package.json').name")@$V"
+
     - name: Publish to npm (OIDC trusted publisher)
       run: npm publish --provenance --access public
       env:
