@@ -33,6 +33,8 @@ jest.mock('../../../src/bruno/yaml-parser.js', () => ({
 const fs = require('fs').promises;
 const { detectFormat } = require('../../../src/bruno/format-detector.js');
 const { parseYamlRequest } = require('../../../src/bruno/yaml-parser.js');
+const { generateYamlRequest } = require('../../../src/bruno/yaml-generator.js');
+const { generateBruRequest } = require('../../../src/bruno/bru-parser.js');
 
 describe('RequestBuilder', () => {
   let builder: RequestBuilder;
@@ -320,6 +322,39 @@ describe('RequestBuilder', () => {
       fs.readFile.mockRejectedValue(new Error('ENOENT'));
       const result = await builder.updateRequest('/col/test.yml', { name: 'x' });
       expect(result.success).toBe(false);
+    });
+
+    it('should update .yml request with a multipart form-data body', async () => {
+      parseYamlRequest.mockReturnValue({
+        info: { name: 'Old', type: 'http' },
+        http: { method: 'POST', url: 'https://old.com' },
+      });
+      fs.readFile.mockResolvedValue('yaml content');
+
+      const result = await builder.updateRequest('/col/test.yml', {
+        body: {
+          type: 'form-data',
+          formData: [
+            { name: 'file', value: '/tmp/a.txt', type: 'file' },
+            { name: 'field', value: 'v' },
+          ],
+        },
+      });
+
+      expect(result.success).toBe(true);
+      const generated = generateYamlRequest.mock.calls.at(-1)[0];
+      expect(generated.http.body.type).toBe('multipart-form');
+      expect(generated.http.body.data).toHaveLength(2);
+    });
+
+    it('should update .bru request sequence', async () => {
+      fs.readFile.mockResolvedValue('meta { name: old }');
+
+      const result = await builder.updateRequest('/col/test.bru', { sequence: 7 });
+
+      expect(result.success).toBe(true);
+      const generated = generateBruRequest.mock.calls.at(-1)[0];
+      expect(generated.meta.seq).toBe(7);
     });
   });
 

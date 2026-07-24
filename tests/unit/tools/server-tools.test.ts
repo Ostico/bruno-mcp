@@ -1,4 +1,4 @@
-import { BrunoMcpServer } from '../../../src/server';
+import { BrunoMcpServer, createBrunoMcpServer } from '../../../src/server';
 
 jest.mock('../../../src/bruno/collection', () => ({
   createCollectionManager: () => ({
@@ -453,6 +453,14 @@ describe('Server tool handlers', () => {
       const result = await handler({ collectionPath: '/col' });
       expect(result.isError).toBe(true);
     });
+
+    it('should reject an invalid collectionPath before calling getCollectionStats', async () => {
+      const handler = getHandler(server, 'get_collection_stats');
+      const result = await handler({ collectionPath: '/col/../etc' });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toMatch(/collectionPath/i);
+      expect(getCollectionStats).not.toHaveBeenCalled();
+    });
   });
 
   describe('run_collection', () => {
@@ -506,6 +514,105 @@ describe('Server tool handlers', () => {
       await server.start();
       expect((server as any).server.connect).toHaveBeenCalled();
       spy.mockRestore();
+    });
+  });
+
+  describe('createBrunoMcpServer()', () => {
+    it('returns a BrunoMcpServer instance', () => {
+      const instance = createBrunoMcpServer();
+      expect(instance).toBeInstanceOf(BrunoMcpServer);
+    });
+  });
+
+  // Non-Error rejections exercise the `error instanceof Error ? ... : 'Unknown error'`
+  // fallback branch of each handler's catch block.
+  describe('non-Error rejections fall back to "Unknown error"', () => {
+    it('create_collection', async () => {
+      getManagerMock(server, 'collectionManager', 'createCollection').mockRejectedValue('str');
+      const result = await getHandler(server, 'create_collection')({ name: 't', outputPath: '/ws' });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Unknown error');
+    });
+
+    it('create_environment', async () => {
+      getManagerMock(server, 'environmentManager', 'createEnvironment').mockRejectedValue('str');
+      const result = await getHandler(server, 'create_environment')({ collectionPath: '/col', name: 'dev', variables: {} });
+      expect(result.content[0].text).toContain('Unknown error');
+    });
+
+    it('create_request', async () => {
+      getManagerMock(server, 'requestBuilder', 'createRequest').mockRejectedValue('str');
+      const result = await getHandler(server, 'create_request')({ collectionPath: '/col', name: 'T', method: 'GET', url: 'https://x.com' });
+      expect(result.content[0].text).toContain('Unknown error');
+    });
+
+    it('create_test_suite', async () => {
+      getManagerMock(server, 'requestBuilder', 'createRequest').mockRejectedValue('str');
+      const result = await getHandler(server, 'create_test_suite')({
+        collectionPath: '/col', suiteName: 'S',
+        requests: [{ name: 'A', method: 'GET', url: 'https://a.com' }],
+      });
+      expect(result.content[0].text).toContain('Unknown error');
+    });
+
+    it('create_crud_requests', async () => {
+      getManagerMock(server, 'requestBuilder', 'createCrudRequests').mockRejectedValue('str');
+      const result = await getHandler(server, 'create_crud_requests')({ collectionPath: '/col', entityName: 'X', baseUrl: 'https://api.com' });
+      expect(result.content[0].text).toContain('Unknown error');
+    });
+
+    it('list_collections', async () => {
+      (listCollectionsHandler as jest.Mock).mockRejectedValue('str');
+      const result = await getHandler(server, 'list_collections')({});
+      expect(result.content[0].text).toContain('Unknown error');
+    });
+
+    it('get_collection_stats', async () => {
+      (getCollectionStats as jest.Mock).mockRejectedValue('str');
+      const result = await getHandler(server, 'get_collection_stats')({ collectionPath: '/col' });
+      expect(result.content[0].text).toContain('Unknown error');
+    });
+
+    it('run_collection', async () => {
+      (RequestExecutor.executeCollection as jest.Mock).mockRejectedValue('str');
+      const result = await getHandler(server, 'run_collection')({ collectionPath: '/col' });
+      expect(result.content[0].text).toContain('Unknown error');
+    });
+  });
+
+  describe('create_test_suite extra branches', () => {
+    it('should forward body, auth and folder for each request', async () => {
+      const mock = getManagerMock(server, 'requestBuilder', 'createRequest');
+      mock.mockResolvedValue({ success: true, path: '/col/test.yml' });
+      await getHandler(server, 'create_test_suite')({
+        collectionPath: '/col', suiteName: 'S',
+        requests: [{
+          name: 'A', method: 'POST', url: 'https://a.com',
+          headers: { X: '1' },
+          body: { type: 'json', content: '{}' },
+          auth: { type: 'bearer', config: { token: 't' } },
+          folder: 'sub',
+        }],
+      });
+      expect(mock).toHaveBeenCalledWith(expect.objectContaining({
+        body: { type: 'json', content: '{}' },
+        auth: { type: 'bearer', config: { token: 't' } },
+        folder: 'sub',
+      }));
+    });
+
+    it('should handle a dependency referencing a name not in the request list', async () => {
+      const mock = getManagerMock(server, 'requestBuilder', 'createRequest');
+      mock.mockImplementation(async (i: any) => ({ success: true, path: `/col/${i.name}.yml` }));
+      getManagerMock(server, 'requestBuilder', 'updateRequest').mockResolvedValue({ success: true });
+      const result = await getHandler(server, 'create_test_suite')({
+        collectionPath: '/col', suiteName: 'S',
+        requests: [{ name: 'A', method: 'GET', url: 'https://a.com' }],
+        dependencies: [{ from: 'A', to: 'GHOST' }],
+      });
+      // 'GHOST' is not a real request; the topological order length mismatches.
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Circular dependency');
     });
   });
 });

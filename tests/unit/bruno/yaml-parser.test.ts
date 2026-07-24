@@ -143,6 +143,39 @@ extensions:
       - .git
 `;
 
+const MULTIPART_REQUEST_YAML = `
+info:
+  name: Multipart
+  type: http
+http:
+  method: POST
+  url: https://example.com/upload
+  body:
+    type: multipart-form
+    data:
+      - name: caption
+        value: hello
+        type: text
+        contentType: text/plain
+      - name: files
+        value:
+          - /path/a
+          - /path/b
+        type: file
+      - null
+`;
+
+const DEFAULTS_REQUEST_YAML = `
+info: {}
+http:
+  headers:
+    - {}
+  auth: 42
+runtime:
+  scripts:
+    - {}
+`;
+
 describe('yaml-parser', () => {
   describe('parseYamlRequest', () => {
     it('parses a GET request with headers', () => {
@@ -304,6 +337,42 @@ settings:
     });
   });
 
+  describe('parseYamlRequest — edge cases', () => {
+    it('parses a multipart/form-data body with mixed part shapes', () => {
+      const result = parseYamlRequest(MULTIPART_REQUEST_YAML);
+      const data = result.http.body!.data as Array<Record<string, unknown>>;
+      expect(Array.isArray(data)).toBe(true);
+      expect(data).toHaveLength(3);
+      expect(data[0]).toEqual({ name: 'caption', value: 'hello', type: 'text', contentType: 'text/plain' });
+      expect(data[1].type).toBe('file');
+      expect(data[1].value).toEqual(['/path/a', '/path/b']);
+      // A null list entry is coerced to an empty text part.
+      expect(data[2]).toEqual({ name: '', value: '', type: 'text' });
+    });
+
+    it('applies defaults for missing optional fields', () => {
+      const result = parseYamlRequest(DEFAULTS_REQUEST_YAML);
+      expect(result.info.name).toBe('');
+      expect(result.http.method).toBe('');
+      expect(result.http.url).toBe('');
+      expect(result.http.headers).toEqual([{ name: '', value: '' }]);
+      // auth given as a non-string/non-object (number) is ignored.
+      expect(result.http.auth).toBeUndefined();
+      expect(result.runtime!.scripts[0]).toEqual({ type: 'after-response', code: '' });
+    });
+
+    it('omits runtime when scripts is an empty array', () => {
+      const yaml = `\ninfo:\n  name: X\n  type: http\nhttp:\n  method: GET\n  url: https://example.com\nruntime:\n  scripts: []\n`;
+      const result = parseYamlRequest(yaml);
+      expect(result.runtime).toBeUndefined();
+    });
+
+    it('throws BrunoError when the YAML does not produce an object', () => {
+      expect(() => parseYamlRequest('42')).toThrow(BrunoError);
+      expect(() => parseYamlRequest('42')).toThrow(/object/i);
+    });
+  });
+
   describe('parseYamlFolder', () => {
     it('parses folder.yml into folder metadata', () => {
       const result = parseYamlFolder(FOLDER_YAML);
@@ -372,6 +441,11 @@ settings:
     it('throws BrunoError when info section is missing', () => {
       const noInfo = `\nopencollection: 1.0.0\nbundled: false\n`;
       expect(() => parseYamlCollection(noInfo)).toThrow(BrunoError);
+    });
+
+    it('defaults info name to empty string when name is absent', () => {
+      const result = parseYamlCollection('opencollection: 1.0.0\ninfo: {}\n');
+      expect(result.info.name).toBe('');
     });
 
     it('throws BrunoError on empty input', () => {

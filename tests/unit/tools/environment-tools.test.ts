@@ -132,6 +132,23 @@ describe('environment merge tools', () => {
       const res = await handler({ collectionPath: '/col', name: 'dev', variables: { x: '1' } });
       expect(res.isError).toBe(true);
     });
+
+    it('rejects an invalid collectionPath before merging', async () => {
+      const handler = getHandler(server, 'update_environment');
+      const res = await handler({ collectionPath: '/col/../etc', name: 'dev', variables: {} });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/collectionPath/i);
+      expect(mockMergeEnvironment).not.toHaveBeenCalled();
+    });
+
+    it('catches errors thrown by mergeEnvironment', async () => {
+      mockMergeEnvironment.mockRejectedValue(new Error('boom'));
+
+      const handler = getHandler(server, 'update_environment');
+      const res = await handler({ collectionPath: '/col', name: 'dev', variables: { x: '1' } });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/updating environment/i);
+    });
   });
 
   describe('set_environment_variable', () => {
@@ -165,6 +182,37 @@ describe('environment merge tools', () => {
       expect(res.isError).toBeFalsy();
       expect(mockSetEnvironmentVariable).toHaveBeenCalledWith('/col', 'dev', 'FEATURE', 'off', false);
     });
+
+    it('rejects an invalid collectionPath before setting', async () => {
+      const handler = getHandler(server, 'set_environment_variable');
+      const res = await handler({
+        collectionPath: '/col/../etc',
+        environment: 'dev',
+        name: 'k',
+        value: 'v',
+      });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/collectionPath/i);
+      expect(mockSetEnvironmentVariable).not.toHaveBeenCalled();
+    });
+
+    it('reports failure when setEnvironmentVariable fails', async () => {
+      mockSetEnvironmentVariable.mockResolvedValue({ success: false, error: 'nope' });
+
+      const handler = getHandler(server, 'set_environment_variable');
+      const res = await handler({ collectionPath: '/col', environment: 'dev', name: 'k', value: 'v' });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/failed to set/i);
+    });
+
+    it('catches errors thrown by setEnvironmentVariable', async () => {
+      mockSetEnvironmentVariable.mockRejectedValue(new Error('boom'));
+
+      const handler = getHandler(server, 'set_environment_variable');
+      const res = await handler({ collectionPath: '/col', environment: 'dev', name: 'k', value: 'v' });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/setting variable/i);
+    });
   });
 
   describe('remove_environment_variable', () => {
@@ -180,6 +228,53 @@ describe('environment merge tools', () => {
 
       expect(res.isError).toBeFalsy();
       expect(mockRemoveEnvironmentVariable).toHaveBeenCalledWith('/col', 'dev', 'token');
+    });
+
+    it('rejects an invalid collectionPath before removing', async () => {
+      const handler = getHandler(server, 'remove_environment_variable');
+      const res = await handler({ collectionPath: '/col/../etc', environment: 'dev', name: 'token' });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/collectionPath/i);
+      expect(mockRemoveEnvironmentVariable).not.toHaveBeenCalled();
+    });
+
+    it('reports failure when removeEnvironmentVariable fails', async () => {
+      mockRemoveEnvironmentVariable.mockResolvedValue({ success: false, error: 'nope' });
+
+      const handler = getHandler(server, 'remove_environment_variable');
+      const res = await handler({ collectionPath: '/col', environment: 'dev', name: 'token' });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/failed to remove/i);
+    });
+
+    it('catches errors thrown by removeEnvironmentVariable', async () => {
+      mockRemoveEnvironmentVariable.mockRejectedValue(new Error('boom'));
+
+      const handler = getHandler(server, 'remove_environment_variable');
+      const res = await handler({ collectionPath: '/col', environment: 'dev', name: 'token' });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/removing variable/i);
+    });
+  });
+
+  // Non-Error rejections exercise the "Unknown error" fallback branch.
+  describe('non-Error rejections fall back to "Unknown error"', () => {
+    it('update_environment', async () => {
+      mockMergeEnvironment.mockRejectedValue('str');
+      const res = await getHandler(server, 'update_environment')({ collectionPath: '/col', name: 'dev', variables: {} });
+      expect(res.content[0].text).toContain('Unknown error');
+    });
+
+    it('set_environment_variable', async () => {
+      mockSetEnvironmentVariable.mockRejectedValue('str');
+      const res = await getHandler(server, 'set_environment_variable')({ collectionPath: '/col', environment: 'dev', name: 'k', value: 'v' });
+      expect(res.content[0].text).toContain('Unknown error');
+    });
+
+    it('remove_environment_variable', async () => {
+      mockRemoveEnvironmentVariable.mockRejectedValue('str');
+      const res = await getHandler(server, 'remove_environment_variable')({ collectionPath: '/col', environment: 'dev', name: 'k' });
+      expect(res.content[0].text).toContain('Unknown error');
     });
   });
 });

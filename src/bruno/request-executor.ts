@@ -136,6 +136,7 @@ async function discoverRequests(dirPath: string): Promise<DiscoveryResult> {
       } else if (filePath.endsWith('.bru')) {
         yaml = bruFileToYamlRequest(parseBruRequest(content));
       } else {
+        /* istanbul ignore next -- unreachable: findYmlFilesRecursive only yields .yml/.bru paths, so this defensive else is dead code */
         continue;
       }
       requests.push({ yaml, filePath });

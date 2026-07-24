@@ -259,6 +259,9 @@ export function generateBruEnvironment(env: BrunoEnvironment): string {
   try {
     return envJsonToBruV2({ variables });
   } catch (err) {
+    /* istanbul ignore next -- defensive: envJsonToBruV2 is handed an internally
+       constructed variables[] whose names are object keys / EnvVariable.name and
+       whose values are String()-coerced, so the library never throws here */
     throw new BrunoError(
       `Failed to generate .bru environment: ${err instanceof Error ? err.message : String(err)}`,
       'GENERATE_ERROR',
@@ -314,6 +317,9 @@ export function generateBruEnvironmentFull(vars: EnvVariable[]): string {
   try {
     return envJsonToBruV2({ variables });
   } catch (err) {
+    /* istanbul ignore next -- defensive: envJsonToBruV2 is handed an internally
+       constructed variables[] whose names are object keys / EnvVariable.name and
+       whose values are String()-coerced, so the library never throws here */
     throw new BrunoError(
       `Failed to generate .bru environment: ${err instanceof Error ? err.message : String(err)}`,
       'GENERATE_ERROR',
@@ -371,6 +377,8 @@ export function injectBruScript(
   try {
     return jsonToBruV2(json);
   } catch (err) {
+    /* istanbul ignore next -- defensive: json here comes from bruToJsonV2 of valid
+       content with only string tests/script fields mutated, so jsonToBruV2 cannot fail */
     throw new BrunoError(
       `Failed to generate .bru file after script injection: ${err instanceof Error ? err.message : String(err)}`,
       'GENERATE_ERROR',

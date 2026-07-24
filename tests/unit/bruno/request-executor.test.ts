@@ -29,6 +29,8 @@ const mockedValidateUrl = jest.mocked(validateUrl);
 jest.mock('../../../src/bruno/fetch-dispatcher', () => ({
   buildDispatcher: jest.fn().mockResolvedValue(undefined),
 }));
+import { buildDispatcher } from '../../../src/bruno/fetch-dispatcher';
+const mockedBuildDispatcher = jest.mocked(buildDispatcher);
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -1943,6 +1945,255 @@ http:
       // Sorted by seq within folder: First (seq 1) before Second (seq 2)
       expect(result.results[0].name).toBe('First');
       expect(result.results[1].name).toBe('Second');
+    });
+  });
+
+  // =========================================================================
+  // .bru file discovery and conversion
+  // =========================================================================
+
+  describe('.bru file execution', () => {
+    const MULTIPART_BRU = `meta {
+  name: Bru Multipart
+  type: http
+  seq: 1
+}
+
+post {
+  url: https://api.example.com/upload
+  body: multipartForm
+  auth: none
+}
+
+headers {
+  X-Custom: abc
+}
+
+body:multipart-form {
+  title: hello @contentType(text/plain)
+  note: plain
+}
+
+script:pre-request {
+  bru.setVar("k","v");
+}
+
+script:post-response {
+  test("post ran", function(){ expect(res.getStatus()).to.equal(200); });
+}
+
+tests {
+  test("ok", function(){ expect(res.getStatus()).to.equal(200); });
+}
+`;
+
+    const JSON_BODY_BRU = `meta {
+  name: Bru Json
+  type: http
+  seq: 2
+}
+
+post {
+  url: https://api.example.com/data
+  body: json
+  auth: none
+}
+
+body:json {
+  {"a":1}
+}
+`;
+
+    it('discovers and executes a .bru file, converting scripts, headers, and multipart body', async () => {
+      setupFsReaddirRecursive({
+        '/test-collection': [{ name: 'Upload.bru', isFile: true, isDirectory: false }],
+      });
+      setupFsReadFile({ 'Upload.bru': MULTIPART_BRU });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.summary.total).toBe(1);
+      expect(result.results[0].name).toBe('Bru Multipart');
+      expect(result.results[0].method).toBe('POST');
+      // pre-request script + post-response + tests all ran (2 after-response tests)
+      expect(result.results[0].tests).toHaveLength(2);
+      expect(result.results[0].tests.every(t => t.status === 'pass')).toBe(true);
+      // custom header carried through to fetch
+      const [, fetchOptions] = mockFetch.mock.calls[0];
+      expect(fetchOptions.headers['X-Custom']).toBe('abc');
+      // multipart body serialized as FormData
+      expect(fetchOptions.body).toBeInstanceOf(FormData);
+    });
+
+    it('converts a .bru file with a plain content body (no formData, no scripts, no headers)', async () => {
+      setupFsReaddirRecursive({
+        '/test-collection': [{ name: 'Data.bru', isFile: true, isDirectory: false }],
+      });
+      setupFsReadFile({ 'Data.bru': JSON_BODY_BRU });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.summary.total).toBe(1);
+      expect(result.results[0].name).toBe('Bru Json');
+      const [, fetchOptions] = mockFetch.mock.calls[0];
+      expect(fetchOptions.body).toBe('{"a":1}');
+      expect(result.results[0].tests).toHaveLength(0);
+    });
+
+    it('executes a single .bru file passed directly via requestPath', async () => {
+      setupFsReadFile({ 'Data.bru': JSON_BODY_BRU });
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      const result = await RequestExecutor.executeCollection('/test-collection', {
+        requestPath: '/test-collection/Data.bru',
+      });
+
+      expect(result.summary.total).toBe(1);
+      expect(result.results[0].name).toBe('Bru Json');
+    });
+  });
+
+  // =========================================================================
+  // requestPath resolution edge cases
+  // =========================================================================
+
+  describe('requestPath resolution', () => {
+    it('treats a non-file requestPath that stats as a directory as a sub-collection', async () => {
+      setupFsReaddirRecursive({
+        '/test-collection/sub': [{ name: 'Get Users.yml', isFile: true, isDirectory: false }],
+      });
+      setupFsReadFile({ 'Get Users.yml': GET_REQUEST_YAML });
+      setupFsStat(['/test-collection/sub']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse([{ id: 1 }]));
+
+      const result = await RequestExecutor.executeCollection('/test-collection', {
+        requestPath: '/test-collection/sub',
+      });
+
+      expect(result.summary.total).toBe(1);
+      expect(result.results[0].name).toBe('Get Users');
+    });
+
+    it('throws for a requestPath that is neither a recognized file nor a directory', async () => {
+      mockedFs.stat.mockImplementation(async () =>
+        ({ isDirectory: () => false, isFile: () => true }) as any,
+      );
+
+      await expect(
+        RequestExecutor.executeCollection('/test-collection', {
+          requestPath: '/test-collection/notes.txt',
+        }),
+      ).rejects.toThrow('Unsupported request file format');
+    });
+  });
+
+  // =========================================================================
+  // pre-request body mutation and error propagation
+  // =========================================================================
+
+  describe('pre-request mutation edge cases', () => {
+    it('JSON-stringifies a non-string body set by a pre-request script', async () => {
+      const REQUEST_WITH_OBJECT_BODY = `
+info:
+  name: Object Body Mutation
+  type: http
+  seq: 1
+http:
+  method: POST
+  url: "https://api.example.com/data"
+runtime:
+  scripts:
+    - type: before-request
+      code: |
+        req.setBody({ hello: "world", n: 42 });
+`;
+      setupFsReaddir(['Object Body Mutation.yml']);
+      setupFsReadFile({ 'Object Body Mutation.yml': REQUEST_WITH_OBJECT_BODY });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      await RequestExecutor.executeCollection('/test-collection');
+
+      const [, fetchOptions] = mockFetch.mock.calls[0];
+      expect(fetchOptions.body).toBe(JSON.stringify({ hello: 'world', n: 42 }));
+    });
+
+    it('records a pre-request script error on the result while still executing the request', async () => {
+      const REQUEST_WITH_FAILING_PRE = `
+info:
+  name: Failing Pre Script
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/data"
+runtime:
+  scripts:
+    - type: before-request
+      code: |
+        throw new Error("pre boom");
+`;
+      setupFsReaddir(['Failing Pre Script.yml']);
+      setupFsReadFile({ 'Failing Pre Script.yml': REQUEST_WITH_FAILING_PRE });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.results[0].error).toContain('pre boom');
+      // The HTTP request still ran despite the pre-request error
+      expect(result.results[0].status).toBe(200);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // =========================================================================
+  // custom dispatcher (TLS/proxy) wiring
+  // =========================================================================
+
+  describe('custom dispatcher wiring', () => {
+    it('uses the dispatcher fetch and attaches the dispatcher when buildDispatcher returns one', async () => {
+      const REQUEST_WITH_TLS = `
+info:
+  name: TLS Request
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/secure"
+settings:
+  tls:
+    rejectUnauthorized: false
+`;
+      setupFsReaddir(['TLS Request.yml']);
+      setupFsReadFile({ 'TLS Request.yml': REQUEST_WITH_TLS });
+      setupFsStat(['/test-collection']);
+
+      const customFetch = jest.fn().mockResolvedValue(createMockResponse({ secure: true }));
+      const fakeDispatcher = { _type: 'FakeAgent' };
+      mockedBuildDispatcher.mockResolvedValueOnce({
+        dispatcher: fakeDispatcher,
+        fetch: customFetch as unknown as typeof fetch,
+      });
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.summary.total).toBe(1);
+      // Custom fetch used instead of the global mock
+      expect(customFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch).not.toHaveBeenCalled();
+      const [, fetchOptions] = customFetch.mock.calls[0];
+      expect(fetchOptions.dispatcher).toBe(fakeDispatcher);
     });
   });
 });

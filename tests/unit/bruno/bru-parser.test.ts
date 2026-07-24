@@ -203,6 +203,58 @@ get {
       expect(reparsed.http.method).toBe(original.http.method);
       expect(reparsed.http.url).toBe(original.http.url);
     });
+
+    it('round-trips a multipart/form-data body and docs', () => {
+      const bruFile: any = {
+        meta: { name: 'MP', type: 'http' },
+        http: { method: 'POST', url: 'https://example.com/upload', body: 'multipart-form', auth: 'none' },
+        body: {
+          type: 'form-data',
+          formData: [
+            { name: 'caption', value: 'hello', type: 'text', enabled: true, contentType: 'text/plain' },
+            { name: 'files', value: ['/a', '/b'], type: 'file', enabled: true },
+            { name: 'single', value: '/one', type: 'file', enabled: true },
+            { name: 'arrtext', value: ['first'], type: 'text', enabled: false },
+            { name: 'novalue', value: [] as string[], enabled: true },
+          ],
+        },
+        docs: '# Docs\nsome notes',
+      };
+      const generated = generateBruRequest(bruFile);
+      const reparsed = parseBruRequest(generated);
+      expect(reparsed.http.body).toBe('form-data');
+      expect(reparsed.body?.type).toBe('form-data');
+      const byName = Object.fromEntries((reparsed.body?.formData ?? []).map((f) => [f.name, f]));
+      expect(byName['caption'].contentType).toBe('text/plain');
+      expect(byName['files'].type).toBe('file');
+      expect(byName['files'].value).toEqual(['/a', '/b']);
+      expect(reparsed.docs).toContain('Docs');
+    });
+
+    it('applies defaults when seq, body, and auth are absent', () => {
+      const bruFile: any = {
+        meta: { name: 'Defaults' },
+        http: { method: 'GET', url: 'https://example.com' },
+      };
+      const generated = generateBruRequest(bruFile);
+      const reparsed = parseBruRequest(generated);
+      expect(reparsed.http.body).toBe('none');
+      expect(reparsed.http.auth).toBe('none');
+      expect(reparsed.meta.seq).toBeUndefined();
+    });
+
+    it('throws GENERATE_ERROR when the underlying generator fails', () => {
+      const bad: any = {
+        meta: { name: 'X', type: 'http' },
+        http: { method: 'GET', url: {}, body: 'none', auth: 'none' },
+      };
+      expect(() => generateBruRequest(bad)).toThrow(BrunoError);
+      try {
+        generateBruRequest(bad);
+      } catch (e) {
+        expect((e as BrunoError).code).toBe('GENERATE_ERROR');
+      }
+    });
   });
 
   describe('parseBruEnvironment', () => {
@@ -321,6 +373,23 @@ script:post-response {
       ).toThrow(BrunoError);
     });
 
+    it('replaces the tests block in replace mode', () => {
+      const result = injectBruScript(BASE_BRU, 'tests', 'test("only", () => {})', 'replace');
+      const parsed = parseBruRequest(result);
+      expect(parsed.tests?.exec.join('\n')).toContain('test("only"');
+    });
+
+    it('throws PARSE_ERROR when the .bru content cannot be parsed', () => {
+      expect(() =>
+        injectBruScript('{{{{invalid bru', 'tests', 'code', 'append'),
+      ).toThrow(BrunoError);
+      try {
+        injectBruScript('{{{{invalid bru', 'tests', 'code', 'append');
+      } catch (e) {
+        expect((e as BrunoError).code).toBe('PARSE_ERROR');
+      }
+    });
+
     it('rejects null bytes in script', () => {
       expect(() =>
         injectBruScript(BASE_BRU, 'post-response', 'code\x00evil', 'append'),
@@ -354,6 +423,10 @@ script:post-response {
   });
 
   describe('parseBruEnvironmentRaw()', () => {
+    it('throws PARSE_ERROR on malformed environment content', () => {
+      expect(() => parseBruEnvironmentRaw('{{{{invalid')).toThrow(BrunoError);
+    });
+
     it('preserves disabled variables (unlike parseBruEnvironment) with their flag', () => {
       const vars = parseBruEnvironmentRaw(SAMPLE_ENV_BRU);
       const byName = Object.fromEntries(vars.map(v => [v.name, v]));
@@ -366,6 +439,13 @@ script:post-response {
   });
 
   describe('generateBruEnvironmentFull()', () => {
+    it('defaults a missing value to an empty string', () => {
+      const bru = generateBruEnvironmentFull([{ name: 'novalue' } as any]);
+      const reparsed = parseBruEnvironmentRaw(bru);
+      const byName = Object.fromEntries(reparsed.map((v) => [v.name, v]));
+      expect(byName['novalue']).toEqual({ name: 'novalue', value: '' });
+    });
+
     it('round-trips the disabled flag', () => {
       const bru = generateBruEnvironmentFull([
         { name: 'host', value: 'localhost' },

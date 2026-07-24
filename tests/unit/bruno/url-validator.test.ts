@@ -381,6 +381,39 @@ describe('validateUrl', () => {
   });
 
   // -----------------------------------------------------------------------
+  // Resolved-address edge cases (fail-closed)
+  // -----------------------------------------------------------------------
+  describe('resolved-address edge cases (fail-closed)', () => {
+    it('blocks when DNS resolution returns no addresses', async () => {
+      dnsMap['empty.example.com'] = [];
+      const result = await validateUrl('https://empty.example.com/');
+      expect(result.valid).toBe(false);
+      expect(result.reason).toMatch(/no addresses/i);
+    });
+
+    it('blocks when a resolved address looks like IPv6 but is unparseable', async () => {
+      dnsMap['badv6.example.com'] = ['gg::zz'];
+      const result = await validateUrl('https://badv6.example.com/');
+      expect(result.valid).toBe(false);
+      expect(result.reason).toMatch(/unparseable ipv6/i);
+    });
+
+    it('blocks when a resolved address looks like IPv4 but is out of range', async () => {
+      dnsMap['badv4.example.com'] = ['300.1.2.3'];
+      const result = await validateUrl('https://badv4.example.com/');
+      expect(result.valid).toBe(false);
+      expect(result.reason).toMatch(/unparseable ipv4/i);
+    });
+
+    it('blocks when a resolved address is neither IPv4 nor IPv6', async () => {
+      dnsMap['weird.example.com'] = ['not-an-ip'];
+      const result = await validateUrl('https://weird.example.com/');
+      expect(result.valid).toBe(false);
+      expect(result.reason).toMatch(/unrecognized/i);
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // BRUNO_SSRF_ALLOWLIST — operator-controlled exceptions
   // -----------------------------------------------------------------------
   describe('BRUNO_SSRF_ALLOWLIST', () => {
@@ -432,6 +465,13 @@ describe('validateUrl', () => {
 
     it('allows an allowlisted IPv6 CIDR range', async () => {
       process.env.BRUNO_SSRF_ALLOWLIST = 'fd00::/8';
+      resetAllowlistCache();
+      const result = await validateUrl('http://[fd00::1]/health');
+      expect(result.valid).toBe(true);
+    });
+
+    it('allows an exact allowlisted IPv6 literal', async () => {
+      process.env.BRUNO_SSRF_ALLOWLIST = 'fd00::1';
       resetAllowlistCache();
       const result = await validateUrl('http://[fd00::1]/health');
       expect(result.valid).toBe(true);
@@ -535,6 +575,40 @@ describe('parseAllowlist', () => {
 
   it('warns and skips a CIDR with a non-IP base', () => {
     const a = parseAllowlist('example.com/24');
+    expect(a.cidr4).toHaveLength(0);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('parses IPv6 literals in dotted-decimal and full 8-group forms', () => {
+    const a = parseAllowlist('::ffff:192.168.1.1, fd00:0:0:0:0:0:0:1');
+    expect(a.ipv6.size).toBe(2);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('warns and skips malformed IPv6 literals of every shape', () => {
+    const a = parseAllowlist(
+      [
+        'fc00::1::2',            // multiple '::'
+        'gg::1',                 // non-hex group
+        'fe80:1',                // too few groups
+        '::1.2.3.4.5',           // embedded IPv4 with too many octets
+        '::1.2.3.300',           // embedded IPv4 octet out of range
+        '1:2:3:4:5:6:1.2.3.4.5', // full form with bad embedded IPv4
+        'fe80:0:0:0:0:0:0:1::2', // negative fill (too many groups)
+      ].join(','),
+    );
+    expect(a.ipv6.size).toBe(0);
+    expect(warnSpy).toHaveBeenCalledTimes(7);
+  });
+
+  it('warns and skips an out-of-range IPv4 literal', () => {
+    const a = parseAllowlist('300.1.2.3');
+    expect(a.ipv4.size).toBe(0);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('warns and skips a CIDR containing more than one slash', () => {
+    const a = parseAllowlist('10.0.0.0/8/8');
     expect(a.cidr4).toHaveLength(0);
     expect(warnSpy).toHaveBeenCalledTimes(1);
   });

@@ -65,6 +65,39 @@ describe('TestRunner', () => {
       expect(results[0].error!.toLowerCase()).toContain('timed out');
     }, 10000);
 
+    it('should report an out-of-range timeout as a failing script error', async () => {
+      // An out-of-range timeout makes vm.runInContext throw; the runner reports it
+      // as a script error rather than crashing.
+      const script = `test("noop", function() {});`;
+      const mockResponse = { status: 200, statusText: 'OK', headers: {}, body: null, responseTime: 10 };
+      const { results } = await TestRunner.runScript(script, mockResponse, { timeout: -1 });
+      expect(results).toHaveLength(1);
+      expect(results[0].status).toBe('fail');
+      expect(results[0].error).toContain('out of range');
+    });
+
+    it('should fall back to empty results when the script nullifies __results', async () => {
+      // A script can reassign the internal results accumulator to a falsy value;
+      // the runner must defensively return [] rather than null.
+      const script = `__results = null;`;
+      const mockResponse = { status: 200, statusText: 'OK', headers: {}, body: null, responseTime: 10 };
+      const { results } = await TestRunner.runScript(script, mockResponse);
+      expect(results).toEqual([]);
+    });
+
+    it('should label a thrown value whose constructor has no name as a generic Error', async () => {
+      // Top-level throw of a non-Error object whose constructor exposes no name
+      // exercises the String(error) and `?? "Error"` fallback branches.
+      const script = `throw { constructor: {} };`;
+      const mockResponse = { status: 200, statusText: 'OK', headers: {}, body: null, responseTime: 10 };
+      const { results } = await TestRunner.runScript(script, mockResponse);
+      expect(results).toHaveLength(1);
+      expect(results[0].status).toBe('fail');
+      expect(results[0].description).toBe('Script error');
+      expect(results[0].error).toContain('Error:');
+      expect(results[0].error!.toLowerCase()).not.toContain('timed out');
+    });
+
     it('should provide res.getBody() in VM context', async () => {
       const script = `test("body check", function() { var body = res.getBody(); expect(body.items).to.be.an("array"); expect(body.items).to.have.lengthOf(2); });`;
       const mockResponse = { status: 200, statusText: 'OK', headers: {}, body: { items: [1, 2] }, responseTime: 10 };
@@ -522,6 +555,34 @@ describe('TestRunner', () => {
       expect(result.variables.hasTest).toBe(false);
       expect(result.variables.hasExpect).toBe(false);
       expect(result.variables.hasRes).toBe(false);
+    });
+
+    it('should report an out-of-range timeout as an error', async () => {
+      // An out-of-range timeout makes vm.runInContext throw; the runner reports it
+      // as an error rather than crashing.
+      const script = `req.setHeader("X-Test", "1");`;
+      const result = await TestRunner.runPreRequestScript(script, mockRequest, { timeout: -1 });
+      expect(result.error).toBeDefined();
+      expect(result.error).toContain('out of range');
+    });
+
+    it('should fall back to empty mutations when the script nullifies __reqMutations', async () => {
+      // A script can reassign the internal mutations accumulator to a falsy value;
+      // the runner must defensively fall back to {} rather than returning null.
+      const script = `__reqMutations = null;`;
+      const result = await TestRunner.runPreRequestScript(script, mockRequest);
+      expect(result.error).toBeUndefined();
+      expect(result.mutations).toEqual({});
+    });
+
+    it('should label a thrown value whose constructor has no name as a generic Error', async () => {
+      // Thrown object is not an Error instance (String(error) branch) and its
+      // constructor exposes no name, exercising the `?? "Error"` fallback.
+      const script = `throw { constructor: {} };`;
+      const result = await TestRunner.runPreRequestScript(script, mockRequest);
+      expect(result.error).toBeDefined();
+      expect(result.error).toContain('Error:');
+      expect(result.error!.toLowerCase()).not.toContain('timed out');
     });
   });
 });

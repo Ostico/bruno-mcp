@@ -103,6 +103,32 @@ describe('Environment Loader', () => {
       expect(vars.get('no-value-var')).toBe('');
       expect(vars.get('with-value')).toBe('hello');
     });
+
+    it('should return an empty map when the YAML content is malformed and cannot be parsed', async () => {
+      const envDir = join(tempDir, 'environments');
+      await fs.mkdir(envDir, { recursive: true });
+      // Unterminated double-quoted scalar — the YAML parser throws on this.
+      await fs.writeFile(join(envDir, 'broken.yml'), 'name: "unterminated\nvariables: []\n');
+
+      const vars = await loadEnvironment(tempDir, 'broken');
+      expect(vars).toBeInstanceOf(Map);
+      expect(vars.size).toBe(0);
+    });
+
+    it('should skip entries that are null or lack a string name', async () => {
+      const envDir = join(tempDir, 'environments');
+      await fs.mkdir(envDir, { recursive: true });
+      // First entry is null, second has a non-string name, third has no name,
+      // fourth is valid — only the valid one survives.
+      await fs.writeFile(
+        join(envDir, 'dev.yml'),
+        `name: dev\nvariables:\n  - null\n  - name: 123\n    value: numeric-name\n  - value: nameless\n  - name: good\n    value: yes\n`,
+      );
+
+      const vars = await loadEnvironment(tempDir, 'dev');
+      expect(vars.size).toBe(1);
+      expect(vars.get('good')).toBe('yes');
+    });
   });
 
   describe('substitute', () => {

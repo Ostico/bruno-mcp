@@ -81,6 +81,33 @@ describe('buildDispatcher', () => {
     });
   });
 
+  it('should build an Agent when only tls.cert is set (no rejectUnauthorized or ca)', async () => {
+    const result = await buildDispatcher({ tls: { cert: 'cert-only-data' } });
+    expect(result).toBeDefined();
+    expect((result!.dispatcher as any)._type).toBe('Agent');
+
+    const undici = await import('undici');
+    expect(undici.Agent).toHaveBeenCalledWith({
+      connect: { cert: 'cert-only-data' },
+    });
+  });
+
+  it('should build an Agent when only tls.key is set (no rejectUnauthorized, ca, or cert)', async () => {
+    const result = await buildDispatcher({ tls: { key: 'key-only-data' } });
+    expect(result).toBeDefined();
+    expect((result!.dispatcher as any)._type).toBe('Agent');
+
+    const undici = await import('undici');
+    expect(undici.Agent).toHaveBeenCalledWith({
+      connect: { key: 'key-only-data' },
+    });
+  });
+
+  it('should return undefined when tls is an empty object (no fields set)', async () => {
+    const result = await buildDispatcher({ tls: {} });
+    expect(result).toBeUndefined();
+  });
+
   it('should return undici fetch function', async () => {
     const result = await buildDispatcher({ tls: { rejectUnauthorized: false } });
     expect(result).toBeDefined();

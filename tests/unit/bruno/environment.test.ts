@@ -26,6 +26,8 @@ jest.mock('../../../src/bruno/bru-parser.js', () => ({
     name,
     variables: { baseUrl: 'http://localhost:3000' },
   })),
+  parseBruEnvironmentRaw: jest.fn(() => [{ name: 'existing', value: 'old' }]),
+  generateBruEnvironmentFull: jest.fn(() => 'vars {\n  existing: old\n}\n'),
 }));
 
 jest.mock('yaml', () => ({
@@ -540,6 +542,117 @@ describe('EnvironmentManager', () => {
 
       const result = await manager.mergeEnvironment('/col', 'missing', { a: '1' });
       expect(result.success).toBe(false);
+    });
+  });
+
+  describe('BRU-format environments', () => {
+    it('sets a variable in a BRU environment (raw load + full BRU generate)', async () => {
+      detectFormat.mockResolvedValue({ format: 'bru' });
+      fs.readFile.mockResolvedValue('vars {\n  existing: old\n}\n');
+      fs.access.mockResolvedValue(undefined);
+
+      const result = await manager.setEnvironmentVariable('/col', 'dev', 'newKey', 'newVal');
+
+      expect(result.success).toBe(true);
+      // Wrote the .bru file (BRU branch of updateEnvironmentVariables).
+      expect(fs.writeFile).toHaveBeenCalledWith('/col/environments/dev.bru', expect.any(String));
+    });
+  });
+
+  describe('updateEnvironmentVariables()', () => {
+    it('returns a NOT_FOUND error when the environment file does not exist', async () => {
+      detectFormat.mockResolvedValue({ format: 'yaml' });
+      fs.access.mockRejectedValue(new Error('ENOENT')); // fileExists -> false
+
+      const result = await manager.updateEnvironmentVariables('/col', 'ghost', [
+        { name: 'a', value: '1' },
+      ]);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/does not exist/i);
+    });
+
+    it('returns an error when the write fails', async () => {
+      detectFormat.mockResolvedValue({ format: 'yaml' });
+      fs.access.mockResolvedValue(undefined); // exists
+      fs.writeFile.mockRejectedValue(new Error('EACCES'));
+
+      const result = await manager.updateEnvironmentVariables('/col', 'dev', [
+        { name: 'a', value: '1' },
+      ]);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('EACCES');
+    });
+
+    it('returns "Unknown error" when a non-Error value is thrown', async () => {
+      detectFormat.mockRejectedValue('string failure');
+
+      const result = await manager.updateEnvironmentVariables('/col', 'dev', []);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Unknown error');
+    });
+  });
+
+  describe('variable filtering / defaulting branches', () => {
+    it('loadEnvironment (yaml) skips nameless, empty-named and disabled vars and defaults null values', async () => {
+      detectFormat.mockResolvedValue({ format: 'yaml' });
+      fs.readFile.mockResolvedValue('');
+      parseYaml.mockReturnValue({
+        variables: [
+          { name: 'ok', value: 'v' },
+          { value: 'noname' }, // name == null -> skipped
+          { name: '', value: 'empty' }, // empty name -> skipped
+          { name: 'dis', value: 'd', disabled: true }, // disabled -> skipped
+          { name: 'nullVal', value: null }, // null value -> defaulted to ''
+        ],
+      });
+
+      const env = await manager.loadEnvironment('/col', 'dev');
+
+      expect(env.variables).toEqual({ ok: 'v', nullVal: '' });
+    });
+
+    it('loadEnvironmentRaw (via setEnvironmentVariable) skips nameless/empty vars and defaults null values', async () => {
+      detectFormat.mockResolvedValue({ format: 'yaml' });
+      fs.readFile.mockResolvedValue('');
+      fs.access.mockResolvedValue(undefined);
+      parseYaml.mockReturnValue({
+        variables: [
+          { name: 'keep', value: 'k' },
+          { value: 'noname' }, // name == null -> skipped
+          { name: '', value: 'x' }, // empty name -> skipped
+          { name: 'nv', value: null }, // null value -> defaulted to ''
+        ],
+      });
+
+      const result = await manager.setEnvironmentVariable('/col', 'dev', 'added', 'val');
+
+      expect(result.success).toBe(true);
+      const envFile = generateYamlEnvironment.mock.calls.at(-1)[0];
+      const byName = Object.fromEntries(envFile.variables.map((v: any) => [v.name, v.value]));
+      expect(byName).toEqual({ keep: 'k', nv: '', added: 'val' });
+    });
+  });
+
+  describe('non-Error rejections fall back to "Unknown error"', () => {
+    it('createEnvironment', async () => {
+      detectFormat.mockRejectedValue('str');
+      const result = await manager.createEnvironment({ collectionPath: '/col', name: 'dev', variables: {} });
+      expect(result.error).toBe('Unknown error');
+    });
+
+    it('updateEnvironment', async () => {
+      detectFormat.mockRejectedValue('str');
+      const result = await manager.updateEnvironment('/col', 'dev', {});
+      expect(result.error).toBe('Unknown error');
+    });
+
+    it('deleteEnvironment', async () => {
+      detectFormat.mockRejectedValue('str');
+      const result = await manager.deleteEnvironment('/col', 'dev');
+      expect(result.error).toBe('Unknown error');
     });
   });
 });
