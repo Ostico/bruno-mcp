@@ -12,6 +12,7 @@ import {
   type YamlBody,
   type YamlScript,
   type YamlInfo,
+  type MultipartFormPart,
 } from './types.js';
 
 function safeParse(content: string, label: string): Record<string, unknown> {
@@ -77,9 +78,31 @@ function parseHeaders(raw: unknown): YamlHeader[] | undefined {
 function parseBody(raw: unknown): YamlBody | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const obj = raw as Record<string, unknown>;
+
+  let data: YamlBody['data'];
+  if (Array.isArray(obj.data)) {
+    // multipart/form-data parts
+    data = obj.data.map((entry) => {
+      const part = (entry ?? {}) as Record<string, unknown>;
+      const item: MultipartFormPart = {
+        name: String(part.name ?? ''),
+        value: Array.isArray(part.value)
+          ? part.value.map(String)
+          : String(part.value ?? ''),
+        type: part.type === 'file' ? 'file' : 'text',
+      };
+      if (part.contentType !== undefined) {
+        item.contentType = String(part.contentType);
+      }
+      return item;
+    });
+  } else if (obj.data !== undefined) {
+    data = String(obj.data);
+  }
+
   return {
     type: String(obj.type ?? ''),
-    data: obj.data !== undefined ? String(obj.data) : undefined,
+    data,
   };
 }
 

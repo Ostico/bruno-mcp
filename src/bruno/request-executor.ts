@@ -13,6 +13,7 @@ import type {
   CollectionRunResult,
   RequestExecutionResult,
   TestResult,
+  MultipartFormPart,
 } from './types.js';
 
 interface ExecutionOptions {
@@ -80,7 +81,23 @@ function bruFileToYamlRequest(bru: BruFile): YamlRequest {
     ? Object.entries(bru.headers).map(([name, value]) => ({ name, value }))
     : undefined;
 
-  const body = bru.body?.content ? { type: bru.body.type, data: bru.body.content } : undefined;
+  let body: YamlRequest['http']['body'];
+  if (bru.body?.formData && bru.body.formData.length > 0) {
+    body = {
+      type: 'multipart-form',
+      data: bru.body.formData.map((part): MultipartFormPart => {
+        const item: MultipartFormPart = {
+          name: part.name,
+          value: part.value,
+          type: part.type ?? 'text',
+        };
+        if (part.contentType) item.contentType = part.contentType;
+        return item;
+      }),
+    };
+  } else if (bru.body?.content) {
+    body = { type: bru.body.type, data: bru.body.content };
+  }
 
   return {
     info: { name: bru.meta.name, type: bru.meta.type, seq: bru.meta.seq },
@@ -123,10 +140,18 @@ async function discoverRequests(dirPath: string): Promise<DiscoveryResult> {
   return { requests, parseErrors };
 }
 
-function buildFetchOptions(
+function isMultipartBody(body: YamlRequest['http']['body']): boolean {
+  return (
+    !!body &&
+    (body.type === 'multipart-form' || body.type === 'form-data') &&
+    Array.isArray(body.data)
+  );
+}
+
+export async function buildFetchOptions(
   yaml: YamlRequest,
   vars: Map<string, string>,
-): { url: string; options: RequestInit } {
+): Promise<{ url: string; options: RequestInit }> {
   const url = substitute(yaml.http.url, vars);
 
   const headers: Record<string, string> = {};
@@ -141,8 +166,51 @@ function buildFetchOptions(
     headers,
   };
 
-  if (yaml.http.body?.data) {
-    options.body = substitute(yaml.http.body.data, vars);
+  const body = yaml.http.body;
+  if (isMultipartBody(body)) {
+    const form = new FormData();
+    const parts = body!.data as MultipartFormPart[];
+
+    for (const part of parts) {
+      const contentType = part.contentType
+        ? substitute(part.contentType, vars)
+        : undefined;
+
+      if (part.type === 'file') {
+        const paths = Array.isArray(part.value) ? part.value : [part.value];
+        for (const rawPath of paths) {
+          const filePath = substitute(String(rawPath), vars);
+          const buf = await readFile(filePath);
+          form.append(
+            part.name,
+            new Blob([buf], { type: contentType || 'application/octet-stream' }),
+            basename(filePath),
+          );
+        }
+      } else {
+        const values = Array.isArray(part.value) ? part.value : [part.value];
+        for (const rawValue of values) {
+          const value = substitute(String(rawValue), vars);
+          if (contentType) {
+            form.append(part.name, new Blob([value], { type: contentType }));
+          } else {
+            form.append(part.name, value);
+          }
+        }
+      }
+    }
+
+    options.body = form;
+
+    // undici sets the multipart boundary itself; a user-provided Content-Type
+    // header would clobber the boundary, so strip it.
+    for (const key of Object.keys(headers)) {
+      if (key.toLowerCase() === 'content-type') {
+        delete headers[key];
+      }
+    }
+  } else if (typeof body?.data === 'string') {
+    options.body = substitute(body.data, vars);
   }
 
   return { url, options };
@@ -166,7 +234,7 @@ async function executeSingleRequest(
   // Merge env vars with runtime vars (runtime takes precedence)
   const effectiveVars = variableStore ? variableStore.merge(vars) : vars;
 
-  const { url, options } = buildFetchOptions(yaml, effectiveVars);
+  const { url, options } = await buildFetchOptions(yaml, effectiveVars);
   const name = yaml.info.name;
   const method = yaml.http.method;
 

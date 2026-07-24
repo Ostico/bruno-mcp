@@ -271,8 +271,9 @@ export class BrunoMcpServer {
             content: z.string().optional(),
             formData: z.array(z.object({
               name: z.string(),
-              value: z.string(),
-              type: z.enum(['text', 'file']).optional()
+              value: z.union([z.string(), z.array(z.string())]),
+              type: z.enum(['text', 'file']).optional(),
+              contentType: z.string().optional()
             })).optional()
           }).optional(),
           auth: z.object({
@@ -371,8 +372,9 @@ export class BrunoMcpServer {
             content: z.string().optional(),
             formData: z.array(z.object({
               name: z.string(),
-              value: z.string(),
-              type: z.enum(['text', 'file']).optional()
+              value: z.union([z.string(), z.array(z.string())]),
+              type: z.enum(['text', 'file']).optional(),
+              contentType: z.string().optional()
             })).optional()
           }).optional(),
           auth: z.object({
