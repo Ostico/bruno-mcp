@@ -347,14 +347,23 @@ async function executeSingleRequest(
 
   const startTime = Date.now();
 
-  const MAX_REDIRECTS = 10;
+  // Redirect handling honors request settings:
+  //   followRedirects === false -> return the 3xx response as-is (no follow)
+  //   maxRedirects -> hop cap (defaults to 10 when unset)
+  const followRedirects = yaml.settings?.followRedirects !== false;
+  const maxRedirects = yaml.settings?.maxRedirects ?? 10;
 
   try {
     let response = await fetchFn(url, fetchOpts);
     let currentUrl = url;
     let redirectCount = 0;
 
-    while (response.status >= 300 && response.status < 400 && redirectCount < MAX_REDIRECTS) {
+    while (
+      followRedirects &&
+      response.status >= 300 &&
+      response.status < 400 &&
+      redirectCount < maxRedirects
+    ) {
       const location = response.headers.get('location');
       if (!location) break;
 
@@ -380,7 +389,7 @@ async function executeSingleRequest(
       redirectCount++;
     }
 
-    if (redirectCount >= MAX_REDIRECTS) {
+    if (followRedirects && redirectCount >= maxRedirects) {
       return {
         name,
         method,
@@ -388,7 +397,7 @@ async function executeSingleRequest(
         status: 0,
         duration_ms: Date.now() - startTime,
         tests: [],
-        error: `Too many redirects (max ${MAX_REDIRECTS})`,
+        error: `Too many redirects (max ${maxRedirects})`,
       };
     }
 

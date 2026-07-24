@@ -204,6 +204,54 @@ describe('yaml-parser', () => {
       expect(result.settings!.maxRedirects).toBe(5);
     });
 
+    it('parses settings.tls and settings.proxy into YamlSettings', () => {
+      const TLS_PROXY_REQUEST_YAML = `
+info:
+  name: TLS Proxy
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://example.com/api"
+settings:
+  tls:
+    rejectUnauthorized: false
+    ca: ca-pem-data
+    cert: cert-pem-data
+    key: key-pem-data
+  proxy: "http://proxy.example.com:8080"
+`;
+      const result = parseYamlRequest(TLS_PROXY_REQUEST_YAML);
+      expect(result.settings).toBeDefined();
+      // Exact shape consumed by buildDispatcher (fetch-dispatcher.ts)
+      expect(result.settings!.tls).toEqual({
+        rejectUnauthorized: false,
+        ca: 'ca-pem-data',
+        cert: 'cert-pem-data',
+        key: 'key-pem-data',
+      });
+      expect(result.settings!.proxy).toBe('http://proxy.example.com:8080');
+    });
+
+    it('omits settings.tls when no recognized tls fields are present', () => {
+      const NO_TLS_FIELDS_YAML = `
+info:
+  name: Empty TLS
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://example.com/api"
+settings:
+  tls:
+    unknownField: value
+`;
+      const result = parseYamlRequest(NO_TLS_FIELDS_YAML);
+      expect(result.settings).toBeDefined();
+      expect(result.settings!.tls).toBeUndefined();
+      expect(result.settings!.proxy).toBeUndefined();
+    });
+
     it('parses docs string', () => {
       const result = parseYamlRequest(GET_REQUEST_YAML);
       expect(result.docs).toBe('Returns the JSON validation schema for context-url payloads');

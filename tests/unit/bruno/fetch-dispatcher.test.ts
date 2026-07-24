@@ -1,4 +1,5 @@
 import { buildDispatcher } from '../../../src/bruno/fetch-dispatcher';
+import { parseYamlRequest } from '../../../src/bruno/yaml-parser';
 
 // Mock undici
 jest.mock('undici', () => {
@@ -85,5 +86,39 @@ describe('buildDispatcher', () => {
     expect(result).toBeDefined();
     expect(result!.fetch).toBeDefined();
     expect(typeof result!.fetch).toBe('function');
+  });
+
+  it('produces a dispatcher from settings parsed out of a .yml request (tls + proxy round-trip)', async () => {
+    const yaml = parseYamlRequest(`
+info:
+  name: TLS Proxy
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://example.com/api"
+settings:
+  tls:
+    rejectUnauthorized: false
+    ca: ca-pem-data
+    cert: cert-pem-data
+    key: key-pem-data
+  proxy: "http://proxy.example.com:8080"
+`);
+
+    const result = await buildDispatcher(yaml.settings!);
+    expect(result).toBeDefined();
+    expect((result!.dispatcher as any)._type).toBe('ProxyAgent');
+
+    const undici = await import('undici');
+    expect(undici.ProxyAgent).toHaveBeenCalledWith({
+      uri: 'http://proxy.example.com:8080',
+      requestTls: {
+        rejectUnauthorized: false,
+        ca: 'ca-pem-data',
+        cert: 'cert-pem-data',
+        key: 'key-pem-data',
+      },
+    });
   });
 });

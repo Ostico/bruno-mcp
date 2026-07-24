@@ -1460,6 +1460,77 @@ http:
       // fetch called 11 times: 1 + 10 redirect follows (loop exits before 11th redirect fetch)
       expect(mockFetch).toHaveBeenCalledTimes(11);
     });
+
+    it('does not follow redirects when settings.followRedirects is false', async () => {
+      const NO_FOLLOW_REQUEST = `
+info:
+  name: No Follow
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/old"
+settings:
+  followRedirects: false
+`;
+      setupFsReaddir(['No Follow.yml']);
+      setupFsReadFile({ 'No Follow.yml': NO_FOLLOW_REQUEST });
+      setupFsStat(['/test-collection']);
+
+      const redirectResponse = {
+        status: 302,
+        statusText: 'Found',
+        headers: new Headers({ location: 'https://api.example.com/new' }),
+        ok: false,
+        text: jest.fn().mockResolvedValue(''),
+      } as unknown as Response;
+
+      mockFetch.mockResolvedValueOnce(redirectResponse);
+      mockedValidateUrl.mockReturnValue({ valid: true });
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      // 3xx returned as-is; no follow
+      expect(result.results[0].status).toBe(302);
+      expect(result.results[0].error).toBeUndefined();
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('caps redirect follows at settings.maxRedirects', async () => {
+      const CAPPED_REQUEST = `
+info:
+  name: Capped
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/loop"
+settings:
+  maxRedirects: 2
+`;
+      setupFsReaddir(['Capped.yml']);
+      setupFsReadFile({ 'Capped.yml': CAPPED_REQUEST });
+      setupFsStat(['/test-collection']);
+
+      const loopResponse = {
+        status: 302,
+        statusText: 'Found',
+        headers: new Headers({ location: 'https://api.example.com/loop' }),
+        ok: false,
+        text: jest.fn().mockResolvedValue(''),
+      } as unknown as Response;
+
+      mockFetch.mockResolvedValue(loopResponse);
+      mockedValidateUrl.mockReturnValue({ valid: true });
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.results[0].status).toBe(0);
+      expect(result.results[0].error).toContain('Too many redirects');
+      expect(result.results[0].error).toContain('2');
+      // 1 original + 2 redirect follows (loop exits at the cap)
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+    });
   });
 
   // =========================================================================
