@@ -479,11 +479,22 @@ export interface RequestDetail {
   filePath?: string;
 }
 
+export interface EnvironmentDetail {
+  name: string;
+  /**
+   * Variable names only. Values are withheld: environments routinely hold
+   * tokens, and the caller's need here is to know what exists before merging
+   * into it, not to read secrets back out.
+   */
+  variables: string[];
+}
+
 export interface CollectionStats {
   totalRequests: number;
   requestsByMethod: Record<string, number>;
-  folders: string[];
   environments: string[];
+  environmentDetails: EnvironmentDetail[];
+  folders: string[];
   requests: RequestDetail[];
 }
 

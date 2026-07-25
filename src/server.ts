@@ -1284,7 +1284,7 @@ export class BrunoMcpServer {
       'list_collections',
       {
         title: 'List Collections',
-        description: 'List all Bruno collections from workspace.yml. Returns collection names and paths. Use the returned path as collectionPath in other tools (get_collection_stats, list_requests, run_collection).',
+        description: 'List the Bruno collections REGISTERED IN workspace.yml, with their names and paths. This is a registry listing, not a filesystem scan: a collection that exists on disk but is not registered will NOT appear, and registered entries that no longer exist are returned with "exists": false. If you already know a collection\'s absolute path, pass it directly to the other tools — it does not need to appear here. Use the returned path as collectionPath in other tools (get_collection_stats, list_requests, run_collection).',
         inputSchema: {
           workspacePath: z.string().optional().describe('Optional explicit path to workspace.yml')
         }
@@ -1400,7 +1400,7 @@ export class BrunoMcpServer {
       'get_collection_stats',
       {
         title: 'Get Collection Statistics',
-        description: 'Get statistics about a Bruno collection — request counts by method, folders, environments, and per-request details including file paths. Use filePath values as requestPath in run_collection.',
+        description: 'Get statistics about a Bruno collection — request counts by method, folders, environments, and per-request details including file paths. environmentDetails lists each environment with the NAMES of the variables it declares (values are withheld), so you can see what an environment already defines before merging into it with set_environment_variable. Use filePath values as requestPath in run_collection.',
         inputSchema: {
           collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to collection directory. Use the path returned by list_collections.')
         }
@@ -1449,7 +1449,7 @@ export class BrunoMcpServer {
       'run_collection',
       {
         title: 'Run Collection',
-        description: 'Execute requests in a Bruno collection and run test scripts. Omit requestPath to run ALL requests. Provide requestPath as a .yml/.bru file to run one request, or as a subdirectory to run all requests in that folder. Each result includes the response body (response_body, response_content_type, response_body_truncated) by default — disable with includeResponseBody=false or cap the size with maxResponseBodyBytes.',
+        description: 'Execute requests in a Bruno collection and run test scripts. Omit requestPath to run ALL requests. Provide requestPath as a .yml/.bru file to run one request, or as a subdirectory to run all requests in that folder. Each result includes the response body (response_body, response_content_type, response_body_truncated) by default — disable with includeResponseBody=false or cap the size with maxResponseBodyBytes. Outbound requests are SSRF-filtered: targets resolving to private, loopback, link-local or otherwise reserved addresses are refused unless the server operator has allowlisted them, and a refusal is reported per-request as an "SSRF blocked" error with status 0.',
         inputSchema: {
           collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to collection root directory. Use the path returned by list_collections.'),
           environment: z.string().optional().describe('Environment name to use (e.g. "dev", "staging"). Get available names from get_collection_stats.'),

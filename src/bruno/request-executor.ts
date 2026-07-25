@@ -5,7 +5,7 @@ import { parseBruRequest } from './bru-parser.js';
 import { loadEnvironment, substitute } from './env-loader.js';
 import { TestRunner } from './test-runner.js';
 import { wrapFetchResponse } from './response-wrapper.js';
-import { validateUrl } from './url-validator.js';
+import { validateUrl, ssrfRemediation } from './url-validator.js';
 import { VariableStore } from './variable-store.js';
 import { buildDispatcher } from './fetch-dispatcher.js';
 import type {
@@ -325,7 +325,10 @@ async function executeSingleRequest(
       status: 0,
       duration_ms: 0,
       tests: [],
-      error: 'SSRF blocked: ' + urlCheck.reason,
+      error:
+        'SSRF blocked: ' +
+        urlCheck.reason +
+        (urlCheck.allowlistOverridable ? '. ' + ssrfRemediation() : ''),
     };
   }
 

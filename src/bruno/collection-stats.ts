@@ -1,9 +1,11 @@
 import { promises as fs } from 'fs';
+import type { Dirent } from 'fs';
 import { join, basename, relative, dirname } from 'path';
+import { parse as parseYaml } from 'yaml';
 import { parseYamlRequest } from './yaml-parser.js';
-import { parseBruRequest } from './bru-parser.js';
+import { parseBruRequest, parseBruEnvironmentRaw } from './bru-parser.js';
 import { BrunoError } from './types.js';
-import type { CollectionStats, RequestDetail } from './types.js';
+import type { CollectionStats, EnvironmentDetail, EnvFile, RequestDetail } from './types.js';
 
 const EXCLUDED_FILENAMES = new Set([
   'folder.yml',
@@ -53,6 +55,52 @@ async function listEnvironments(collectionPath: string): Promise<string[]> {
   } catch {
     return [];
   }
+}
+
+/**
+ * Variable names declared by each environment.
+ *
+ * Without this a caller can see that an environment exists but not what is in
+ * it, which makes set_environment_variable's merge semantics a promise about
+ * state the caller cannot observe. Names only — see EnvironmentDetail.
+ */
+async function listEnvironmentDetails(collectionPath: string): Promise<EnvironmentDetail[]> {
+  const envDir = join(collectionPath, 'environments');
+
+  let entries: Dirent[];
+  try {
+    entries = await fs.readdir(envDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const details: EnvironmentDetail[] = [];
+
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const isYaml = entry.name.endsWith('.yml');
+    if (!isYaml && !entry.name.endsWith('.bru')) continue;
+
+    const name = entry.name.replace(/\.(yml|bru)$/, '');
+    let variables: string[] = [];
+
+    try {
+      const content = await fs.readFile(join(envDir, entry.name), 'utf-8');
+      variables = isYaml
+        ? ((parseYaml(content) as EnvFile | null)?.variables ?? [])
+            .filter((v) => v && typeof v.name === 'string')
+            .map((v) => v.name)
+        : parseBruEnvironmentRaw(content).map((v) => v.name);
+    } catch {
+      // An unreadable or malformed environment still exists; report it with no
+      // variables rather than dropping it from the listing entirely.
+      variables = [];
+    }
+
+    details.push({ name, variables });
+  }
+
+  return details.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 async function listFolders(collectionPath: string): Promise<string[]> {
@@ -160,12 +208,14 @@ export async function getCollectionStats(collectionPath: string): Promise<Collec
 
   const folders = await listFolders(collectionPath);
   const environments = await listEnvironments(collectionPath);
+  const environmentDetails = await listEnvironmentDetails(collectionPath);
 
   return {
     totalRequests: requests.length,
     requestsByMethod,
     folders,
     environments,
+    environmentDetails,
     requests,
   };
 }
