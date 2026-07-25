@@ -622,8 +622,29 @@ Variables set via `bru.setVar()` are merged with environment variables for `{{su
 | `res.getStatusText()` | `string` | Status text (e.g. "OK") |
 | `res.getHeaders()` | `object` | All response headers |
 | `res.getHeader(name)` | `string \| null` | Single header (case-insensitive) |
-| `res.getBody()` | `any` | Parsed JSON if content-type is `application/json`, otherwise raw text |
+| `res.getBody()` | `any` | Already-parsed JSON object/array for `application/json` and `+json` content-types, otherwise raw text |
 | `res.getResponseTime()` | `number` | Response time in milliseconds |
+
+> **Do not `JSON.parse(res.getBody())`.** The body is parsed for you whenever the
+> response content-type is `application/json` or carries a `+json` suffix
+> (`application/vnd.api+json`, …), so `res.getBody()` hands back an object or array,
+> not a string. Parsing it again stringifies it to `"[object Object]"` first and
+> throws `SyntaxError: "[object Object]" is not valid JSON`. Access fields
+> directly instead:
+>
+> ```javascript
+> expect(res.getBody().access_token).to.be.a("string");   // ✅
+> JSON.parse(res.getBody()).access_token;                 // ❌ throws
+> ```
+>
+> If an endpoint can return either JSON or plain text, branch on the type:
+>
+> ```javascript
+> const b = res.getBody();
+> const json = typeof b === "string" ? JSON.parse(b) : b;
+> ```
+>
+> A run that hits this error reports the fix in its `warnings` array.
 
 **Example test script:**
 ```javascript
