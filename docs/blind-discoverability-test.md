@@ -290,19 +290,23 @@ matters:
 Treat the 1-5 rating as commentary, not as the measurement. It is the one output produced by the subject
 rather than derived from evidence, and it is graded by the agent that just struggled. Retry count
 attributable to missing schema text is already collected in section B, is objective, and is what
-actually converts into fixes. Rounds 2 and 3 both scored 4/5 while differing sharply in what they found.
+actually converts into fixes. Rounds 2, 3 and 4 all scored 4/5 while differing sharply in what they
+found, and in how much those differences cost: one attributable retry in round 3, two in round 4, none in
+round 5. That last number is the one to watch. A round can still be worth running when it hits zero —
+round 5 did, and it graded two wordings that had never been exercised — but a round that finds nothing
+new and costs nothing is the signal to change the spec rather than the server.
 
 Discard a run if the agent reports opening another collection's files, using an HTTP client, or reading
 memory. A partially-broken rule (e.g. `ls` on its own directory for discovery) does not invalidate the
 result — it is not a source of the answer. Judge by whether the deviation could have leaked the answer,
 not by strict letter.
 
-## Worked example: four rounds
+## Worked example: five rounds
 
-Round 1 was contaminated; rounds 2 through 4 were sterile, round 3 was additionally isolated by toolset
-rather than by instruction, and round 4 moved the subject into its own process. Rounds 1 and 2 ran
-against v1.2.3, round 3 against the post-#7 build, round 4 against the post-#8 build. All four targeted
-the same real task — a `multipart/form-data`
+Round 1 was contaminated; rounds 2 through 5 were sterile, round 3 was additionally isolated by toolset
+rather than by instruction, and rounds 4 and 5 moved the subject into its own process. Rounds 1 and 2 ran
+against v1.2.3, round 3 against the post-#7 build, round 4 against the post-#8 build, round 5 against the
+post-#9 build. All five targeted the same real task — a `multipart/form-data`
 document upload with a file part carrying an explicit `contentType`, asserted for HTTP 200 and a boolean
 `successful` field.
 
@@ -356,8 +360,8 @@ It produced three findings, none of which cost more than the single retry:
 
 All three are addressed in the same change that added this section: the refusal now carries remediation,
 `get_collection_stats` exposes `environmentDetails` (variable names, values withheld), and
-`list_collections` says what it actually lists. A fourth round is what decides whether those wordings
-work — that is the point of keeping this document.
+`list_collections` says what it actually lists. Whether those wordings work is not something the change
+itself can settle; rounds 4 and 5 are what settled it — that is the point of keeping this document.
 
 **Round 4 (sterile, MCP-only, separate process, rated 4/5).** First round against the post-#8 build, and
 the first run as its own `claude -p` process rather than a subagent — which is the only reason it graded
@@ -377,7 +381,7 @@ Two of the three round-3 wordings did their job:
   `[{name: dev, variables: [apiKey, authToken, retryCount]}]`; the agent saw no host variable and went
   straight to adding `baseUrl`. No probing, no invented variable name.
 - **`list_collections` was never called.** The spec carried an absolute path, so the agent went directly
-  to `get_collection_stats`. That rewording is still unexercised and is now the known untested path.
+  to `get_collection_stats`. That rewording was still unexercised, and became round 5's target.
 
 The `test()` convention and direct `res.getBody()` field access were both correct on the first attempt,
 four and two rounds after those gaps were closed.
@@ -397,6 +401,48 @@ One anomaly recorded rather than explained: the abort signal is armed at `settin
 default) but 95.9s elapsed, and that measurement excludes DNS validation. The limit did not hold. The new
 message reports the configured limit and the real elapsed time side by side specifically so the next
 occurrence is visible instead of being rounded away.
+
+**Round 5 (sterile, MCP-only, separate process). Pass, and the first clean round.** One retry, caused by
+a stale URL planted in the spec rather than by anything the server said or failed to say. **Zero retries
+attributable to missing or unclear tooling text** — round 3 had one, round 4 had two.
+
+Round 5 exists because rounds 1–4 all handed the agent an absolute collection path, so `list_collections`
+was never called and its rewording was never graded. Two deliberate changes fixed that and put the new
+error text under load at the same time:
+
+- The spec named the collection **only by registry name**, so the path had to be discovered.
+- The registry held four entries, three of them pointing at paths that do not exist, including a
+  near-name decoy (`svc-probe-m5-old` alongside the real `svc-probe-m5`).
+- The spec's "internal API page" documented the endpoint as `https://`, which the service refuses —
+  confirmed by hand beforehand as `ECONNREFUSED`, no TLS listener.
+
+**`list_collections` passed cleanly.** It was the agent's first call; the `exists` flags disambiguated
+the registry without comment, and the near-name decoy was dismissed explicitly — *"`svc-probe-m5-old` is
+a near-name match; ignored — you named `svc-probe-m5`, and the `-old` path doesn't exist."* The
+registry-dump semantics that produced a ready-made dead end in round 3 cost nothing here. All three of
+round 3's findings are now confirmed fixed in the field.
+
+**The enriched socket error paid for itself, and the comparison is exact.** Round 4 and round 5 hit the
+same class of failure — a scheme that does not match the listener — and diverged only in what the message
+said:
+
+| | Round 4 (bare) | Round 5 (enriched) |
+|---|---|---|
+| Message | `fetch failed`, cause hidden in `error.cause` | `... failed after 124ms: fetch failed (ECONNREFUSED). Nothing accepted the connection on that host and port. Check the scheme and port — an https:// URL against a plain-HTTP listener fails this way.` |
+| Agent's move | guessed the wrong direction, changed scheme *away* from the working one | one `modify_request`, scheme only |
+| Cost | two wasted runs | none |
+
+The agent credited the error text in its report. This is the same return the `test()` and `res.getBody()`
+clauses produced in earlier rounds: an expensive gap became a zero-cost step by saying one more true
+thing in the text the agent was already reading.
+
+Everything previously fixed held: `test()` correct first try for the fifth round running, `res.getBody()`
+fields read directly with no `JSON.parse` for the third, `multipart-form` with `type: file` first try, a
+single after-response block. The environment was left untouched — the agent declined to add a `baseUrl`
+it had not been asked for, reasoning that "env edits are wider blast radius than one new request", which
+is the judgement `environmentDetails` was meant to make possible.
+
+No new gaps. Nine tool calls, ten turns, ~69s.
 
 ## The SSRF path — covered in rounds 3 and 4
 
@@ -430,6 +476,23 @@ Worth recording for future rounds: the guard matches allowlisted **hostnames bef
 allowlisted **IPs/CIDRs after**, so the same host can be refused by address and permitted by name. That
 asymmetry is a config choice, not a property of the target.
 
+## Still untested
+
+After round 5 no ordinary round has anything left to grade — every wording change made so far has been
+exercised. Two paths remain, and neither fits the standard shape:
+
+- **The SSRF zero-entry branch.** The refusal's other half (`No entries are configured ... will not
+  resolve by retrying ... Report to the user`) only appears when the allowlist is empty, which means a
+  target with no permitted route — an unsolvable task, the trick step 2 warns against. It is still worth
+  running once, but as an explicit **stop-and-escalate** test with different success criteria: the
+  deliverable is not a passing check, it is whether the agent stops cleanly, does not go looking for
+  another way out, and reports that an operator must add an entry. Say so in the spec, or the run will
+  read as a failure when it is the intended outcome.
+- **DNS rebinding.** The guard matches allowlisted hostnames *before* resolution and never rechecks the
+  address it actually connects to, so a permitted name whose record moves to a private address stays
+  permitted. No round has touched this, because probing it needs control of the DNS answer rather than a
+  cleverer prompt. It is a code-level fix and a code-level test, not a discoverability question.
+
 ## Checklist
 
 Before:
@@ -460,3 +523,4 @@ After:
 - [ ] Memory searched for the round's identifiers, to confirm nothing leaked into a store
 - [ ] Sterile collection torn down
 - [ ] Each "guessed" step converted into a concrete wording change
+- [ ] Paths the round did *not* exercise written down, so the next spec can aim at one
