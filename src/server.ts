@@ -54,7 +54,10 @@ const inlineScriptsSchema = z.object({
   'reports "tests": [] and the request looks green with no assertions. Available in scripts: ' +
   'res.getStatus()/getStatusText()/getHeader(name)/getHeaders()/getBody()/getResponseTime(), ' +
   'bru.setVar(name, value)/getVar(name), and expect(actual) with .to.equal/.contain/.include, ' +
-  '.to.have.property/.lengthOf, .to.be.a/.an/.below/.above, and .to.not.* negations.',
+  '.to.have.property/.lengthOf, .to.be.a/.an/.below/.above, and .to.not.* negations. ' +
+  'RETURN TYPE: res.getBody() returns the response already parsed into a JS object/array when the ' +
+  'Content-Type is application/json or a +json type (raw text otherwise). Access fields directly — res.getBody().field — ' +
+  'and do NOT JSON.parse() it, which throws SyntaxError: "[object Object]" is not valid JSON.',
 );
 
 export class BrunoMcpServer {
@@ -749,7 +752,10 @@ export class BrunoMcpServer {
             'Script body. For post-response/tests, wrap every assertion in a test() block — ' +
             'test("status is 200", function() { expect(res.getStatus()).to.equal(200); }); — ' +
             'because only test() blocks are recorded in run_collection results. A bare passing ' +
-            'expect() at the top level records nothing and the run reports "tests": [].',
+            'expect() at the top level records nothing and the run reports "tests": []. ' +
+            'res.getBody() returns the response already parsed into a JS object/array for ' +
+            'application/json and +json content-types, so read fields directly ' +
+            '(res.getBody().field) and do NOT JSON.parse() it.',
           ),
           scriptMode: z.enum(['append', 'replace']).optional().default('append').describe(
             'How to write the script. "append" (default) concatenates onto any existing script ' +

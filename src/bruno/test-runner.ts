@@ -431,6 +431,33 @@ export function detectUnreportedAssertions(
   ];
 }
 
+/**
+ * Turn the SyntaxError from JSON.parse(res.getBody()) into an actionable hint.
+ *
+ * res.getBody() already returns parsed JSON (see ResponseWrapper), so parsing
+ * it again stringifies the object to "[object Object]" first. The raw error
+ * names neither getBody nor the double parse, so the cause is not guessable
+ * from the message alone.
+ *
+ * @param message  The thrown error's message
+ */
+export function detectDoubleParse(message: string): string[] {
+  const doubleParsed =
+    // Node 20+
+    message.includes('"[object Object]" is not valid JSON') ||
+    // Node 18
+    message.includes('Unexpected token o in JSON at position 1');
+
+  if (!doubleParsed) return [];
+
+  return [
+    'res.getBody() already returns parsed JSON when the response Content-Type is JSON, ' +
+      'so JSON.parse(res.getBody()) parses the string "[object Object]" and throws. ' +
+      'Access fields directly: res.getBody().field. If the endpoint can also return non-JSON, use: ' +
+      'const b = res.getBody(); const j = typeof b === "string" ? JSON.parse(b) : b;',
+  ];
+}
+
 export class TestRunner {
   static async runPreRequestScript(
     script: string,
@@ -532,10 +559,21 @@ export class TestRunner {
       vmScript.runInContext(context, { timeout });
 
       // Extract results from sandbox — the only thing we read back
-      const results = vm.runInContext('__results', context) as TestResult[];
-      const warnings = detectUnreportedAssertions(script, results?.length ?? 0);
+      const results = (vm.runInContext('__results', context) as TestResult[]) || [];
+      // A double parse inside a test() block is caught by test() itself, so it
+      // never reaches the outer catch — scan the recorded failures too. Only
+      // failures carry an error, so filtering on it is the same as filtering
+      // on status.
+      const failureMessages = results
+        .map(r => r.error)
+        .filter(Boolean)
+        .join('\n');
+      const warnings = [
+        ...detectUnreportedAssertions(script, results.length),
+        ...detectDoubleParse(failureMessages),
+      ];
       return {
-        results: results || [],
+        results,
         variables: __bruVars,
         ...(warnings.length > 0 ? { warnings } : {}),
       };
@@ -546,6 +584,8 @@ export class TestRunner {
       const isTimeout =
         message.includes('Script execution timed out') ||
         message.includes('execution timed out');
+
+      const warnings = detectDoubleParse(message);
 
       return {
         results: [
@@ -558,6 +598,7 @@ export class TestRunner {
           },
         ],
         variables: __bruVars,
+        ...(warnings.length > 0 ? { warnings } : {}),
       };
     }
   }
