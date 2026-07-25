@@ -33,6 +33,14 @@ import { lookup } from 'node:dns/promises';
 export interface UrlValidationResult {
   valid: boolean;
   reason?: string;
+  /**
+   * True when an allowlist entry could legitimately permit this target, i.e.
+   * the block is a policy decision about a well-formed address rather than a
+   * malformed URL or a DNS failure. Only these blocks get remediation text —
+   * telling a caller to allowlist a typo'd hostname would be worse than
+   * saying nothing.
+   */
+  allowlistOverridable?: boolean;
 }
 
 /**
@@ -99,7 +107,7 @@ export async function validateUrl(url: string): Promise<UrlValidationResult> {
   // 4. Check hostname denylist (localhost, *.local, cloud metadata)
   const hostnameResult = checkHostname(hostname);
   if (hostnameResult) {
-    return hostnameResult;
+    return { ...hostnameResult, allowlistOverridable: true };
   }
 
   // 5. Resolve the target to concrete IP address(es).
@@ -132,7 +140,7 @@ export async function validateUrl(url: string): Promise<UrlValidationResult> {
       }
       const ipv6Result = checkIPv6(ip);
       if (ipv6Result) {
-        return ipv6Result;
+        return { ...ipv6Result, allowlistOverridable: true };
       }
     } else if (isIPv4(ip)) {
       // Fail closed: an address that looks like IPv4 but does not parse is blocked.
@@ -141,7 +149,7 @@ export async function validateUrl(url: string): Promise<UrlValidationResult> {
       }
       const ipv4Result = checkIPv4(ip);
       if (ipv4Result) {
-        return ipv4Result;
+        return { ...ipv4Result, allowlistOverridable: true };
       }
     } else {
       // A resolved address that is neither IPv4 nor IPv6 — fail closed.
@@ -450,6 +458,52 @@ function warnAllowlist(entry: string, reason: string): void {
  * Any entry containing '*' is rejected — an allowlist must be explicit.
  * Malformed entries are ignored with a warning.
  */
+/**
+ * Number of configured allowlist entries, across all entry kinds.
+ *
+ * Deliberately a count and not the entries themselves: the entries name
+ * internal hosts, and an error message is the wrong place to hand them to a
+ * caller that did not already know them.
+ */
+export function allowlistEntryCount(): number {
+  const a = getAllowlist();
+  return a.hosts.size + a.ipv4.size + a.ipv6.size + a.cidr4.length + a.cidr6.length;
+}
+
+/**
+ * Remediation sentence appended to an allowlist-overridable SSRF block.
+ *
+ * Two cases, because the correct next action differs. With nothing configured
+ * the caller cannot fix this from the tools at all and should stop and escalate;
+ * with entries present, reaching the service by an already-allowlisted route is
+ * the intended path, not a workaround.
+ *
+ * Phrased as operator configuration rather than as an instruction to the reader:
+ * an imperative here reads as a to-do, and a caller acting on it would be
+ * launching a process with a security control disabled.
+ */
+export function ssrfRemediation(): string {
+  const count = allowlistEntryCount();
+  const preamble =
+    'Targets that resolve to private, loopback, link-local or otherwise reserved ' +
+    'addresses are refused unless the server operator allowlists them via the ' +
+    'BRUNO_SSRF_ALLOWLIST environment variable (comma-separated hostnames, IPs or CIDRs).';
+
+  if (count === 0) {
+    return (
+      `${preamble} No entries are configured. This is an authorization decision, not a ` +
+      'transport failure — it will not resolve by retrying or by using a different client. ' +
+      'Report to the user that an allowlist entry is required.'
+    );
+  }
+
+  return (
+    `${preamble} ${count} ${count === 1 ? 'entry is' : 'entries are'} configured; none match ` +
+    'this target. If the service is also reachable at an allowlisted hostname or address, use ' +
+    'that. Otherwise report to the user that an entry must be added.'
+  );
+}
+
 export function parseAllowlist(raw: string | undefined): Allowlist {
   const allowlist: Allowlist = {
     hosts: new Set(),

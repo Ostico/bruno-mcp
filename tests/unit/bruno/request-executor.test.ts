@@ -21,6 +21,9 @@ const mockedFs = jest.mocked(fs);
 // Mock url-validator
 jest.mock('../../../src/bruno/url-validator', () => ({
   validateUrl: jest.fn().mockReturnValue({ valid: true }),
+  // Stubbed to a sentinel: the wording lives in ssrf-remediation.test.ts, what
+  // matters here is whether the executor appends it.
+  ssrfRemediation: jest.fn().mockReturnValue('REMEDIATION_SENTINEL'),
 }));
 import { validateUrl } from '../../../src/bruno/url-validator';
 const mockedValidateUrl = jest.mocked(validateUrl);
@@ -899,6 +902,44 @@ http:
       expect(result.results[0].error).toContain('link-local');
       // fetch should NOT have been called
       expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('appends remediation when the block is allowlist-overridable', async () => {
+      mockedValidateUrl.mockReturnValue({
+        valid: false,
+        reason: 'Blocked IP: link-local address (169.254.0.0/16)',
+        allowlistOverridable: true,
+      });
+
+      setupFsReaddir(['SSRF Request.yml']);
+      setupFsReadFile({ 'SSRF Request.yml': SSRF_REQUEST_YAML });
+      setupFsStat(['/test-collection']);
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.results[0].error).toBe(
+        'SSRF blocked: Blocked IP: link-local address (169.254.0.0/16). REMEDIATION_SENTINEL',
+      );
+    });
+
+    it('omits remediation for a block an allowlist cannot fix', async () => {
+      // A DNS failure or malformed URL is not a policy decision, so pointing at
+      // the allowlist would send the caller down the wrong path.
+      mockedValidateUrl.mockReturnValue({
+        valid: false,
+        reason: 'DNS resolution failed for hostname: nope.example.com',
+      });
+
+      setupFsReaddir(['SSRF Request.yml']);
+      setupFsReadFile({ 'SSRF Request.yml': SSRF_REQUEST_YAML });
+      setupFsStat(['/test-collection']);
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.results[0].error).toBe(
+        'SSRF blocked: DNS resolution failed for hostname: nope.example.com',
+      );
+      expect(result.results[0].error).not.toContain('REMEDIATION_SENTINEL');
     });
 
     it('should continue executing remaining requests after SSRF block', async () => {

@@ -509,11 +509,19 @@ Get detailed statistics about a collection.
   "requestsByMethod": { "GET": 5, "POST": 4, "PUT": 2, "DELETE": 1 },
   "folders": ["auth", "users", "products"],
   "environments": ["dev", "staging", "prod"],
+  "environmentDetails": [
+    { "name": "dev", "variables": ["baseUrl", "apiKey"] },
+    { "name": "prod", "variables": ["baseUrl", "apiKey", "region"] }
+  ],
   "requests": [
     { "name": "Get Users", "method": "GET", "seq": 1, "folder": "users", "hasTests": true }
   ]
 }
 ```
+
+`environmentDetails` lists the variable **names** each environment declares so you can see what is
+already defined before merging into it with `set_environment_variable`. Values are deliberately withheld
+— environments routinely hold tokens, and knowing a key exists is enough to merge safely.
 
 ### `run_collection`
 Execute all requests in a collection (or a single request) and run test scripts.
@@ -777,7 +785,11 @@ All outbound requests from `run_collection` are validated:
 - **Blocked hostnames**: `localhost`, `*.local`, and `metadata.google.internal`
 - **Redirect TOCTOU protection**: Each redirect hop is re-validated against SSRF rules (prevents DNS rebinding via redirects to internal IPs)
 
-> **Known residual risk — DNS rebinding:** validation resolves the hostname, but the subsequent HTTP request re-resolves DNS independently and could connect to a different address. Full mitigation (pinning the validated IP at connect time) is tracked as a follow-up.
+> **Known residual risk — DNS rebinding:** validation resolves the hostname, but the subsequent HTTP request re-resolves DNS independently and could connect to a different address. Full mitigation (pinning the validated IP at connect time) is tracked as a follow-up. Note that an allowlisted **hostname** is accepted *before* resolution, so it is the less-verified of the two allowlist forms — prefer IP or CIDR entries where you can.
+
+A refusal is reported per-request as an `SSRF blocked` error with `status: 0`, and — when an allowlist entry could legitimately permit the target — carries remediation naming `BRUNO_SSRF_ALLOWLIST` and whether any entries are currently configured. The configured entries themselves are never echoed. Blocks an allowlist cannot fix, such as a DNS failure or a malformed URL, get no remediation, since pointing at the allowlist would be misleading.
+
+This is a control on the MCP surface, not a sandbox: it constrains what `run_collection` will fetch. An agent that also has shell access can make arbitrary outbound requests regardless, so treat it as one layer, and restrict the toolset (or the network) if you need an actual boundary.
 
 #### Allowlisting internal targets — `BRUNO_SSRF_ALLOWLIST`
 To reach a known internal service on purpose (e.g. an internal API on `10.x`), set the `BRUNO_SSRF_ALLOWLIST` environment variable **when launching the server** (in your MCP client config `env` block). It is a comma-separated list of explicit exceptions:
