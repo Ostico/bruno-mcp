@@ -121,6 +121,51 @@ an unscoped `Read` can reach the MCP client config (`~/.claude.json`), where ser
 SSRF allowlist among it — sits in plaintext. So "the agent could not have learned the route from
 tooling" rested on self-report, not on structure.
 
+**Stronger: run the probe as a separate process.** A subagent shares the parent session's MCP
+connections, and that has two consequences worth spelling out.
+
+The first is a correctness trap. Tool schemas are captured when the client connects, so a session that
+started before you rebuilt the server keeps serving the **old** descriptions — and description wording is
+usually the exact thing under test. Round 4 caught this before spending an agent: the session predated
+the merge, so an in-session probe would have quietly graded the previous build and reported a pass on
+text that was not there. Nothing warns you; the tools simply answer with stale schemas.
+
+The second is that the parent's tool surface is the ceiling on what you can take away.
+
+Both problems disappear if the subject is a fresh process with its own server:
+
+```bash
+claude -p "$(cat task.md)" \
+  --mcp-config probe-mcp.json --strict-mcp-config \
+  --allowedTools "mcp__bruno-mcp" \
+  --disallowedTools "Bash,Read,Write,Edit,Glob,Grep,Task,WebFetch,WebSearch" \
+  --output-format stream-json --verbose > trace.jsonl
+```
+
+with `probe-mcp.json` naming the build under test explicitly:
+
+```json
+{"mcpServers": {"bruno-mcp": {"command": "node", "args": ["<repo>/dist/index.js"],
+  "env": {"BRUNO_WORKSPACE_PATH": "<tmp>/workspace.yml", "BRUNO_SSRF_ALLOWLIST": "<one entry>"}}}}
+```
+
+That buys three things the subagent version cannot:
+
+- **MCP-only.** With `Read` gone the probe cannot reach `~/.claude.json`, which closes the allowlist hole
+  named above. Rule 2 stops being a self-report too: point `BRUNO_WORKSPACE_PATH` at a `collections: []`
+  registry and the real collections are not merely off-limits, they are invisible.
+- **A known build.** The `args` path is the artifact you just built, so which code was graded is not in
+  question.
+- **A checkable trace.** `--output-format stream-json --verbose` records every call with its result, so
+  section F stops being the agent's account of itself and becomes something you read directly.
+
+The price is that removing `Read` also removes the probe's ability to inspect its own output files. It
+works blind through the tools — which is the population the MCP surface is written for anyway.
+
+One impurity survives: user-global instructions (`~/.claude/CLAUDE.md`, `SessionStart` hooks) still load
+in the fresh process. Round 4's probe answered in the operator's house style, which was harmless. A
+global file that discussed the server under test would not be. Check yours before relying on this.
+
 ### 4. Verify the report — do not trust it
 
 The report is evidence, not truth. Independently confirm every load-bearing claim:
@@ -252,11 +297,12 @@ memory. A partially-broken rule (e.g. `ls` on its own directory for discovery) d
 result — it is not a source of the answer. Judge by whether the deviation could have leaked the answer,
 not by strict letter.
 
-## Worked example: three rounds
+## Worked example: four rounds
 
-Round 1 was contaminated; rounds 2 and 3 were sterile, and round 3 was additionally isolated by toolset
-rather than by instruction. Rounds 1 and 2 ran against v1.2.3, round 3 against the post-#7 build. All
-three targeted the same real task — a `multipart/form-data`
+Round 1 was contaminated; rounds 2 through 4 were sterile, round 3 was additionally isolated by toolset
+rather than by instruction, and round 4 moved the subject into its own process. Rounds 1 and 2 ran
+against v1.2.3, round 3 against the post-#7 build, round 4 against the post-#8 build. All four targeted
+the same real task — a `multipart/form-data`
 document upload with a file part carrying an explicit `contentType`, asserted for HTTP 200 and a boolean
 `successful` field.
 
@@ -313,7 +359,46 @@ All three are addressed in the same change that added this section: the refusal 
 `list_collections` says what it actually lists. A fourth round is what decides whether those wordings
 work — that is the point of keeping this document.
 
-## The SSRF path — covered in round 3
+**Round 4 (sterile, MCP-only, separate process, rated 4/5).** First round against the post-#8 build, and
+the first run as its own `claude -p` process rather than a subagent — which is the only reason it graded
+the right code, since this session's server was still serving pre-#8 schemas. Zero-request collection,
+`dev` holding three decoys and no host variable, the raw-IP `curl` again presented as the artifact to
+reproduce, and the hostname demoted to one of three background wiki notes among decoys. **Pass, 3/3
+assertions green.** Four runs, three retries — but only one caused by this server.
+
+Two of the three round-3 wordings did their job:
+
+- **The SSRF remediation worked, and the trace proves where the recovery came from.** The block fired on
+  the raw IP and the message arrived whole, including `1 entry is configured; none match this target`,
+  without naming the entry. One `set_environment_variable` call fixed it, and the agent's report cited
+  the *error text* — round 3 recovered from the spec, which was the finding. This is the wording paying
+  for itself.
+- **`environmentDetails` removed a guessing step entirely.** One `get_collection_stats` call returned
+  `[{name: dev, variables: [apiKey, authToken, retryCount]}]`; the agent saw no host variable and went
+  straight to adding `baseUrl`. No probing, no invented variable name.
+- **`list_collections` was never called.** The spec carried an absolute path, so the agent went directly
+  to `get_collection_stats`. That rewording is still unexercised and is now the known untested path.
+
+The `test()` convention and direct `res.getBody()` field access were both correct on the first attempt,
+four and two rounds after those gaps were closed.
+
+Round 4's own finding came from the two retries this server *did* cause:
+
+**The failure messages were opaque.** The first hostname run hung for 95.9s and returned only
+`The operation was aborted due to timeout` — no target, no limit, no elapsed time, no indication whether
+a retry was worth anything. The agent read it as evidence the address was wrong, switched the URL to
+`https://`, got `fetch failed` in 109ms (the real cause, `ECONNREFUSED`, never surfaced), and then
+reverted to the identical `http://` config, which passed in 210ms. Two runs spent because neither message
+said what it knew. Both are now enriched: timeouts name the target, the elapsed time, `settings.timeout`
+and how to change it, and state plainly that a timeout is not evidence the URL is wrong; `fetch failed`
+digs the socket-level code out of the `cause` chain and explains it.
+
+One anomaly recorded rather than explained: the abort signal is armed at `settings.timeout` (30s by
+default) but 95.9s elapsed, and that measurement excludes DNS validation. The limit did not hold. The new
+message reports the configured limit and the real elapsed time side by side specifically so the next
+occurrence is visible instead of being rounded away.
+
+## The SSRF path — covered in rounds 3 and 4
 
 For two rounds this section read "known untested path". Both agents were given the hostname prominently,
 sensibly used it, and never touched the private IP, so nobody ever had to recover from
@@ -333,6 +418,14 @@ Nothing in any schema mentioned SSRF, allowlisting, or private-address filtering
 remedy — no config key, not even an acknowledgement that an allowlist mechanism exists. An agent given
 only the curl would have been stuck with no in-band way to discover a route existed.
 
+Round 4 re-ran the same path against the remediated message and settles what the wording is worth. The
+message cannot hand over a route — entries are deliberately never echoed, so an agent that does not
+already know an allowlisted name still cannot invent one. What changed is the shape of the dead end: the
+refusal now names the mechanism, says how many entries exist without disclosing them, and tells the agent
+to escalate to the operator rather than keep trying. Round 4's agent recovered in one move and credited
+the error text for it. The correct outcome for a genuinely unreachable target is still a clean stop —
+that branch of the message (`No entries are configured`) has not itself been exercised blind.
+
 Worth recording for future rounds: the guard matches allowlisted **hostnames before DNS resolution** and
 allowlisted **IPs/CIDRs after**, so the same host can be refused by address and permitted by name. That
 asymmetry is a config choice, not a property of the target.
@@ -349,11 +442,17 @@ Before:
 - [ ] Isolation rules 1–5 present verbatim; report sections A–F requested
 - [ ] Subject's toolset trimmed: no `Bash`, no `Write`/`Edit`, no memory tools, no `Agent`/`Task`
 - [ ] `Read` scoped to the sterile collection, or the gap noted in the write-up
-- [ ] Target service confirmed reachable before spending the agent
+- [ ] **The server under test is the build you think it is** — a session started before the rebuild
+      serves the old schemas; run the probe as its own process pinned to the freshly built `dist`
+- [ ] `BRUNO_WORKSPACE_PATH` pointed at a `collections: []` registry, so real collections are invisible
+- [ ] User-global `CLAUDE.md` and `SessionStart` hooks checked for anything about the server under test
+- [ ] Target service confirmed reachable before spending the agent, and the exact request verified by
+      hand so ground truth is known
 
 After:
 
 - [ ] Re-ran the request independently
+- [ ] Read the call trace, not just the report, and checked the two against each other
 - [ ] Inspected the produced file (dialect, script blocks, variable use)
 - [ ] Minimally reproduced every claimed bug
 - [ ] Read section F and judged whether any deviation could have leaked the answer

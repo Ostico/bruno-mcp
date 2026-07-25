@@ -8,6 +8,7 @@ import { wrapFetchResponse } from './response-wrapper.js';
 import { validateUrl, ssrfRemediation } from './url-validator.js';
 import { VariableStore } from './variable-store.js';
 import { buildDispatcher } from './fetch-dispatcher.js';
+import { describeNetworkError } from './network-error.js';
 import type {
   BruFile,
   YamlRequest,
@@ -449,7 +450,6 @@ async function executeSingleRequest(
     return result;
   } catch (error: unknown) {
     const durationMs = Date.now() - startTime;
-    const errorMessage = error instanceof Error ? error.message : String(error);
 
     return {
       name,
@@ -458,7 +458,7 @@ async function executeSingleRequest(
       status: 0,
       duration_ms: durationMs,
       tests: [],
-      error: errorMessage,
+      error: describeNetworkError(error, { url, timeoutMs: timeout, elapsedMs: durationMs }),
     };
   }
 }
