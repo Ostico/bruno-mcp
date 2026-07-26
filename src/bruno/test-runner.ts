@@ -119,6 +119,60 @@ var expect = (function() {
     }
   };
 
+  // --- property-style matchers: .true/.false/.null/.undefined/.ok/.empty ---
+  // These are read as properties rather than called as methods, so they have to
+  // assert from a getter. They used to be absent entirely, which meant
+  // expect(false).to.be.true evaluated to undefined, threw nothing, and was
+  // reported as a PASS.
+  function isEmptyVal(v) {
+    if (typeof v === 'string' || Array.isArray(v)) return v.length === 0;
+    if (v !== null && typeof v === 'object') return Object.keys(v).length === 0;
+    return false;
+  }
+  var propertyMatchers = {
+    'true': function(v) { return v === true; },
+    'false': function(v) { return v === false; },
+    'null': function(v) { return v === null; },
+    'undefined': function(v) { return v === undefined; },
+    'ok': function(v) { return !!v; },
+    'empty': isEmptyVal
+  };
+  function definePropertyMatchers(target, getVal, negated) {
+    Object.keys(propertyMatchers).forEach(function(name) {
+      Object.defineProperty(target, name, {
+        enumerable: true,
+        get: function() {
+          var v = getVal();
+          var holds = propertyMatchers[name](v);
+          if (negated ? holds : !holds) {
+            throw new AssertionError(
+              'expected ' + stringify(v) + (negated ? ' to not be ' : ' to be ') + name
+            );
+          }
+          return undefined;
+        }
+      });
+    });
+  }
+
+  // Any accessor we do not implement must fail loudly. Returning undefined for an
+  // unrecognised matcher is what turned an entire class of typos and unsupported
+  // matchers into silent passes, so guard the chain objects rather than only adding
+  // the specific names that were missing.
+  function guardChain(target, label) {
+    return new Proxy(target, {
+      get: function(obj, prop) {
+        if (typeof prop === 'symbol') return undefined;
+        if (prop === 'then' || prop === 'inspect' || prop === 'constructor') return undefined;
+        if (prop in obj) return obj[prop];
+        throw new AssertionError(
+          'unknown matcher "' + label + '.' + String(prop) + '" is not supported; ' +
+          'failing instead of passing silently'
+        );
+      }
+    });
+  }
+
   // Wire up the chain: expect(val).to.be.X / .to.have.X / .to.X
   // Each chain accessor creates a new context sharing _val
   Object.defineProperty(Assertion.prototype, 'to', {
@@ -137,7 +191,17 @@ var expect = (function() {
           be.an = function(t) { beProto.an.call(self, t); };
           be.below = function(n) { beProto.below.call(self, n); };
           be.above = function(n) { beProto.above.call(self, n); };
-          return be;
+          definePropertyMatchers(be, function() { return self._val; }, false);
+          return guardChain(be, 'to.be');
+        }
+      });
+      // .to.exist / .to.not.exist
+      Object.defineProperty(chain, 'exist', {
+        get: function() {
+          if (self._val === null || self._val === undefined) {
+            throw new AssertionError('expected ' + stringify(self._val) + ' to exist');
+          }
+          return undefined;
         }
       });
       // .to.have
@@ -149,7 +213,7 @@ var expect = (function() {
             else haveProto.property.call(self, n);
           };
           have.lengthOf = function(n) { haveProto.lengthOf.call(self, n); };
-          return have;
+          return guardChain(have, 'to.have');
         }
       });
       // .to.not — negating chain
@@ -206,13 +270,23 @@ var expect = (function() {
                 }
               };
               notBe.an = notBe.a;
-              return notBe;
+              definePropertyMatchers(notBe, function() { return self._val; }, true);
+              return guardChain(notBe, 'to.not.be');
             }
           });
-          return not;
+          // .to.not.exist
+          Object.defineProperty(not, 'exist', {
+            get: function() {
+              if (self._val !== null && self._val !== undefined) {
+                throw new AssertionError('expected ' + stringify(self._val) + ' to not exist');
+              }
+              return undefined;
+            }
+          });
+          return guardChain(not, 'to.not');
         }
       });
-      return chain;
+      return guardChain(chain, 'to');
     }
   });
 

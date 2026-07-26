@@ -124,7 +124,15 @@ jobs:
         with:
           coverage-file: clover.xml
           coverage-threshold: '95'
-          extra-exclude-patterns: '.github/**, dist/**, tests/**, coverage/**, **/*.d.ts, src/index.ts'
+          # NOTE: do not exclude 'tests/**' here. The action drops excluded paths
+          # *before* it splits the diff into source vs test files, so excluding
+          # tests/** hides the PR's own new tests from the gate: the test files
+          # land in neither bucket, changed-test relevance evaluates to NO, and
+          # any PR whose changed lines aren't measurable by diff-cover then fails
+          # with "no relevant tests in PR". Tests are already kept out of the
+          # coverage-target set by test-patterns below, and non-test files under
+          # tests/ (yml fixtures) are dropped because they don't match src_pattern.
+          extra-exclude-patterns: '.github/**, dist/**, coverage/**, **/*.d.ts, src/index.ts'
           ai-enabled: 'true'
           ai-model: 'openai/gpt-4.1-mini'
           test-patterns: |
