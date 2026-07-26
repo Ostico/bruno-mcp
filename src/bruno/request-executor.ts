@@ -543,12 +543,39 @@ export class RequestExecutor {
         }),
       );
 
-      // Merge results in folder order
+      // Merge results in folder order.
+      //
+      // A folder task can genuinely reject: executeSingleRequest only wraps the
+      // fetch in a try/catch, so anything that throws before it — buildDispatcher
+      // on a malformed `settings.proxy`, for example — escapes as a rejection.
+      // Dropping those would shrink `total` to the surviving folders and report
+      // the run as fully passed, which is the worst possible failure mode for a
+      // test runner. Serial execution lets such an error propagate out of
+      // executeCollection; parallel must not be quieter than serial.
       results = [];
+      const folderFailures: unknown[] = [];
       for (const outcome of folderResults) {
         if (outcome.status === 'fulfilled') {
           results.push(...outcome.value);
+        } else {
+          folderFailures.push(outcome.reason);
         }
+      }
+
+      if (folderFailures.length === 1) {
+        // Rethrow the original so the type, stack and message match serial mode.
+        throw folderFailures[0];
+      }
+      if (folderFailures.length > 1) {
+        // Callers surface only `.message` (see the run_collection handler), so
+        // inline every reason rather than burying them in `.errors`.
+        const detail = folderFailures
+          .map(reason => (reason instanceof Error ? reason.message : String(reason)))
+          .join('; ');
+        throw new AggregateError(
+          folderFailures,
+          `${folderFailures.length} of ${sortedFolders.length} parallel folders failed: ${detail}`,
+        );
       }
     } else {
       // Serial execution (default)
