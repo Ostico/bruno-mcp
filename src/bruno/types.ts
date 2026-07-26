@@ -7,7 +7,19 @@ export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 
 
 export type AuthType = 'none' | 'bearer' | 'basic' | 'oauth2' | 'api-key' | 'digest';
 
-export type BodyType = 'none' | 'json' | 'text' | 'xml' | 'form-data' | 'form-urlencoded' | 'binary';
+// 'multipart-form' is the block name used by the .bru wire format (see the
+// `body:multipart-form {` block emitted by the generator); 'form-data' is the
+// equivalent name used on the MCP-facing side. Both reach BodyType at runtime,
+// so both belong in the union.
+export type BodyType =
+  | 'none'
+  | 'json'
+  | 'text'
+  | 'xml'
+  | 'form-data'
+  | 'multipart-form'
+  | 'form-urlencoded'
+  | 'binary';
 
 // Bruno Collection Configuration (bruno.json)
 export interface BrunoCollection {
