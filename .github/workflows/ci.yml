@@ -29,6 +29,11 @@ jobs:
     - name: Build project
       run: npm run build
 
+    # Blocking: `npm run build` is tsup/esbuild, which strips types without
+    # checking them, so nothing else in this workflow would catch a type error.
+    - name: Typecheck
+      run: npm run typecheck
+
     # Advisory only: the repo has no ESLint config yet, so this cannot gate.
     - name: Run linting
       run: npm run lint
