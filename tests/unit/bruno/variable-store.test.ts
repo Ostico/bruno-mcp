@@ -124,6 +124,54 @@ describe('VariableStore', () => {
     });
   });
 
+  describe('unset values (undefined / null)', () => {
+    // bru.setVar(name, value) can be called with an undefined or null value
+    // (e.g. a script does `bru.setVar('token', res.body.token)` when the field
+    // is missing). Runtime callers cast through `as string | number | boolean`,
+    // so these reach set() at runtime. They must NOT be coerced to the literal
+    // strings "undefined"/"null" — that would ship a bogus 5/4-letter token on
+    // the wire via {{token}}. An unset value leaves the variable unresolved.
+    const setUnknown = (name: string, value: unknown): void => {
+      store.set(name, value as string | number | boolean);
+    };
+
+    it('should not store the literal string "undefined" for an undefined value', () => {
+      setUnknown('token', undefined);
+      expect(store.get('token')).toBeUndefined();
+    });
+
+    it('should not store the literal string "null" for a null value', () => {
+      setUnknown('token', null);
+      expect(store.get('token')).toBeUndefined();
+    });
+
+    it('should not expose an undefined value through getAll', () => {
+      setUnknown('token', undefined);
+      expect(store.getAll().has('token')).toBe(false);
+      expect(store.getAll().size).toBe(0);
+    });
+
+    it('should not leak "undefined" into a merge result', () => {
+      setUnknown('token', undefined);
+      const merged = store.merge(new Map([['base_url', 'https://api.example.com']]));
+      expect(merged.has('token')).toBe(false);
+      expect(merged.get('token')).toBeUndefined();
+      expect(merged.size).toBe(1);
+    });
+
+    it('should unset an existing variable when set to undefined', () => {
+      store.set('token', 'real-token');
+      setUnknown('token', undefined);
+      expect(store.get('token')).toBeUndefined();
+    });
+
+    it('should unset an existing variable when set to null', () => {
+      store.set('token', 'real-token');
+      setUnknown('token', null);
+      expect(store.get('token')).toBeUndefined();
+    });
+  });
+
   describe('clear', () => {
     it('should remove all stored variables', () => {
       store.set('a', 'alpha');
