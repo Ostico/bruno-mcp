@@ -6,9 +6,16 @@
  */
 
 import { createBrunoMcpServer } from './server.js';
+import { installUnhandledRejectionGuard } from './process-guards.js';
 
 async function main() {
   try {
+    // Installed before the server starts, and never removed: a user-supplied
+    // .bru script can float a promise rejection (a bare Promise.reject is
+    // enough), and Node's default policy would terminate the server. See
+    // process-guards.ts for why this cannot live inside the script sandbox.
+    installUnhandledRejectionGuard();
+
     // Create and start the Bruno MCP server
     const server = createBrunoMcpServer();
     await server.start();
