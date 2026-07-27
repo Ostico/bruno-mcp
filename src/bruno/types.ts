@@ -475,6 +475,10 @@ export interface EnvVariable {
   name: string;
   value?: string | number | boolean;
   disabled?: boolean;
+  /** Whether the .bru `secret` flag is set on this variable. Preserved across
+   * parse/generate/merge so an edit does not downgrade a secret var to
+   * plaintext (finding D7). */
+  secret?: boolean;
 }
 
 export interface EnvFile {

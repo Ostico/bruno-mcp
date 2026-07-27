@@ -293,6 +293,7 @@ export function parseBruEnvironmentRaw(content: string): EnvVariable[] {
       if (v.name == null || String(v.name) === '') continue;
       const item: EnvVariable = { name: v.name, value: v.value ?? '' };
       if (v.enabled === false) item.disabled = true;
+      if ((v as { secret?: boolean }).secret === true) item.secret = true;
       variables.push(item);
     }
   }
@@ -301,16 +302,16 @@ export function parseBruEnvironmentRaw(content: string): EnvVariable[] {
 
 /**
  * Generate a .bru environment from a full variable list, preserving the
- * enabled/disabled state of each variable (disabled === true → enabled: false).
- *
- * Note: `secret` is not carried by EnvVariable and is written as false.
+ * enabled/disabled state of each variable (disabled === true → enabled: false)
+ * and its `secret` flag (finding D7 — writing it unconditionally false
+ * downgraded every secret var to plaintext on any env edit).
  */
 export function generateBruEnvironmentFull(vars: EnvVariable[]): string {
   const variables = vars.map((v) => ({
     name: v.name,
     value: String(v.value ?? ''),
     enabled: v.disabled !== true,
-    secret: false,
+    secret: v.secret === true,
     type: 'text',
   }));
 
