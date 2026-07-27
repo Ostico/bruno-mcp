@@ -11,7 +11,7 @@
 import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
-import { runInWorker } from '../../src/bruno/sandbox-host';
+import { runInWorker, createForkingScriptRunner } from '../../src/bruno/sandbox-host';
 import type { SandboxJob } from '../../src/bruno/sandbox-worker';
 
 const repoRoot = path.resolve(__dirname, '../..');
@@ -78,4 +78,18 @@ describe('sandbox fork (real child)', () => {
     // Resolved by the deadline, not left hanging on the spinning child.
     expect(elapsed).toBeLessThan(3000);
   }, 10_000);
+
+  it('runs a script through the production forking runner against the real worker', async () => {
+    // The same runner server.ts injects, pointed at the built worker — proves
+    // the production path executes scripts in a forked child end to end.
+    const runner = createForkingScriptRunner(workerPath);
+
+    const out = await runner.runScript(
+      'test("passes", function () { expect(res.getStatus()).to.equal(201); });',
+      { status: 201, statusText: 'Created', headers: {}, body: {}, responseTime: 3 },
+      { timeout: 3000 },
+    );
+
+    expect(out.results).toEqual([{ description: 'passes', status: 'pass' }]);
+  });
 });

@@ -18,6 +18,7 @@ import { createWorkspaceResolver } from './bruno/workspace.js';
 import { listCollectionsHandler } from './bruno/list-collections-handler.js';
 import { getCollectionStats } from './bruno/collection-stats.js';
 import { RequestExecutor } from './bruno/request-executor.js';
+import { forkingScriptRunner } from './bruno/sandbox-host.js';
 import { validatePath } from './bruno/path-validator.js';
 import {
   CreateCollectionInput,
@@ -1502,6 +1503,9 @@ export class BrunoMcpServer {
               parallel: args.parallel,
               includeResponseBody: args.includeResponseBody,
               maxResponseBodyBytes: args.maxResponseBodyBytes,
+              // Production runs untrusted scripts behind the process boundary.
+              // This is the single opt-in; the executor defaults to in-process.
+              scriptRunner: forkingScriptRunner,
             },
           );
 

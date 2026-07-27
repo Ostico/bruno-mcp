@@ -379,6 +379,34 @@ describe('RequestExecutor', () => {
       });
     });
 
+    it('routes scripts to an injected scriptRunner instead of the in-process default', async () => {
+      setupFsReaddir(['Get Status.yml']);
+      setupFsReadFile({
+        'Get Status.yml': REQUEST_WITH_TESTS_YAML,
+        'dev.yml': ENV_YAML,
+      });
+      setupFsStat(['/test-collection', '/test-collection/environments']);
+      mockFetch.mockResolvedValueOnce(createMockResponse({ status: 'healthy' }));
+
+      const injected = {
+        runPreRequestScript: jest.fn().mockResolvedValue({ variables: {}, mutations: {} }),
+        runScript: jest.fn().mockResolvedValue({
+          results: [{ description: 'from injected runner', status: 'pass' as const }],
+          variables: {},
+        }),
+      };
+
+      const result = await RequestExecutor.executeCollection('/test-collection', {
+        environment: 'dev',
+        scriptRunner: injected,
+      });
+
+      expect(injected.runScript).toHaveBeenCalledTimes(1);
+      expect(result.results[0].tests).toEqual([
+        { description: 'from injected runner', status: 'pass' },
+      ]);
+    });
+
     it('should warn when assertions ran outside a test() block', async () => {
       setupFsReaddir(['Bare Assert.yml']);
       setupFsReadFile({
