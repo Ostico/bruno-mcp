@@ -6,11 +6,32 @@
  */
 
 import { createBrunoMcpServer } from './server.js';
+import {
+  installUnhandledRejectionGuard,
+  installUncaughtExceptionGuard,
+} from './process-guards.js';
 
 async function main() {
   try {
+    // Installed before the server starts, and never removed: a user-supplied
+    // .bru script can float a promise rejection (a bare Promise.reject is
+    // enough), and Node's default policy would terminate the server. See
+    // process-guards.ts for why this cannot live inside the script sandbox.
+    installUnhandledRejectionGuard();
+
     // Create and start the Bruno MCP server
     const server = createBrunoMcpServer();
+
+    // Unlike a rejection, an uncaught exception is not survivable: it can leave
+    // the process mid-mutation, so this reports and exits rather than
+    // continuing. onFatal closes the transport first so the client sees a clean
+    // disconnect. Installed after the server exists and before it starts.
+    installUncaughtExceptionGuard({
+      onFatal: () => {
+        void server.stop();
+      },
+    });
+
     await server.start();
     
     // Keep the process running
