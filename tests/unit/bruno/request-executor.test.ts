@@ -1761,6 +1761,168 @@ settings:
       // 1 original + 2 redirect follows (loop exits at the cap)
       expect(mockFetch).toHaveBeenCalledTimes(3);
     });
+
+    // X1: redirect count off-by-one. maxRedirects means "hops we may follow",
+    // not "hops taken so far". A final non-3xx response within the cap must
+    // succeed; the error only fires when a redirect still needs following past
+    // the cap.
+    it('X1: a non-3xx response with maxRedirects:0 succeeds (nothing to follow)', async () => {
+      const ZERO_MAX_REQUEST = `
+info:
+  name: Zero Max
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/data"
+settings:
+  maxRedirects: 0
+`;
+      setupFsReaddir(['Zero Max.yml']);
+      setupFsReadFile({ 'Zero Max.yml': ZERO_MAX_REQUEST });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }, 200));
+      mockedValidateUrl.mockReturnValue({ valid: true });
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.results[0].status).toBe(200);
+      expect(result.results[0].error).toBeUndefined();
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('X1: a chain ending in a non-3xx exactly at maxRedirects succeeds (boundary)', async () => {
+      const BOUNDARY_REQUEST = `
+info:
+  name: Boundary
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/a"
+settings:
+  maxRedirects: 2
+`;
+      setupFsReaddir(['Boundary.yml']);
+      setupFsReadFile({ 'Boundary.yml': BOUNDARY_REQUEST });
+      setupFsStat(['/test-collection']);
+
+      const hop1 = {
+        status: 302,
+        statusText: 'Found',
+        headers: new Headers({ location: 'https://api.example.com/b' }),
+        ok: false,
+        text: jest.fn().mockResolvedValue(''),
+      } as unknown as Response;
+      const hop2 = {
+        status: 302,
+        statusText: 'Found',
+        headers: new Headers({ location: 'https://api.example.com/c' }),
+        ok: false,
+        text: jest.fn().mockResolvedValue(''),
+      } as unknown as Response;
+
+      // 2 redirects (== maxRedirects) then a final 200
+      mockFetch
+        .mockResolvedValueOnce(hop1)
+        .mockResolvedValueOnce(hop2)
+        .mockResolvedValueOnce(createMockResponse({ ok: true }, 200));
+      mockedValidateUrl.mockReturnValue({ valid: true });
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.results[0].status).toBe(200);
+      expect(result.results[0].error).toBeUndefined();
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+    });
+
+    // X2: RFC 9110 method rewrite. Following a 301/302/303 with a non-GET/HEAD
+    // method switches to GET and drops the body on the redirected hop.
+    it('X2: a POST following a 302 is re-issued as GET with no body', async () => {
+      const POST_REDIRECT_REQUEST = `
+info:
+  name: Post Redirect
+  type: http
+  seq: 1
+http:
+  method: POST
+  url: "https://api.example.com/submit"
+  headers:
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: '{"name": "John"}'
+`;
+      setupFsReaddir(['Post Redirect.yml']);
+      setupFsReadFile({ 'Post Redirect.yml': POST_REDIRECT_REQUEST });
+      setupFsStat(['/test-collection']);
+
+      const redirectResponse = {
+        status: 302,
+        statusText: 'Found',
+        headers: new Headers({ location: 'https://api.example.com/done' }),
+        ok: false,
+        text: jest.fn().mockResolvedValue(''),
+      } as unknown as Response;
+
+      mockFetch
+        .mockResolvedValueOnce(redirectResponse)
+        .mockResolvedValueOnce(createMockResponse({ ok: true }, 200));
+      mockedValidateUrl.mockReturnValue({ valid: true });
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.results[0].status).toBe(200);
+      // Original hop: POST with a body
+      expect(mockFetch.mock.calls[0][1].method).toBe('POST');
+      expect(mockFetch.mock.calls[0][1].body).toBeDefined();
+      // Redirected hop: rewritten to GET, body dropped
+      expect(mockFetch.mock.calls[1][1].method).toBe('GET');
+      expect(mockFetch.mock.calls[1][1].body).toBeUndefined();
+    });
+
+    it('X2: a POST following a 307 preserves method and body', async () => {
+      const POST_307_REQUEST = `
+info:
+  name: Post 307
+  type: http
+  seq: 1
+http:
+  method: POST
+  url: "https://api.example.com/submit"
+  headers:
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: '{"name": "John"}'
+`;
+      setupFsReaddir(['Post 307.yml']);
+      setupFsReadFile({ 'Post 307.yml': POST_307_REQUEST });
+      setupFsStat(['/test-collection']);
+
+      const redirectResponse = {
+        status: 307,
+        statusText: 'Temporary Redirect',
+        headers: new Headers({ location: 'https://api.example.com/done' }),
+        ok: false,
+        text: jest.fn().mockResolvedValue(''),
+      } as unknown as Response;
+
+      mockFetch
+        .mockResolvedValueOnce(redirectResponse)
+        .mockResolvedValueOnce(createMockResponse({ ok: true }, 200));
+      mockedValidateUrl.mockReturnValue({ valid: true });
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.results[0].status).toBe(200);
+      // 307 preserves method and body on the redirected hop
+      expect(mockFetch.mock.calls[1][1].method).toBe('POST');
+      expect(mockFetch.mock.calls[1][1].body).toBeDefined();
+    });
   });
 
   // =========================================================================

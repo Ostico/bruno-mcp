@@ -735,6 +735,19 @@ async function executeSingleRequest(
         };
       }
 
+      // X2 / RFC 9110: following a 303 (always) and a 301/302 (near-universal
+      // browser and fetch behaviour) with a method other than GET/HEAD must
+      // switch the method to GET and drop the request body on the redirected
+      // hop. 307/308 preserve method and body, so they are left untouched.
+      const st = response.status;
+      if (st === 301 || st === 302 || st === 303) {
+        const m = String(currentOpts.method ?? 'GET').toUpperCase();
+        if (m !== 'GET' && m !== 'HEAD') {
+          currentOpts = { ...currentOpts, method: 'GET' };
+          delete (currentOpts as { body?: unknown }).body;
+        }
+      }
+
       // S06/S07: strip credential headers when the hop crosses origin, so a
       // redirect to another host cannot harvest the caller's Authorization,
       // api-key, or cookies. Once stripped they stay stripped for later hops.
@@ -753,7 +766,16 @@ async function executeSingleRequest(
       redirectCount++;
     }
 
-    if (followRedirects && redirectCount >= maxRedirects) {
+    // X1: the cap is only exceeded when the loop stopped at the limit while the
+    // response is STILL a redirect that would need following. A final non-3xx
+    // response reached within the cap (including maxRedirects: 0 with no
+    // redirect at all) is a success, not a "too many redirects" error.
+    if (
+      followRedirects &&
+      redirectCount >= maxRedirects &&
+      response.status >= 300 &&
+      response.status < 400
+    ) {
       return {
         name,
         method,
