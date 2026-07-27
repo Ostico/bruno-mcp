@@ -75,6 +75,46 @@ describe('RequestBuilder', () => {
       expect(result.path).toContain('/users/');
     });
 
+    it('should place request in a legitimate nested folder', async () => {
+      detectFormat.mockResolvedValue({ format: 'yaml' });
+      const result = await builder.createRequest({ ...baseInput, folder: 'v1/users' });
+      expect(result.success).toBe(true);
+      expect(result.path).toContain('/v1/users/');
+    });
+
+    it('should reject a folder that traverses outside the collection', async () => {
+      detectFormat.mockResolvedValue({ format: 'yaml' });
+      const result = await builder.createRequest({
+        ...baseInput,
+        folder: '../../../tmp/evil',
+      });
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/folder/i);
+      expect(fs.writeFile).not.toHaveBeenCalled();
+    });
+
+    it('should reject an absolute-path folder', async () => {
+      detectFormat.mockResolvedValue({ format: 'bru' });
+      const result = await builder.createRequest({
+        ...baseInput,
+        folder: '/etc/cron.d',
+      });
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/absolute/i);
+      expect(fs.writeFile).not.toHaveBeenCalled();
+    });
+
+    it('should reject a folder containing a null byte', async () => {
+      detectFormat.mockResolvedValue({ format: 'yaml' });
+      const result = await builder.createRequest({
+        ...baseInput,
+        folder: 'evil\u0000segment',
+      });
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/folder/i);
+      expect(fs.writeFile).not.toHaveBeenCalled();
+    });
+
     it('should handle body and headers', async () => {
       detectFormat.mockResolvedValue({ format: 'bru' });
       const result = await builder.createRequest({
