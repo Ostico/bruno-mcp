@@ -115,6 +115,10 @@ function bruFileToYamlRequest(bru: BruFile): YamlRequest {
           type: part.type ?? 'text',
         };
         if (part.contentType) item.contentType = part.contentType;
+        // Carry the enabled flag through so a part disabled in the .bru file is
+        // not silently re-enabled by the converter (finding X13). Only an
+        // explicit `false` is recorded; `undefined`/`true` stay enabled.
+        if (part.enabled === false) item.enabled = false;
         return item;
       }),
     };
@@ -420,6 +424,10 @@ export async function buildFetchOptions(
     const parts = body!.data as MultipartFormPart[];
 
     for (const part of parts) {
+      // A part explicitly disabled in the collection must not be sent (finding
+      // X13). Skip before tracking/substituting so a disabled part's
+      // placeholders never reach the wire nor raise a warning.
+      if (part.enabled === false) continue;
       if (part.contentType) trackUnresolved(part.contentType);
       const contentType = part.contentType
         ? substitute(part.contentType, vars)
@@ -608,8 +616,11 @@ async function executeSingleRequest(
   const built = await buildFetchOptions(yaml, effectiveVars, collectionRoot);
   let url = built.url;
   let options = built.options;
-  const authWarnings = built.warnings;
-  const authHeaderNames = built.authHeaderNames ?? [];
+  // Reassignable: a pre-request script that sets a variable triggers a
+  // re-substitution below (finding X12), which re-derives auth warnings and the
+  // applied auth-header names from the merged vars so they stay consistent.
+  let authWarnings = built.warnings;
+  let authHeaderNames = built.authHeaderNames ?? [];
   const name = yaml.info.name;
   const method = yaml.http.method;
 
@@ -627,7 +638,34 @@ async function executeSingleRequest(
       timeout: yaml.settings?.timeout ?? 5000,
     });
 
-    // Apply mutations
+    // Feed variables the script set into the store FIRST, so they are visible
+    // both to later requests and — via the re-substitution below — to THIS
+    // request's own {{placeholders}} (finding X12).
+    if (variableStore) {
+      for (const [k, v] of Object.entries(preResult.variables)) {
+        variableStore.set(k, v as string | number | boolean);
+      }
+    }
+
+    // X12: substitution in buildFetchOptions ran BEFORE this script, so a
+    // `bru.setVar('x', …)` here could not fill this request's own `{{x}}`. When
+    // the script set any variable, re-substitute from the ORIGINAL templates
+    // with the now-merged vars. This is still a SINGLE pass over the original
+    // template (never a second expansion over already-substituted output), so
+    // the template-injection mitigation is unchanged. Re-running the same build
+    // logic re-derives auth application, the redaction input, unresolved-var
+    // warnings, and the cross-origin strip header names consistently from the
+    // new vars, rather than leaving them computed from the stale set.
+    if (variableStore && Object.keys(preResult.variables).length > 0) {
+      const rebuilt = await buildFetchOptions(yaml, variableStore.merge(vars), collectionRoot);
+      url = rebuilt.url;
+      options = rebuilt.options;
+      authWarnings = rebuilt.warnings;
+      authHeaderNames = rebuilt.authHeaderNames ?? [];
+    }
+
+    // Apply the script's req.set* mutations LAST so their precedence over
+    // template/variable values is unchanged by the re-substitution above.
     if (preResult.mutations.url) {
       url = preResult.mutations.url;
     }
@@ -640,13 +678,6 @@ async function executeSingleRequest(
         : JSON.stringify(preResult.mutations.body);
     }
 
-    // Feed variables into store
-    if (variableStore) {
-      for (const [k, v] of Object.entries(preResult.variables)) {
-        variableStore.set(k, v as string | number | boolean);
-      }
-    }
-
     if (preResult.error) {
       preScriptError = preResult.error;
     }
@@ -657,6 +688,22 @@ async function executeSingleRequest(
   // redacted form used everywhere a URL crosses back to the caller — results
   // and error messages (finding S22).
   const shownUrl = redactUrl(url);
+
+  // A failing pre-request script must HALT the request (finding X15): the HTTP
+  // call must not fire. Return a failed result carrying the script error before
+  // the SSRF check and fetch, using the already-redacted URL so no substituted
+  // secret crosses back to the caller.
+  if (preScriptError) {
+    return {
+      name,
+      method,
+      url: shownUrl,
+      status: 0,
+      duration_ms: 0,
+      tests: [],
+      error: preScriptError,
+    };
+  }
 
   // SSRF protection: validate URL before making the request
   const urlCheck = await validateUrl(url);

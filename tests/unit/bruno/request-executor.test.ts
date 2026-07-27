@@ -2705,7 +2705,7 @@ runtime:
       expect(fetchOptions.body).toBe(JSON.stringify({ hello: 'world', n: 42 }));
     });
 
-    it('records a pre-request script error on the result while still executing the request', async () => {
+    it('records a pre-request script error on the result and halts the request before fetch (X15)', async () => {
       const REQUEST_WITH_FAILING_PRE = `
 info:
   name: Failing Pre Script
@@ -2729,9 +2729,10 @@ runtime:
       const result = await RequestExecutor.executeCollection('/test-collection');
 
       expect(result.results[0].error).toContain('pre boom');
-      // The HTTP request still ran despite the pre-request error
-      expect(result.results[0].status).toBe(200);
-      expect(mockFetch).toHaveBeenCalledTimes(1);
+      // A failing pre-request script halts the request: the HTTP call must not
+      // fire and the result is a failure, not a 200 (finding X15).
+      expect(result.results[0].status).toBe(0);
+      expect(mockFetch).not.toHaveBeenCalled();
     });
   });
 
