@@ -98,6 +98,79 @@ describe('TestRunner', () => {
       expect(results[0].error!.toLowerCase()).not.toContain('timed out');
     });
 
+    it('preserves results recorded before a top-level throw (A4)', async () => {
+      // A script that records real results and then throws at the top level
+      // must not have those results discarded. Before this fix the outer catch
+      // replaced the whole run with a single synthetic "Script error", so two
+      // passing tests followed by a throw reported as if nothing had passed.
+      // The report has to show the tests that genuinely ran, with the script
+      // error alongside them.
+      const script = `
+        test("first passes", function() { expect(1).to.equal(1); });
+        test("second passes", function() { expect(2).to.equal(2); });
+        throw new Error("boom after the tests ran");
+      `;
+      const mockResponse = { status: 200, statusText: 'OK', headers: {}, body: null, responseTime: 10 };
+      const { results } = await TestRunner.runScript(script, mockResponse);
+
+      expect(results).toHaveLength(3);
+      const first = results.find(r => r.description === 'first passes');
+      const second = results.find(r => r.description === 'second passes');
+      const scriptError = results.find(r => r.description === 'Script error');
+      expect(first?.status).toBe('pass');
+      expect(second?.status).toBe('pass');
+      expect(scriptError?.status).toBe('fail');
+      expect(scriptError?.error).toContain('boom after the tests ran');
+    });
+
+    it('preserves a genuine failure recorded before a top-level throw (A4)', async () => {
+      // A real assertion failure recorded before the throw must survive as its
+      // own failure rather than being collapsed into a generic script error —
+      // otherwise the specific reason a test failed is lost.
+      const script = `
+        test("real failure", function() { expect(1).to.equal(2); });
+        throw new Error("boom");
+      `;
+      const mockResponse = { status: 200, statusText: 'OK', headers: {}, body: null, responseTime: 10 };
+      const { results } = await TestRunner.runScript(script, mockResponse);
+
+      expect(results).toHaveLength(2);
+      const realFailure = results.find(r => r.description === 'real failure');
+      expect(realFailure?.status).toBe('fail');
+      expect(realFailure?.error).toContain('expected');
+      expect(results.some(r => r.description === 'Script error')).toBe(true);
+    });
+
+    it('recovers a pending async result before a throw as a failure (A4)', async () => {
+      // An async test() that registered a pending slot and then a top-level
+      // throw before it could settle must be recovered and mapped to a failure
+      // (never-settled), the same as on the success path.
+      const script = `
+        test("never settles", async function () { await new Promise(function () {}); });
+        throw new Error("boom");
+      `;
+      const mockResponse = { status: 200, statusText: 'OK', headers: {}, body: null, responseTime: 10 };
+      const { results } = await TestRunner.runScript(script, mockResponse);
+
+      const pending = results.find(r => r.description === 'never settles');
+      expect(pending?.status).toBe('fail');
+      expect(pending?.error).toContain('never settled');
+      expect(results.some(r => r.description === 'Script error')).toBe(true);
+    });
+
+    it('collapses to a single failure when a throw follows a nullified accumulator (A4)', async () => {
+      // Recovery is defensive: a script that nullifies the results accumulator
+      // and then throws leaves nothing to recover, so the run reports just the
+      // single script error rather than crashing while trying to read it.
+      const script = `__results = null; throw new Error("boom");`;
+      const mockResponse = { status: 200, statusText: 'OK', headers: {}, body: null, responseTime: 10 };
+      const { results } = await TestRunner.runScript(script, mockResponse);
+
+      expect(results).toHaveLength(1);
+      expect(results[0].description).toBe('Script error');
+      expect(results[0].error).toContain('boom');
+    });
+
     it('should provide res.getBody() in VM context', async () => {
       const script = `test("body check", function() { var body = res.getBody(); expect(body.items).to.be.an("array"); expect(body.items).to.have.lengthOf(2); });`;
       const mockResponse = { status: 200, statusText: 'OK', headers: {}, body: { items: [1, 2] }, responseTime: 10 };
