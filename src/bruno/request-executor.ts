@@ -1,5 +1,5 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
-import { join, basename, relative, dirname } from 'node:path';
+import { join, basename, relative, dirname, resolve, isAbsolute } from 'node:path';
 import { parseYamlRequest } from './yaml-parser.js';
 import { parseBruRequest } from './bru-parser.js';
 import { loadEnvironment, substitute, findUnresolvedPlaceholders } from './env-loader.js';
@@ -213,9 +213,37 @@ function isMultipartBody(body: YamlRequest['http']['body']): boolean {
   );
 }
 
+/**
+ * Resolve a multipart file-part path and confine it to the collection root.
+ *
+ * The path comes from the (untrusted) collection, so without confinement a
+ * collection could name `/etc/passwd`, `~/.ssh/id_rsa`, an env file, etc. and
+ * have its contents POSTed to any host — arbitrary file read + exfiltration
+ * (finding S05). A relative path is resolved against the collection root; an
+ * absolute or `..` path that escapes the root is refused, as is any file part
+ * when no collection root is known (there is no trusted base to confine to).
+ */
+function confineToCollection(filePath: string, collectionRoot: string | undefined): string {
+  if (!collectionRoot) {
+    throw new Error(
+      `Refusing to read multipart file part "${basename(filePath)}": no collection root to confine it to`,
+    );
+  }
+  const root = resolve(collectionRoot);
+  const resolved = resolve(root, filePath);
+  const rel = relative(root, resolved);
+  if (rel.startsWith('..') || isAbsolute(rel)) {
+    throw new Error(
+      `Refusing to read multipart file part outside the collection root: "${filePath}"`,
+    );
+  }
+  return resolved;
+}
+
 export async function buildFetchOptions(
   yaml: YamlRequest,
   vars: Map<string, string>,
+  collectionRoot?: string,
 ): Promise<{ url: string; options: RequestInit; warnings?: string[] }> {
   // Finding X8: surface any {{var}} that substitution could not resolve so an
   // unsubstituted placeholder can no longer reach the wire silently. The
@@ -285,11 +313,15 @@ export async function buildFetchOptions(
         for (const rawPath of paths) {
           trackUnresolved(String(rawPath));
           const filePath = substitute(String(rawPath), vars);
-          const buf = await readFile(filePath);
+          // A file-part path is collection-controlled; confine the read to the
+          // collection root so a collection cannot exfiltrate arbitrary host
+          // files (finding S05).
+          const resolvedPath = confineToCollection(filePath, collectionRoot);
+          const buf = await readFile(resolvedPath);
           form.append(
             part.name,
             new Blob([buf], { type: contentType || 'application/octet-stream' }),
-            basename(filePath),
+            basename(resolvedPath),
           );
         }
       } else {
@@ -445,12 +477,13 @@ async function executeSingleRequest(
   scriptRunner: ScriptRunner,
   variableStore?: VariableStore,
   bodyCapture?: BodyCaptureOptions,
+  collectionRoot?: string,
 ): Promise<RequestExecutionResult> {
   // Merge env vars with runtime vars (runtime takes precedence)
   const effectiveVars = variableStore ? variableStore.merge(vars) : vars;
 
   // eslint-disable-next-line prefer-const -- url is reassigned by pre-request script mutations below
-  const built = await buildFetchOptions(yaml, effectiveVars);
+  const built = await buildFetchOptions(yaml, effectiveVars, collectionRoot);
   let url = built.url;
   let options = built.options;
   const authWarnings = built.warnings;
@@ -733,7 +766,7 @@ export class RequestExecutor {
           const folderStore = new VariableStore();
           const folderRes: RequestExecutionResult[] = [];
           for (const req of folderRequests) {
-            const result = await executeSingleRequest(req.yaml, vars, scriptRunner, folderStore, bodyCapture);
+            const result = await executeSingleRequest(req.yaml, vars, scriptRunner, folderStore, bodyCapture, collectionPath);
             folderRes.push(result);
           }
           return folderRes;
@@ -779,7 +812,7 @@ export class RequestExecutor {
       const variableStore = new VariableStore();
       results = [];
       for (const req of requests) {
-        const result = await executeSingleRequest(req.yaml, vars, scriptRunner, variableStore, bodyCapture);
+        const result = await executeSingleRequest(req.yaml, vars, scriptRunner, variableStore, bodyCapture, collectionPath);
         results.push(result);
       }
     }

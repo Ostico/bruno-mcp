@@ -44,12 +44,12 @@ describe('buildFetchOptions — multipart/form-data', () => {
   }
 
   it('produces a FormData body instead of a raw string', async () => {
-    const { options } = await buildFetchOptions(buildYaml(), new Map());
+    const { options } = await buildFetchOptions(buildYaml(), new Map(), tmpDir);
     expect(options.body).toBeInstanceOf(FormData);
   });
 
   it('appends a plain text part as a string when no contentType is set', async () => {
-    const { options } = await buildFetchOptions(buildYaml(), new Map());
+    const { options } = await buildFetchOptions(buildYaml(), new Map(), tmpDir);
     const form = options.body as FormData;
     const entry = form.get('plain');
     expect(typeof entry).toBe('string');
@@ -57,7 +57,7 @@ describe('buildFetchOptions — multipart/form-data', () => {
   });
 
   it('appends a text part with contentType as a Blob of that type', async () => {
-    const { options } = await buildFetchOptions(buildYaml(), new Map());
+    const { options } = await buildFetchOptions(buildYaml(), new Map(), tmpDir);
     const form = options.body as FormData;
     const entry = form.get('typed');
     expect(entry).toBeInstanceOf(Blob);
@@ -67,7 +67,7 @@ describe('buildFetchOptions — multipart/form-data', () => {
   });
 
   it('appends a file part as a Blob with contentType and basename', async () => {
-    const { options } = await buildFetchOptions(buildYaml(), new Map());
+    const { options } = await buildFetchOptions(buildYaml(), new Map(), tmpDir);
     const form = options.body as FormData;
     const entry = form.get('single');
     expect(entry).toBeInstanceOf(Blob);
@@ -78,7 +78,7 @@ describe('buildFetchOptions — multipart/form-data', () => {
   });
 
   it('appends multiple files for an array value, defaulting to octet-stream', async () => {
-    const { options } = await buildFetchOptions(buildYaml(), new Map());
+    const { options } = await buildFetchOptions(buildYaml(), new Map(), tmpDir);
     const form = options.body as FormData;
     const entries = form.getAll('many');
     expect(entries).toHaveLength(2);
@@ -93,7 +93,7 @@ describe('buildFetchOptions — multipart/form-data', () => {
   });
 
   it('strips any user-provided Content-Type header for multipart bodies', async () => {
-    const { options } = await buildFetchOptions(buildYaml(), new Map());
+    const { options } = await buildFetchOptions(buildYaml(), new Map(), tmpDir);
     const headers = options.headers as Record<string, string>;
     const hasContentType = Object.keys(headers).some(
       (k) => k.toLowerCase() === 'content-type',
@@ -120,7 +120,7 @@ describe('buildFetchOptions — multipart/form-data', () => {
       ['greeting', 'ciao'],
       ['docPath', filePathA],
     ]);
-    const { options } = await buildFetchOptions(yaml, vars);
+    const { options } = await buildFetchOptions(yaml, vars, tmpDir);
     const form = options.body as FormData;
     expect(await (form.get('greeting') as Blob).text()).toBe('ciao');
     const doc = form.get('doc') as File;
