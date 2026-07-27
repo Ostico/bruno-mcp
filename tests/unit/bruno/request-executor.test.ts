@@ -1624,6 +1624,33 @@ http:
       expect(hop2.Authorization).toBe('Bearer sekret');
     });
 
+    it('redacts secret query params from the URL returned to the caller (S22)', async () => {
+      const SECRET_URL_REQUEST = `
+info:
+  name: Secret URL
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/data?token=SECRET123&page=1"
+`;
+      setupFsReaddir(['Secret URL.yml']);
+      setupFsReadFile({ 'Secret URL.yml': SECRET_URL_REQUEST });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }, 200));
+      mockedValidateUrl.mockReturnValue({ valid: true });
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      // The real request still went out with the secret...
+      expect(mockFetch.mock.calls[0][0]).toContain('SECRET123');
+      // ...but the caller-facing result must not carry it.
+      const serialized = JSON.stringify(result);
+      expect(serialized).not.toContain('SECRET123');
+      expect(serialized).toContain('REDACTED');
+    });
+
     it('should return error after exceeding max redirects (10 hops)', async () => {
       const PUBLIC_REQUEST = `
 info:
