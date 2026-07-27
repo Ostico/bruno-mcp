@@ -122,6 +122,107 @@ export function describeRejectionReason(reason: unknown): string {
 }
 
 /**
+ * Stream errors that mean "the thing we were writing to went away".
+ *
+ * A stdio MCP server writes diagnostics to stderr. When the client disconnects
+ * that pipe is gone, and the next write raises EPIPE — asynchronously, as an
+ * uncaughtException. Verified: closing a child's stderr while it logs produces
+ * an uncaught EPIPE. There is nothing to recover from, and nowhere to report
+ * it to; crashing over it would mean the client closing a pipe kills the run.
+ */
+const BENIGN_STREAM_ERROR_CODES = new Set([
+  'EPIPE',
+  'ERR_STREAM_DESTROYED',
+  'ERR_STREAM_WRITE_AFTER_END',
+]);
+
+/**
+ * Whether an uncaught error is just a write to a stream that has gone away.
+ */
+export function isBenignStreamError(error: unknown): boolean {
+  if (!types.isNativeError(error)) {
+    return false;
+  }
+
+  const code = readDataProperty(error, 'code');
+  return typeof code === 'string' && BENIGN_STREAM_ERROR_CODES.has(code);
+}
+
+export interface UncaughtExceptionGuardOptions {
+  emitter?: NodeJS.EventEmitter;
+  log?: (message: string) => void;
+  exit?: (code: number) => void;
+  /** Best-effort cleanup, e.g. closing the MCP transport. Never awaited. */
+  onFatal?: () => void;
+}
+
+/**
+ * Crash well on an uncaught exception, rather than either dying raw or
+ * pretending nothing happened.
+ *
+ * Node's advice is not to resume after an uncaught exception: unlike a rejected
+ * promise, whose damage is scoped to one chain, an exception can leave the
+ * process midway through a mutation. So this does NOT swallow them the way the
+ * rejection guard does. It logs one tagged line, gives the caller a chance to
+ * close the transport so the client sees a clean disconnect instead of a
+ * truncated JSON-RPC stream, and then exits non-zero.
+ *
+ * The exception is a failed write to a stream that no longer exists, which is
+ * not a bug and has no recovery to perform. Without that carve-out the
+ * rejection guard's own stderr logging could kill the server it protects: the
+ * client closes the pipe, the guard writes to it, EPIPE surfaces here.
+ */
+export function installUncaughtExceptionGuard(
+  options: UncaughtExceptionGuardOptions = {},
+): () => void {
+  const {
+    emitter = process,
+    log = message => {
+      console.error(message);
+    },
+    exit = code => {
+      process.exit(code);
+    },
+    onFatal,
+  } = options;
+
+  const handler = (error: unknown): void => {
+    if (isBenignStreamError(error)) {
+      return;
+    }
+
+    const origin =
+      classifyRejectionOrigin(error) === 'server'
+        ? 'SERVER BUG'
+        : 'raised from a script sandbox';
+
+    // Every step is independently guarded: reporting a fatal error must not be
+    // able to replace it with a different one, and stderr may itself be gone.
+    try {
+      log(
+        `[bruno-mcp] fatal uncaught exception, shutting down (${origin}): ${describeRejectionReason(error)}`,
+      );
+    } catch {
+      // nothing we can do; still exit below
+    }
+
+    try {
+      onFatal?.();
+    } catch {
+      // best effort only
+    }
+
+    exit(1);
+  };
+
+  emitter.on('uncaughtException', handler);
+
+  return () => {
+    emitter.off('uncaughtException', handler);
+  };
+}
+
+/**
  * Keep an unhandled promise rejection from terminating the server.
  *
  * Node's default policy since v15 is to terminate the process, and a rejection
@@ -153,9 +254,15 @@ export function installUnhandledRejectionGuard(
         ? 'SERVER BUG — rejection originated in the server, not in a script'
         : 'from a script sandbox';
 
-    log(
-      `[bruno-mcp] unhandled promise rejection ignored so the server can keep running (${origin}): ${describeRejectionReason(reason)}`,
-    );
+    // Guarded: if stderr has gone away this write raises EPIPE, which would
+    // surface as an uncaughtException and defeat the point of the guard.
+    try {
+      log(
+        `[bruno-mcp] unhandled promise rejection ignored so the server can keep running (${origin}): ${describeRejectionReason(reason)}`,
+      );
+    } catch {
+      // A rejection we cannot report is still a rejection we survived.
+    }
   };
 
   emitter.on('unhandledRejection', handler);

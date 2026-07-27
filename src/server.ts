@@ -1534,9 +1534,21 @@ export class BrunoMcpServer {
   async start(): Promise<void> {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    
+
     console.error('Bruno MCP Server started successfully! 🚀');
     console.error('Ready to generate Bruno API testing files.');
+  }
+
+  /**
+   * Close the transport so the client sees a clean disconnect rather than a
+   * truncated JSON-RPC stream.
+   *
+   * Best effort by design: the caller is the uncaughtException guard, where the
+   * process is already in an undefined state and there is no safe point at
+   * which to await. Failures here must not mask the error being reported.
+   */
+  async stop(): Promise<void> {
+    await this.server.close();
   }
 }
 

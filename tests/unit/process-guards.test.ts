@@ -1,12 +1,14 @@
 import { EventEmitter } from 'node:events';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import vm from 'node:vm';
 import {
   classifyRejectionOrigin,
   describeRejectionReason,
+  installUncaughtExceptionGuard,
   installUnhandledRejectionGuard,
+  isBenignStreamError,
   UNINSPECTABLE_REASON,
 } from '../../src/process-guards';
 
@@ -333,6 +335,187 @@ describe('installUnhandledRejectionGuard', () => {
   });
 });
 
+describe('isBenignStreamError', () => {
+  it.each(['EPIPE', 'ERR_STREAM_DESTROYED', 'ERR_STREAM_WRITE_AFTER_END'])(
+    'should treat %s as benign',
+    code => {
+      const error = Object.assign(new Error('write failed'), { code });
+
+      expect(isBenignStreamError(error)).toBe(true);
+    },
+  );
+
+  it.each([
+    ['a different code', Object.assign(new Error('x'), { code: 'ENOENT' })],
+    ['no code at all', new Error('plain')],
+    ['a non-string code', Object.assign(new Error('x'), { code: 42 })],
+    ['a non-Error', { code: 'EPIPE' }],
+  ])('should not treat %s as benign', (_label, error) => {
+    expect(isBenignStreamError(error)).toBe(false);
+  });
+
+  it('should not invoke an accessor while reading the code', () => {
+    let getterRan = false;
+    const error = new Error('x');
+    Object.defineProperty(error, 'code', {
+      get() {
+        getterRan = true;
+        return 'EPIPE';
+      },
+    });
+
+    expect(isBenignStreamError(error)).toBe(false);
+    expect(getterRan).toBe(false);
+  });
+});
+
+describe('installUncaughtExceptionGuard', () => {
+  function harness() {
+    const emitter = new EventEmitter();
+    const logged: string[] = [];
+    const exitCodes: number[] = [];
+    let fatalCalls = 0;
+
+    const uninstall = installUncaughtExceptionGuard({
+      emitter,
+      log: message => logged.push(message),
+      exit: code => exitCodes.push(code),
+      onFatal: () => {
+        fatalCalls += 1;
+      },
+    });
+
+    return { emitter, logged, exitCodes, uninstall, fatal: () => fatalCalls };
+  }
+
+  it('should log, close the transport and exit non-zero on a real exception', () => {
+    const h = harness();
+
+    h.emitter.emit('uncaughtException', new Error('kaboom'));
+
+    expect(h.logged[0]).toContain('fatal uncaught exception');
+    expect(h.logged[0]).toContain('SERVER BUG');
+    expect(h.logged[0]).toContain('Error: kaboom');
+    expect(h.fatal()).toBe(1);
+    expect(h.exitCodes).toEqual([1]);
+    h.uninstall();
+  });
+
+  it('should ignore a broken-pipe write and keep running', () => {
+    const h = harness();
+
+    h.emitter.emit('uncaughtException', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+
+    expect(h.exitCodes).toEqual([]);
+    expect(h.fatal()).toBe(0);
+    expect(h.logged).toEqual([]);
+    h.uninstall();
+  });
+
+  it('should tag a sandbox-raised exception as script-originated', () => {
+    const h = harness();
+    const context = vm.createContext(Object.create(null));
+
+    h.emitter.emit('uncaughtException', vm.runInContext('new Error("scripty")', context));
+
+    expect(h.logged[0]).toContain('raised from a script sandbox');
+    expect(h.exitCodes).toEqual([1]);
+    h.uninstall();
+  });
+
+  it('should still exit when logging throws', () => {
+    // stderr may be the very thing that broke.
+    const emitter = new EventEmitter();
+    const exitCodes: number[] = [];
+    const uninstall = installUncaughtExceptionGuard({
+      emitter,
+      log: () => {
+        throw new Error('stderr gone');
+      },
+      exit: code => exitCodes.push(code),
+    });
+
+    expect(() => emitter.emit('uncaughtException', new Error('x'))).not.toThrow();
+    expect(exitCodes).toEqual([1]);
+    uninstall();
+  });
+
+  it('should still exit when the shutdown hook throws', () => {
+    const emitter = new EventEmitter();
+    const exitCodes: number[] = [];
+    const uninstall = installUncaughtExceptionGuard({
+      emitter,
+      log: () => {},
+      exit: code => exitCodes.push(code),
+      onFatal: () => {
+        throw new Error('close failed');
+      },
+    });
+
+    expect(() => emitter.emit('uncaughtException', new Error('x'))).not.toThrow();
+    expect(exitCodes).toEqual([1]);
+    uninstall();
+  });
+
+  it('should remove the handler when uninstalled', () => {
+    const emitter = new EventEmitter();
+    const uninstall = installUncaughtExceptionGuard({
+      emitter,
+      log: () => {},
+      exit: () => {},
+    });
+    expect(emitter.listenerCount('uncaughtException')).toBe(1);
+
+    uninstall();
+
+    expect(emitter.listenerCount('uncaughtException')).toBe(0);
+  });
+
+  it('should default to terminating the real process', () => {
+    // The default exit really is process.exit, so it has to be stubbed rather
+    // than called — otherwise this test would take the test runner down.
+    const exitSpy = jest
+      .spyOn(process, 'exit')
+      .mockImplementation((() => undefined) as never);
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const uninstall = installUncaughtExceptionGuard();
+    try {
+      process.emit('uncaughtException', new Error('fatal'));
+
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    } finally {
+      uninstall();
+      errorSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+  });
+
+  it('should default to the real process and stderr', () => {
+    const before = process.listenerCount('uncaughtException');
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const exitCodes: number[] = [];
+
+    const uninstall = installUncaughtExceptionGuard({
+      exit: code => exitCodes.push(code),
+    });
+    try {
+      expect(process.listenerCount('uncaughtException')).toBe(before + 1);
+
+      process.emit('uncaughtException', new Error('defaulted'));
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0][0]).toContain('Error: defaulted');
+      expect(exitCodes).toEqual([1]);
+    } finally {
+      uninstall();
+      spy.mockRestore();
+    }
+
+    expect(process.listenerCount('uncaughtException')).toBe(before);
+  });
+});
+
 describe('end-to-end process survival', () => {
   // The unit tests above use a fake emitter, which cannot show the thing that
   // actually matters: Node terminating the process. These spawn a real node
@@ -386,4 +569,47 @@ describe('end-to-end process survival', () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('SURVIVED');
   });
+
+  // The carve-out exists because the rejection guard writes to stderr, so a
+  // client that closes that pipe could otherwise kill the server through the
+  // guard protecting it. This drives the real thing: stderr is destroyed while
+  // the child logs, and the child must survive to print on stdout.
+  itIfStripping('should survive a client closing stderr while diagnostics are written', done => {
+    const source = `
+      import { installUnhandledRejectionGuard, installUncaughtExceptionGuard }
+        from ${JSON.stringify(guardModule)};
+      installUncaughtExceptionGuard();
+      installUnhandledRejectionGuard();
+      let n = 0;
+      const timer = setInterval(() => {
+        console.error('x'.repeat(10000));
+        if (++n > 500) {
+          clearInterval(timer);
+          process.stdout.write('SURVIVED-BROKEN-STDERR');
+          process.exit(0);
+        }
+      }, 0);
+    `;
+
+    const child = spawn(process.execPath, ['--input-type=module', '-e', source], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    child.stdout.on('data', chunk => {
+      stdout += chunk;
+    });
+    child.stderr.on('data', () => {});
+    setTimeout(() => child.stderr.destroy(), 30);
+
+    child.on('exit', code => {
+      try {
+        expect(code).toBe(0);
+        expect(stdout).toContain('SURVIVED-BROKEN-STDERR');
+        done();
+      } catch (error) {
+        done(error as Error);
+      }
+    });
+  }, 30000);
 });
