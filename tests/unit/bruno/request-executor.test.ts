@@ -1549,6 +1549,81 @@ http:
       expect(mockFetch.mock.calls[1][0]).toBe('https://api.example.com/new');
     });
 
+    it('strips credential headers when a redirect crosses origin (S06/S07)', async () => {
+      const AUTHED_REQUEST = `
+info:
+  name: Authed Request
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/old"
+  headers:
+    - name: Authorization
+      value: "Bearer sekret"
+`;
+      setupFsReaddir(['Authed Request.yml']);
+      setupFsReadFile({ 'Authed Request.yml': AUTHED_REQUEST });
+      setupFsStat(['/test-collection']);
+
+      const redirectResponse = {
+        status: 302,
+        statusText: 'Found',
+        headers: new Headers({ location: 'https://attacker.example.net/steal' }),
+        ok: false,
+        text: jest.fn().mockResolvedValue(''),
+      } as unknown as Response;
+      mockFetch
+        .mockResolvedValueOnce(redirectResponse)
+        .mockResolvedValueOnce(createMockResponse({ ok: true }, 200));
+      mockedValidateUrl.mockReturnValue({ valid: true });
+
+      await RequestExecutor.executeCollection('/test-collection');
+
+      // Hop 1 (same origin as the request) carries the credential...
+      const hop1 = mockFetch.mock.calls[0][1].headers as Record<string, string>;
+      expect(hop1.Authorization).toBe('Bearer sekret');
+      // ...but the cross-origin hop 2 must not.
+      const hop2 = mockFetch.mock.calls[1][1].headers as Record<string, string>;
+      const hasAuth = Object.keys(hop2).some(k => k.toLowerCase() === 'authorization');
+      expect(hasAuth).toBe(false);
+    });
+
+    it('keeps credential headers on a same-origin redirect', async () => {
+      const AUTHED_REQUEST = `
+info:
+  name: Authed Same Origin
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/old"
+  headers:
+    - name: Authorization
+      value: "Bearer sekret"
+`;
+      setupFsReaddir(['Authed Same Origin.yml']);
+      setupFsReadFile({ 'Authed Same Origin.yml': AUTHED_REQUEST });
+      setupFsStat(['/test-collection']);
+
+      const redirectResponse = {
+        status: 302,
+        statusText: 'Found',
+        headers: new Headers({ location: 'https://api.example.com/new' }),
+        ok: false,
+        text: jest.fn().mockResolvedValue(''),
+      } as unknown as Response;
+      mockFetch
+        .mockResolvedValueOnce(redirectResponse)
+        .mockResolvedValueOnce(createMockResponse({ ok: true }, 200));
+      mockedValidateUrl.mockReturnValue({ valid: true });
+
+      await RequestExecutor.executeCollection('/test-collection');
+
+      const hop2 = mockFetch.mock.calls[1][1].headers as Record<string, string>;
+      expect(hop2.Authorization).toBe('Bearer sekret');
+    });
+
     it('should return error after exceeding max redirects (10 hops)', async () => {
       const PUBLIC_REQUEST = `
 info:
