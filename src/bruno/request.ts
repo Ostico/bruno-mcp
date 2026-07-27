@@ -4,7 +4,8 @@
  */
 
 import { promises as fs } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, isAbsolute } from 'path';
+import { validatePath } from './path-validator.js';
 import {
   BruFile,
   BruAuth,
@@ -544,7 +545,37 @@ export class RequestBuilder {
     const fileName = this.sanitizeFileName(input.name) + extension;
 
     if (input.folder) {
-      return join(input.collectionPath, input.folder, fileName);
+      const folder = input.folder;
+
+      // Reject absolute-path folders outright: they must be relative to the
+      // collection root.
+      if (isAbsolute(folder)) {
+        throw new BruFileError(
+          `Invalid folder "${folder}": absolute paths are not allowed`,
+          { folder },
+        );
+      }
+
+      // Reject any parent-directory traversal segment before touching the fs.
+      if (folder.split(/[\\/]+/).includes('..')) {
+        throw new BruFileError(
+          `Invalid folder "${folder}": parent directory traversal ('..') is not allowed`,
+          { folder },
+        );
+      }
+
+      // Final containment check: the resolved path (also catches null bytes)
+      // must stay inside the collection root.
+      const candidate = join(input.collectionPath, folder, fileName);
+      const check = validatePath(candidate, input.collectionPath);
+      if (!check.valid) {
+        throw new BruFileError(
+          `Invalid folder "${folder}": ${check.reason}`,
+          { folder },
+        );
+      }
+
+      return candidate;
     }
 
     return join(input.collectionPath, fileName);
