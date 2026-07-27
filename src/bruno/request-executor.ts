@@ -4,6 +4,7 @@ import { parseYamlRequest } from './yaml-parser.js';
 import { parseBruRequest } from './bru-parser.js';
 import { loadEnvironment, substitute } from './env-loader.js';
 import { TestRunner } from './test-runner.js';
+import type { ScriptRunner } from './sandbox-host.js';
 import { wrapFetchResponse } from './response-wrapper.js';
 import { validateUrl, ssrfRemediation } from './url-validator.js';
 import { VariableStore } from './variable-store.js';
@@ -27,6 +28,12 @@ interface ExecutionOptions {
   parallel?: boolean;
   includeResponseBody?: boolean;
   maxResponseBodyBytes?: number;
+  /**
+   * How scripts are run. Defaults to the in-process TestRunner so the test
+   * suite runs without forking; production (server.ts) injects the forking
+   * runner so untrusted scripts execute behind a process boundary.
+   */
+  scriptRunner?: ScriptRunner;
 }
 
 const DEFAULT_MAX_RESPONSE_BODY_BYTES = 10240;
@@ -266,6 +273,7 @@ function capResponseBody(
 async function executeSingleRequest(
   yaml: YamlRequest,
   vars: Map<string, string>,
+  scriptRunner: ScriptRunner,
   variableStore?: VariableStore,
   bodyCapture?: BodyCaptureOptions,
 ): Promise<RequestExecutionResult> {
@@ -287,7 +295,7 @@ async function executeSingleRequest(
       headers: { ...(options.headers as Record<string, string>) },
       body: options.body ?? null,
     };
-    const preResult = await TestRunner.runPreRequestScript(preScript, mockReqData, {
+    const preResult = await scriptRunner.runPreRequestScript(preScript, mockReqData, {
       timeout: yaml.settings?.timeout ?? 5000,
     });
 
@@ -414,7 +422,7 @@ async function executeSingleRequest(
     let scriptWarnings: string[] | undefined;
     const testScript = getAfterResponseScript(yaml);
     if (testScript) {
-      const scriptResult = await TestRunner.runScript(testScript, wrappedResponse);
+      const scriptResult = await scriptRunner.runScript(testScript, wrappedResponse);
       tests = scriptResult.results;
       if (scriptResult.warnings && scriptResult.warnings.length > 0) {
         scriptWarnings = scriptResult.warnings;
@@ -474,6 +482,11 @@ export class RequestExecutor {
       includeResponseBody: options?.includeResponseBody ?? true,
       maxResponseBodyBytes: options?.maxResponseBodyBytes ?? DEFAULT_MAX_RESPONSE_BODY_BYTES,
     };
+
+    // In-process by default (the test suite runs without forking); server.ts
+    // injects the forking runner so production executes scripts behind a
+    // process boundary.
+    const scriptRunner = options?.scriptRunner ?? TestRunner;
 
     let vars = new Map<string, string>();
     if (options?.environment) {
@@ -536,7 +549,7 @@ export class RequestExecutor {
           const folderStore = new VariableStore();
           const folderRes: RequestExecutionResult[] = [];
           for (const req of folderRequests) {
-            const result = await executeSingleRequest(req.yaml, vars, folderStore, bodyCapture);
+            const result = await executeSingleRequest(req.yaml, vars, scriptRunner, folderStore, bodyCapture);
             folderRes.push(result);
           }
           return folderRes;
@@ -582,7 +595,7 @@ export class RequestExecutor {
       const variableStore = new VariableStore();
       results = [];
       for (const req of requests) {
-        const result = await executeSingleRequest(req.yaml, vars, variableStore, bodyCapture);
+        const result = await executeSingleRequest(req.yaml, vars, scriptRunner, variableStore, bodyCapture);
         results.push(result);
       }
     }

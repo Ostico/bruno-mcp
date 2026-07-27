@@ -21,12 +21,21 @@
  */
 
 import { fork as realFork, type ChildProcess } from 'node:child_process';
+import path from 'node:path';
 import {
+  DEFAULT_TIMEOUT,
   WORKER_ARGV_SENTINEL,
   failingResultFor,
   type SandboxJob,
   type SandboxJobResult,
 } from './sandbox-worker.js';
+import type {
+  MockRequestData,
+  MockResponseData,
+  PreRequestScriptResult,
+  ScriptResult,
+  TestRunnerOptions,
+} from './types.js';
 
 /** Milliseconds allowed for spawn + prelude on top of the script's own budget. */
 const DEFAULT_HANDSHAKE_OVERHEAD_MS = 1000;
@@ -205,3 +214,89 @@ export async function runInWorker(
     });
   });
 }
+
+/**
+ * The seam request-executor runs scripts through. Its shape is exactly the two
+ * static methods TestRunner already exposes, so the in-process runner and the
+ * forked runner below are interchangeable and either can be injected.
+ */
+export interface ScriptRunner {
+  runPreRequestScript(
+    script: string,
+    request: MockRequestData,
+    options?: TestRunnerOptions,
+  ): Promise<PreRequestScriptResult>;
+  runScript(
+    script: string,
+    response: MockResponseData,
+    options?: TestRunnerOptions,
+  ): Promise<ScriptResult>;
+}
+
+/**
+ * Absolute path to the built worker, resolved from this module's own location
+ * at runtime. In the bundled ESM output tsup emits it at dist/, with the worker
+ * entry at dist/bruno/sandbox-worker.js — __dirname (shimmed by tsup --shims in
+ * ESM, native in the CJS test compile) points at dist/. Deliberately not an env
+ * var: a worker path taken from the environment in the file meant to remove
+ * code execution would reintroduce it (finding S13).
+ */
+export function resolveWorkerPath(): string {
+  return path.join(__dirname, 'bruno', 'sandbox-worker.js');
+}
+
+/**
+ * Build a script runner that runs every non-empty script in a forked,
+ * env-scrubbed, killable worker. Empty scripts short-circuit to the same shape
+ * the in-process path returns, so a request without scripts never pays for a
+ * fork.
+ *
+ * The worker path and the transport are parameters purely so this is testable
+ * without depending on __dirname resolving to a real built worker: production
+ * takes the defaults.
+ */
+export function createForkingScriptRunner(
+  workerPath: string = resolveWorkerPath(),
+  runner: typeof runInWorker = runInWorker,
+): ScriptRunner {
+  return {
+    async runPreRequestScript(script, request, options) {
+      if (!script || script.trim().length === 0) {
+        return { variables: {}, mutations: {} };
+      }
+      const out = await runner(
+        {
+          kind: 'pre-request',
+          script,
+          request,
+          timeout: options?.timeout ?? DEFAULT_TIMEOUT,
+        },
+        { workerPath },
+      );
+      return out.result as PreRequestScriptResult;
+    },
+
+    async runScript(script, response, options) {
+      if (!script || script.trim().length === 0) {
+        return { results: [], variables: {} };
+      }
+      const out = await runner(
+        {
+          kind: 'test',
+          script,
+          response,
+          timeout: options?.timeout ?? DEFAULT_TIMEOUT,
+        },
+        { workerPath },
+      );
+      return out.result as ScriptResult;
+    },
+  };
+}
+
+/**
+ * The production script runner. server.ts injects this; the in-process
+ * TestRunner remains the executor's default so the test suite runs without
+ * forking.
+ */
+export const forkingScriptRunner: ScriptRunner = createForkingScriptRunner();

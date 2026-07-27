@@ -62,6 +62,7 @@ jest.mock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
 const { listCollectionsHandler } = require('../../../src/bruno/list-collections-handler');
 const { getCollectionStats } = require('../../../src/bruno/collection-stats');
 const { RequestExecutor } = require('../../../src/bruno/request-executor');
+const { forkingScriptRunner } = require('../../../src/bruno/sandbox-host');
 
 function getHandler(server: BrunoMcpServer, toolName: string): Function {
   const mcpServer = (server as any).server;
@@ -485,6 +486,18 @@ describe('Server tool handlers', () => {
       });
       expect(RequestExecutor.executeCollection).toHaveBeenCalledWith(
         '/col', expect.objectContaining({ environment: 'dev', requestPath: '/col/test.yml' }),
+      );
+    });
+
+    it('injects the forking script runner so production runs scripts behind a process boundary', async () => {
+      (RequestExecutor.executeCollection as jest.Mock).mockResolvedValue({
+        summary: { total: 0, passed: 0, failed: 0, duration_ms: 1 }, results: [],
+      });
+      const handler = getHandler(server, 'run_collection');
+      await handler({ collectionPath: '/col' });
+      expect(RequestExecutor.executeCollection).toHaveBeenCalledWith(
+        '/col',
+        expect.objectContaining({ scriptRunner: forkingScriptRunner }),
       );
     });
 
