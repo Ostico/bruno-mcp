@@ -79,10 +79,42 @@ function isHostRealmError(value: object): boolean {
 }
 
 /**
- * Classify where a rejection came from, for log triage. See isHostRealmError.
+ * Where a rejection came from, for log triage.
+ *
+ * 'unknown' is not a formality. Rejecting with a bare string, a plain object or
+ * undefined is ordinary in dependency code, and none of those carry realm
+ * evidence — so calling them 'script' would file a genuine server bug as
+ * sandbox noise, with UNINSPECTABLE_REASON in place of any detail. Since this
+ * handler is the reason such a bug no longer announces itself by crashing,
+ * that is the one misclassification worth engineering against.
  */
-export function classifyRejectionOrigin(reason: unknown): 'server' | 'script' {
-  return types.isNativeError(reason) && isHostRealmError(reason) ? 'server' : 'script';
+export type RejectionOrigin = 'server' | 'script' | 'unknown';
+
+/**
+ * Classify where a rejection came from, for log triage. See isHostRealmError.
+ *
+ * Only a native Error carries the evidence to decide: one inheriting from this
+ * realm's Error.prototype is ours, one that does not was built elsewhere, which
+ * in this process means the script sandbox. Anything else is undetermined
+ * rather than assumed.
+ */
+export function classifyRejectionOrigin(reason: unknown): RejectionOrigin {
+  if (!types.isNativeError(reason)) {
+    return 'unknown';
+  }
+  return isHostRealmError(reason) ? 'server' : 'script';
+}
+
+/** Human-readable origin tag used in both guards' log lines. */
+function originLabel(origin: RejectionOrigin): string {
+  switch (origin) {
+    case 'server':
+      return 'SERVER BUG';
+    case 'script':
+      return 'from a script sandbox';
+    default:
+      return 'origin undetermined — treat as a possible server bug';
+  }
 }
 
 /**
@@ -191,10 +223,7 @@ export function installUncaughtExceptionGuard(
       return;
     }
 
-    const origin =
-      classifyRejectionOrigin(error) === 'server'
-        ? 'SERVER BUG'
-        : 'raised from a script sandbox';
+    const origin = originLabel(classifyRejectionOrigin(error));
 
     // Every step is independently guarded: reporting a fatal error must not be
     // able to replace it with a different one, and stderr may itself be gone.
@@ -249,10 +278,7 @@ export function installUnhandledRejectionGuard(
     // The origin is tagged rather than filtered: swallowing every rejection
     // equally would let a genuine server bug hide among sandbox noise, and this
     // handler is the reason such a bug no longer announces itself by crashing.
-    const origin =
-      classifyRejectionOrigin(reason) === 'server'
-        ? 'SERVER BUG — rejection originated in the server, not in a script'
-        : 'from a script sandbox';
+    const origin = originLabel(classifyRejectionOrigin(reason));
 
     // Guarded: if stderr has gone away this write raises EPIPE, which would
     // surface as an uncaughtException and defeat the point of the guard.

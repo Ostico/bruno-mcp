@@ -204,12 +204,17 @@ describe('classifyRejectionOrigin', () => {
     expect(classifyRejectionOrigin(crossRealm)).toBe('script');
   });
 
+  // A non-Error carries no realm evidence. Calling it 'script' would file a
+  // genuine server bug as sandbox noise, and Promise.reject('...') /
+  // Promise.reject({code}) / Promise.reject(undefined) are all ordinary in
+  // dependency code.
   it.each([
     ['a string', 'nope'],
-    ['a plain object', {}],
+    ['a plain object', { code: 'ENOENT' }],
     ['null', null],
-  ])('should classify %s as script-originated', (_label, reason) => {
-    expect(classifyRejectionOrigin(reason)).toBe('script');
+    ['undefined', undefined],
+  ])('should refuse to guess an origin for %s', (_label, reason) => {
+    expect(classifyRejectionOrigin(reason)).toBe('unknown');
   });
 
   it('should not consult a Proxy in the prototype chain while classifying', () => {
@@ -263,6 +268,19 @@ describe('installUnhandledRejectionGuard', () => {
 
     expect(logged[0]).toContain('from a script sandbox');
     expect(logged[0]).not.toContain('SERVER BUG');
+  });
+
+  it('should not file a non-Error rejection as sandbox noise', () => {
+    // The failure mode this guards against: a real server bug rejecting with a
+    // bare string, logged as script noise and effectively lost.
+    const emitter = new EventEmitter();
+    const logged: string[] = [];
+
+    installUnhandledRejectionGuard(emitter, message => logged.push(message));
+    emitter.emit('unhandledRejection', 'something broke');
+
+    expect(logged[0]).toContain('origin undetermined');
+    expect(logged[0]).not.toContain('from a script sandbox');
   });
 
   it('should log the reason instead of letting the process die', () => {
@@ -418,7 +436,18 @@ describe('installUncaughtExceptionGuard', () => {
 
     h.emitter.emit('uncaughtException', vm.runInContext('new Error("scripty")', context));
 
-    expect(h.logged[0]).toContain('raised from a script sandbox');
+    expect(h.logged[0]).toContain('from a script sandbox');
+    expect(h.logged[0]).not.toContain('SERVER BUG');
+    expect(h.exitCodes).toEqual([1]);
+    h.uninstall();
+  });
+
+  it('should not file a non-Error exception as sandbox noise', () => {
+    const h = harness();
+
+    h.emitter.emit('uncaughtException', 'bare string');
+
+    expect(h.logged[0]).toContain('origin undetermined');
     expect(h.exitCodes).toEqual([1]);
     h.uninstall();
   });
@@ -524,12 +553,16 @@ describe('end-to-end process survival', () => {
   // policy instead would test Node's default behaviour rather than this code,
   // and would still pass if src/process-guards.ts were deleted.
   //
-  // The child imports the TypeScript source directly, which relies on Node's
-  // native type stripping (>= 22.6). package.json allows Node >= 18, so the
-  // pair is skipped on older runtimes rather than failing there.
+  // The child imports the TypeScript source directly, which needs Node's type
+  // stripping (>= 22.6). It is only ON BY DEFAULT from 22.18, so the flag is
+  // passed explicitly — without it, 22.6–22.17 fails with
+  // ERR_UNKNOWN_FILE_EXTENSION instead of skipping, and the "process dies"
+  // case would pass for the wrong reason (dying on the import, not on the
+  // rejection). package.json allows Node >= 18, so older runtimes skip.
   const [major, minor] = process.versions.node.split('.').map(Number);
   const stripsTypes = major > 22 || (major === 22 && minor >= 6);
   const itIfStripping = stripsTypes ? it : it.skip;
+  const NODE_ARGS = ['--experimental-strip-types', '--input-type=module', '-e'];
 
   const guardModule = pathToFileURL(
     resolve(__dirname, '../../src/process-guards.ts'),
@@ -544,11 +577,10 @@ describe('end-to-end process survival', () => {
     `;
 
     try {
-      const stdout = execFileSync(
-        process.execPath,
-        ['--input-type=module', '-e', source],
-        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-      );
+      const stdout = execFileSync(process.execPath, [...NODE_ARGS, source], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
       return { status: 0, stdout };
     } catch (error) {
       const err = error as { status?: number | null; stdout?: string };
@@ -591,7 +623,7 @@ describe('end-to-end process survival', () => {
       }, 0);
     `;
 
-    const child = spawn(process.execPath, ['--input-type=module', '-e', source], {
+    const child = spawn(process.execPath, [...NODE_ARGS, source], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
