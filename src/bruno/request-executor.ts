@@ -13,6 +13,7 @@ import { describeNetworkError } from './network-error.js';
 import type {
   BruFile,
   YamlRequest,
+  YamlAuth,
   YamlSettings,
   MockRequestData,
   CollectionRunResult,
@@ -122,10 +123,52 @@ function bruFileToYamlRequest(bru: BruFile): YamlRequest {
 
   return {
     info: { name: bru.meta.name, type: bru.meta.type, seq: bru.meta.seq },
-    http: { method: bru.http.method, url: bru.http.url, headers, body },
+    http: {
+      method: bru.http.method,
+      url: bru.http.url,
+      headers,
+      body,
+      auth: bruAuthToYamlAuth(bru.auth),
+    },
     runtime: scripts.scripts.length > 0 ? scripts : undefined,
     docs: bru.docs,
   };
+}
+
+/**
+ * Flatten a parsed .bru auth block into the shape the executor applies.
+ *
+ * .bru stores auth nested by scheme (auth.bearer.token, auth.basic.username);
+ * the executor and the .yml path both consume the flat form ({type, token} /
+ * {type, username, password} / {type, key, value, in}). Without this, auth
+ * authored in a .bru file was dropped here — before the request even reached
+ * buildFetchOptions — which is the first half of finding A7.
+ */
+export function bruAuthToYamlAuth(auth: BruFile['auth']): YamlAuth | undefined {
+  if (!auth || auth.type === 'none') {
+    return undefined;
+  }
+  switch (auth.type) {
+    case 'bearer':
+      return { type: 'bearer', token: auth.bearer?.token ?? '' };
+    case 'basic':
+      return {
+        type: 'basic',
+        username: auth.basic?.username ?? '',
+        password: auth.basic?.password ?? '',
+      };
+    case 'api-key':
+      return {
+        type: 'api-key',
+        key: auth.apikey?.key ?? '',
+        value: auth.apikey?.value ?? '',
+        in: auth.apikey?.in ?? 'header',
+      };
+    default:
+      // oauth2, digest: carried by type only so buildFetchOptions can warn
+      // rather than have the scheme vanish silently.
+      return { type: auth.type };
+  }
 }
 
 async function discoverRequests(dirPath: string): Promise<DiscoveryResult> {
@@ -173,14 +216,26 @@ function isMultipartBody(body: YamlRequest['http']['body']): boolean {
 export async function buildFetchOptions(
   yaml: YamlRequest,
   vars: Map<string, string>,
-): Promise<{ url: string; options: RequestInit }> {
-  const url = substitute(yaml.http.url, vars);
+): Promise<{ url: string; options: RequestInit; warnings?: string[] }> {
+  let url = substitute(yaml.http.url, vars);
 
   const headers: Record<string, string> = {};
   if (yaml.http.headers) {
     for (const h of yaml.http.headers) {
       headers[h.name] = substitute(h.value, vars);
     }
+  }
+
+  // Apply the request's auth on the wire (finding A7): it was authored and
+  // parsed but never sent. Header-based schemes mutate `headers`; a query
+  // api-key comes back to be appended to the URL; a scheme we cannot apply
+  // automatically is surfaced as a warning rather than dropped in silence.
+  const authWarnings: string[] = [];
+  const queryAuth = applyAuth(yaml.http.auth, headers, s => substitute(s, vars), authWarnings);
+  if (queryAuth) {
+    url +=
+      (url.includes('?') ? '&' : '?') +
+      `${encodeURIComponent(queryAuth.key)}=${encodeURIComponent(queryAuth.value)}`;
   }
 
   const options: RequestInit = {
@@ -235,7 +290,83 @@ export async function buildFetchOptions(
     options.body = substitute(body.data, vars);
   }
 
-  return { url, options };
+  return {
+    url,
+    options,
+    ...(authWarnings.length > 0 ? { warnings: authWarnings } : {}),
+  };
+}
+
+/**
+ * Apply a request's auth to the outgoing headers (finding A7).
+ *
+ * Header-based schemes (bearer, basic, header api-key) mutate `headers` in
+ * place. A query api-key is returned so the caller can append it to the URL.
+ * Schemes we cannot honour automatically — oauth2 and digest need a flow,
+ * `inherit` needs collection/folder resolution we do not model — are pushed to
+ * `warnings` and produce no header, so a run never silently sends an
+ * unauthenticated request while claiming the auth was configured.
+ */
+function applyAuth(
+  auth: YamlAuth | undefined,
+  headers: Record<string, string>,
+  subst: (value: string) => string,
+  warnings: string[],
+): { key: string; value: string } | undefined {
+  if (!auth) {
+    return undefined;
+  }
+  if (auth === 'inherit') {
+    warnings.push(
+      'auth is set to "inherit", but collection/folder auth inheritance is not supported; no credential was sent',
+    );
+    return undefined;
+  }
+
+  switch (auth.type) {
+    case undefined:
+    case 'none':
+      return undefined;
+
+    case 'bearer': {
+      const token = subst(String(auth.token ?? ''));
+      if (token.length === 0) {
+        warnings.push('bearer auth has no token; no Authorization header was sent');
+        return undefined;
+      }
+      headers['Authorization'] = `Bearer ${token}`;
+      return undefined;
+    }
+
+    case 'basic': {
+      const username = subst(String(auth.username ?? ''));
+      const password = subst(String(auth.password ?? ''));
+      headers['Authorization'] =
+        'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
+      return undefined;
+    }
+
+    case 'api-key':
+    case 'apikey': {
+      const key = subst(String(auth.key ?? ''));
+      const value = subst(String(auth.value ?? ''));
+      if (key.length === 0) {
+        warnings.push('api-key auth has no key name; no credential was sent');
+        return undefined;
+      }
+      if (auth.in === 'query') {
+        return { key, value };
+      }
+      headers[key] = value;
+      return undefined;
+    }
+
+    default:
+      warnings.push(
+        `auth type "${String(auth.type)}" is not applied automatically; send the credential via a header or a pre-request script`,
+      );
+      return undefined;
+  }
 }
 
 function getBeforeRequestScript(yaml: YamlRequest): string | null {
@@ -281,7 +412,10 @@ async function executeSingleRequest(
   const effectiveVars = variableStore ? variableStore.merge(vars) : vars;
 
   // eslint-disable-next-line prefer-const -- url is reassigned by pre-request script mutations below
-  let { url, options } = await buildFetchOptions(yaml, effectiveVars);
+  const built = await buildFetchOptions(yaml, effectiveVars);
+  let url = built.url;
+  let options = built.options;
+  const authWarnings = built.warnings;
   const name = yaml.info.name;
   const method = yaml.http.method;
 
@@ -436,6 +570,7 @@ async function executeSingleRequest(
       }
     }
 
+    const combinedWarnings = [...(authWarnings ?? []), ...(scriptWarnings ?? [])];
     const result: RequestExecutionResult = {
       name,
       method,
@@ -443,7 +578,7 @@ async function executeSingleRequest(
       status: response.status,
       duration_ms: durationMs,
       tests,
-      ...(scriptWarnings ? { warnings: scriptWarnings } : {}),
+      ...(combinedWarnings.length > 0 ? { warnings: combinedWarnings } : {}),
       error: preScriptError,
     };
 
