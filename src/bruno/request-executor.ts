@@ -290,6 +290,45 @@ function confineUploadPath(filePath: string, collectionRoot: string | undefined)
   return resolved;
 }
 
+/** Query-parameter names whose values are masked before a URL is shown to the caller (finding S22). */
+const SECRET_QUERY_PARAMS = new Set([
+  'key', 'api-key', 'apikey', 'api_key', 'x-api-key',
+  'token', 'access_token', 'refresh_token', 'id_token', 'api_token', 'apitoken',
+  'secret', 'client_secret', 'password', 'pwd', 'passwd',
+  'auth', 'authorization', 'sig', 'signature', 'session', 'sessionid',
+]);
+
+/**
+ * Redact secrets from a URL before it is returned to the caller or embedded in
+ * an error message (finding S22). A query api-key or userinfo
+ * (`https://user:pass@host`) substituted from an env file must not cross back
+ * over the MCP boundary. Userinfo is always stripped; the values of known
+ * secret-bearing query parameters are masked. When there is nothing sensitive
+ * the input is returned byte-for-byte (so ordinary reported URLs are unchanged),
+ * and a URL that cannot be parsed is returned as-is (it already passed SSRF
+ * validation, which parses it).
+ */
+export function redactUrl(raw: string): string {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return raw;
+  }
+  const secretNames = [...u.searchParams.keys()].filter(n =>
+    SECRET_QUERY_PARAMS.has(n.toLowerCase()),
+  );
+  if (!u.username && !u.password && secretNames.length === 0) {
+    return raw;
+  }
+  u.username = '';
+  u.password = '';
+  for (const name of secretNames) {
+    u.searchParams.set(name, 'REDACTED');
+  }
+  return u.toString();
+}
+
 /** Credential headers always dropped on a cross-origin redirect, in addition to the request's own auth headers. */
 const CROSS_ORIGIN_STRIP_HEADERS = ['authorization', 'cookie', 'proxy-authorization'];
 
@@ -613,13 +652,19 @@ async function executeSingleRequest(
     }
   }
 
+  // The URL is finalized here (post pre-request mutation). `url` keeps any
+  // substituted secrets and is what we actually fetch; `shownUrl` is the
+  // redacted form used everywhere a URL crosses back to the caller — results
+  // and error messages (finding S22).
+  const shownUrl = redactUrl(url);
+
   // SSRF protection: validate URL before making the request
   const urlCheck = await validateUrl(url);
   if (!urlCheck.valid) {
     return {
       name,
       method,
-      url,
+      url: shownUrl,
       status: 0,
       duration_ms: 0,
       tests: [],
@@ -682,11 +727,11 @@ async function executeSingleRequest(
         return {
           name,
           method,
-          url,
+          url: shownUrl,
           status: 0,
           duration_ms: Date.now() - startTime,
           tests: [],
-          error: `Redirect to ${redirectUrl} blocked: ${redirectCheck.reason}`,
+          error: `Redirect to ${redactUrl(redirectUrl)} blocked: ${redirectCheck.reason}`,
         };
       }
 
@@ -712,7 +757,7 @@ async function executeSingleRequest(
       return {
         name,
         method,
-        url,
+        url: shownUrl,
         status: 0,
         duration_ms: Date.now() - startTime,
         tests: [],
@@ -746,7 +791,7 @@ async function executeSingleRequest(
     const result: RequestExecutionResult = {
       name,
       method,
-      url,
+      url: shownUrl,
       status: response.status,
       duration_ms: durationMs,
       tests,
@@ -769,11 +814,11 @@ async function executeSingleRequest(
     return {
       name,
       method,
-      url,
+      url: shownUrl,
       status: 0,
       duration_ms: durationMs,
       tests: [],
-      error: describeNetworkError(error, { url, timeoutMs: timeout, elapsedMs: durationMs }),
+      error: describeNetworkError(error, { url: shownUrl, timeoutMs: timeout, elapsedMs: durationMs }),
     };
   }
 }
