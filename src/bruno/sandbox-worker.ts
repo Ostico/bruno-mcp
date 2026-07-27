@@ -799,6 +799,51 @@ export function runPreRequestJob(
   }
 
 /**
+ * Error recorded for an async test() callback that registered a pending slot
+ * but never settled. Shared verbatim between the success path and the recovery
+ * path so the two cannot drift.
+ */
+const PENDING_NEVER_SETTLED =
+  'async test callback never settled: it is still awaiting a promise ' +
+  'that nothing in the sandbox can resolve (no timers or I/O are available)';
+
+/**
+ * Read back the results the sandbox recorded, mapping any test() callback that
+ * registered a pending slot but never settled to a failure.
+ *
+ * Called from the catch path to preserve results already recorded before a
+ * top-level throw (finding A4): the outer catch used to return a single
+ * synthetic failure, discarding every test() result the script had produced
+ * before it threw. The success path reads __results with the same shape inline;
+ * the two share PENDING_NEVER_SETTLED so the never-settled mapping cannot drift.
+ *
+ * The read is defensive: if the context never got far enough to define
+ * __results (a compile error, or a throw inside the prelude), or the script
+ * corrupted the accumulator, it yields []. __results holds only objects this
+ * file's own test() built, so — unlike the variable store — it carries no
+ * script-supplied accessors.
+ */
+function readRecordedResults(context: vm.Context, budget: number): TestResult[] {
+  try {
+    const rawResults =
+      (vm.runInContext('__results', context, {
+        timeout: Math.max(1, budget),
+      }) as SandboxTestResult[]) || [];
+    return rawResults.map(raw =>
+      raw.status === 'pending'
+        ? {
+            description: raw.description,
+            status: 'fail',
+            error: PENDING_NEVER_SETTLED,
+          }
+        : (raw as TestResult),
+    );
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Run a test script in an isolated vm context and return its recorded results,
  * variable writes and non-fatal warnings. Same isolation guarantees as
  * runPreRequestJob. In PR-b this runs inside the forked child.
@@ -869,9 +914,7 @@ export function runTestJob(
           ? {
               description: raw.description,
               status: 'fail',
-              error:
-                'async test callback never settled: it is still awaiting a promise ' +
-                'that nothing in the sandbox can resolve (no timers or I/O are available)',
+              error: PENDING_NEVER_SETTLED,
             }
           : (raw as TestResult),
       );
@@ -901,8 +944,24 @@ export function runTestJob(
 
       const warnings = detectDoubleParse(message);
 
+      // A4: a top-level throw after one or more test() blocks already recorded
+      // results must not discard them. Recover whatever the sandbox managed to
+      // record before the throw and report the script error alongside it,
+      // rather than replacing the entire run with a single synthetic failure.
+      // If the context never reached the point of defining __results (compile
+      // error, throw inside the prelude) recovery yields [] and this collapses
+      // to the previous single-failure shape.
+      //
+      // A timeout is deliberately excluded: it force-terminates the context
+      // mid-execution, so any half-recorded slot (e.g. a still-pending async
+      // test that was the very thing spinning) is noise, and the run's contract
+      // is a single clean "Script timeout" result.
+      const recovered =
+        context && !isTimeout ? readRecordedResults(context, timeout) : [];
+
       return {
         results: [
+          ...recovered,
           {
             description: isTimeout ? 'Script timeout' : 'Script error',
             status: 'fail',
