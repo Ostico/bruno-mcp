@@ -576,6 +576,48 @@ export function detectDoubleParse(message: string): string[] {
   ];
 }
 
+/**
+ * JS source that defines the `bru` variable store INSIDE the sandbox realm.
+ *
+ * Security-critical. bru.setVar/getVar must NOT be host-realm closures. A
+ * function created in the host realm carries host intrinsics on its prototype
+ * chain, so from inside the sandbox `bru.setVar.constructor` is the host
+ * Function constructor — and codeGeneration.strings:false only governs the
+ * context realm, not the host one. That left a full escape:
+ *
+ *   bru.setVar.constructor("return globalThis")().process.env
+ *
+ * would hand sandboxed script the host global and read the server's
+ * environment. Defining bru in-context makes its .constructor the context's
+ * own Function, which strings:false does block. __bruVars is read back out
+ * after execution, exactly like __results and __reqMutations.
+ */
+const SANDBOX_BRU_LIB = `
+var __bruVars = Object.create(null);
+var bru = Object.create(null);
+bru.setVar = function(name, value) { __bruVars[name] = value; };
+bru.getVar = function(name) { return __bruVars[name]; };
+`;
+
+/**
+ * Best-effort read of the in-context __bruVars store, shallow-copied into a
+ * plain host object. Safe on every exit path: on a syntax error the context
+ * never ran, so there is no __bruVars (returns {}); after a runtime error or a
+ * timeout the context persists with whatever was set before the throw, which
+ * the "preserve variables set before an error" contract requires.
+ */
+function extractBruVars(context: vm.Context): Record<string, unknown> {
+  try {
+    const raw = vm.runInContext(
+      'typeof __bruVars !== "undefined" ? __bruVars : null',
+      context,
+    ) as Record<string, unknown> | null;
+    return raw ? { ...raw } : {};
+  } catch {
+    return {};
+  }
+}
+
 export class TestRunner {
   static async runPreRequestScript(
     script: string,
@@ -588,34 +630,29 @@ export class TestRunner {
       return { variables: {}, mutations: {} };
     }
 
-    const __bruVars: Record<string, unknown> = {};
-
     const setupScript = buildPreRequestSandboxScript(request);
-    const fullScript = setupScript + '\n' + script;
+    // SANDBOX_BRU_LIB defines bru in-context; see its definition for why it must
+    // not be a host-realm closure.
+    const fullScript = SANDBOX_BRU_LIB + '\n' + setupScript + '\n' + script;
 
+    // A sandbox with NO prototype chain to the main realm and NO host-realm
+    // functions placed on it.
     const sandbox = Object.create(null);
-
-    sandbox.bru = Object.create(null);
-    sandbox.bru.setVar = (name: string, value: unknown): void => {
-      __bruVars[name] = value;
-    };
-    sandbox.bru.getVar = (name: string): unknown => {
-      return __bruVars[name];
-    };
+    let context: vm.Context | undefined;
 
     try {
       const vmScript = new vm.Script(fullScript, {
         filename: 'bruno-pre-request-script.js',
       });
 
-      const context = vm.createContext(sandbox, {
+      context = vm.createContext(sandbox, {
         codeGeneration: { strings: false, wasm: false },
       });
 
       vmScript.runInContext(context, { timeout });
 
       const mutations = vm.runInContext('__reqMutations', context) as RequestMutations;
-      return { variables: __bruVars, mutations: mutations || {} };
+      return { variables: extractBruVars(context), mutations: mutations || {} };
     } catch (error: unknown) {
       const message =
         error instanceof Error ? error.message : String(error);
@@ -625,7 +662,7 @@ export class TestRunner {
         message.includes('execution timed out');
 
       return {
-        variables: __bruVars,
+        variables: context ? extractBruVars(context) : {},
         mutations: {},
         error: isTimeout
           ? `Script execution timed out after ${timeout}ms`
@@ -645,24 +682,18 @@ export class TestRunner {
       return { results: [], variables: {} };
     }
 
-    // Host-realm variable store — bru.setVar/getVar closures write here
-    const __bruVars: Record<string, unknown> = {};
-
-    // Build the full script: expect lib + sandbox setup + user script
+    // Build the full script: bru store + expect lib + sandbox setup + user script.
+    // SANDBOX_BRU_LIB defines bru in-context so it exposes no host-realm closure
+    // whose .constructor could reach the host Function; __bruVars is read back
+    // out after execution, like __results.
     const setupScript = buildSandboxSetupScript(response);
-    const fullScript = SANDBOX_EXPECT_LIB + '\n' + setupScript + '\n' + script;
+    const fullScript =
+      SANDBOX_BRU_LIB + '\n' + SANDBOX_EXPECT_LIB + '\n' + setupScript + '\n' + script;
 
-    // Create a sandbox with NO prototype chain to the main realm
+    // A sandbox with NO prototype chain to the main realm and NO host-realm
+    // functions placed on it.
     const sandbox = Object.create(null);
-
-    // Inject bru object — host-realm closures, not sandbox-constructed
-    sandbox.bru = Object.create(null);
-    sandbox.bru.setVar = (name: string, value: unknown): void => {
-      __bruVars[name] = value;
-    };
-    sandbox.bru.getVar = (name: string): unknown => {
-      return __bruVars[name];
-    };
+    let context: vm.Context | undefined;
 
     try {
       const vmScript = new vm.Script(fullScript, {
@@ -679,7 +710,7 @@ export class TestRunner {
       // microtask loop, would hang the host forever. Both stay interruptible
       // this way, and the sandbox exposes no timers or I/O, so a promise still
       // unsettled once the queue empties can never settle.
-      const context = vm.createContext(sandbox, {
+      context = vm.createContext(sandbox, {
         codeGeneration: { strings: false, wasm: false },
         microtaskMode: 'afterEvaluate',
       });
@@ -714,7 +745,7 @@ export class TestRunner {
       ];
       return {
         results,
-        variables: __bruVars,
+        variables: extractBruVars(context),
         ...(warnings.length > 0 ? { warnings } : {}),
       };
     } catch (error: unknown) {
@@ -737,7 +768,7 @@ export class TestRunner {
               : `${(error as Error).constructor?.name ?? 'Error'}: ${message}`,
           },
         ],
-        variables: __bruVars,
+        variables: context ? extractBruVars(context) : {},
         ...(warnings.length > 0 ? { warnings } : {}),
       };
     }
