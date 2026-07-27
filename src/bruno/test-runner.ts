@@ -6,6 +6,18 @@ export type { TestResult, ScriptResult, PreRequestScriptResult } from './types.j
 const DEFAULT_TIMEOUT = 5000;
 
 /**
+ * What the sandbox actually pushes into __results. Identical to TestResult
+ * except that an async callback reserves its slot as 'pending' until the
+ * microtask drain settles it; anything still pending when we read the array
+ * back is converted to a failure before it reaches a caller.
+ */
+interface SandboxTestResult {
+  description: string;
+  status: 'pass' | 'fail' | 'pending';
+  error?: string;
+}
+
+/**
  * Minimal expect() assertion library as a pure JS string.
  * This is prepended to user scripts and runs entirely inside the VM sandbox.
  * No references to the main Node.js realm — all functions are defined as source.
@@ -332,14 +344,46 @@ res.getHeader = function(name) {
 res.getBody = function() { return __resData.body; };
 res.getResponseTime = function() { return __resData.responseTime; };
 
+var __pending = 0;
+
+function __errMessage(e) {
+  return (e && e.message) ? e.message : String(e);
+}
+
 var test = function(description, callback) {
+  var slot = __results.length;
+  var returned;
+
   try {
-    callback();
-    __results.push({ description: description, status: 'pass' });
+    returned = callback();
   } catch (e) {
-    var message = (e && e.message) ? e.message : String(e);
-    __results.push({ description: description, status: 'fail', error: message });
+    __results.push({ description: description, status: 'fail', error: __errMessage(e) });
+    return;
   }
+
+  if (returned === null || returned === undefined || typeof returned.then !== 'function') {
+    __results.push({ description: description, status: 'pass' });
+    return;
+  }
+
+  // Async callback. The body runs synchronously only up to its first await, and
+  // a failing assertion rejects the returned promise instead of throwing, so the
+  // synchronous path above would record a pass for a test that actually failed.
+  // Reserve the slot now to keep results in source order, then let the microtask
+  // drain fill it in. The context is created with microtaskMode 'afterEvaluate',
+  // so that drain happens inside runInContext and stays under the timeout.
+  __results.push({ description: description, status: 'pending' });
+  __pending++;
+  returned.then(
+    function() {
+      __results[slot] = { description: description, status: 'pass' };
+      __pending--;
+    },
+    function(e) {
+      __results[slot] = { description: description, status: 'fail', error: __errMessage(e) };
+      __pending--;
+    }
+  );
 };
 `;
 }
@@ -625,15 +669,37 @@ export class TestRunner {
         filename: 'bruno-test-script.js',
       });
 
-      // Create context with code generation disabled (blocks eval/Function)
+      // Create context with code generation disabled (blocks eval/Function).
+      //
+      // microtaskMode 'afterEvaluate' gives the context its own microtask queue
+      // and drains it before runInContext returns, which is what lets test()
+      // observe an async callback at all. Draining outside runInContext would
+      // instead disarm the timeout: the V8 interrupt only covers work done
+      // inside the call, so a CPU spin after an await, or a self-requeueing
+      // microtask loop, would hang the host forever. Both stay interruptible
+      // this way, and the sandbox exposes no timers or I/O, so a promise still
+      // unsettled once the queue empties can never settle.
       const context = vm.createContext(sandbox, {
         codeGeneration: { strings: false, wasm: false },
+        microtaskMode: 'afterEvaluate',
       });
 
       vmScript.runInContext(context, { timeout });
 
       // Extract results from sandbox — the only thing we read back
-      const results = (vm.runInContext('__results', context) as TestResult[]) || [];
+      const rawResults =
+        (vm.runInContext('__results', context) as SandboxTestResult[]) || [];
+      const results: TestResult[] = rawResults.map(raw =>
+        raw.status === 'pending'
+          ? {
+              description: raw.description,
+              status: 'fail',
+              error:
+                'async test callback never settled: it is still awaiting a promise ' +
+                'that nothing in the sandbox can resolve (no timers or I/O are available)',
+            }
+          : (raw as TestResult),
+      );
       // A double parse inside a test() block is caught by test() itself, so it
       // never reaches the outer catch — scan the recorded failures too. Only
       // failures carry an error, so filtering on it is the same as filtering
