@@ -5,7 +5,12 @@
  * They define the contract for src/bruno/response-wrapper.ts.
  */
 
-import { BrunoResponse } from '../../../src/bruno/response-wrapper';
+import {
+  BrunoResponse,
+  wrapFetchResponse,
+  readBodyCapped,
+  MAX_RESPONSE_BYTES,
+} from '../../../src/bruno/response-wrapper';
 
 // ---------------------------------------------------------------------------
 // Helpers — build a minimal ResponseData that BrunoResponse accepts
@@ -261,5 +266,81 @@ describe('BrunoResponse', () => {
       const second = res.getBody();
       expect(first).toEqual(second);
     });
+  });
+});
+
+describe('readBodyCapped (X3: bounded response read)', () => {
+  it('reads a small streamed body in full', async () => {
+    const res = new Response('hello world');
+    expect(await readBodyCapped(res, 1000)).toEqual({ text: 'hello world', truncated: false });
+  });
+
+  it('caps a body larger than the limit and flags truncation', async () => {
+    const res = new Response('x'.repeat(10_000));
+    const out = await readBodyCapped(res, 100);
+    expect(out.truncated).toBe(true);
+    expect(out.text.length).toBe(100);
+  });
+
+  it('does not flag truncation when the body exactly fits the cap', async () => {
+    const res = new Response('x'.repeat(50));
+    const out = await readBodyCapped(res, 50);
+    expect(out.truncated).toBe(false);
+    expect(out.text.length).toBe(50);
+  });
+
+  it('decodes multibyte characters that span chunk boundaries', async () => {
+    // Split a 3-byte UTF-8 char (€ = E2 82 AC) across two chunks.
+    const euro = new Uint8Array([0xe2, 0x82, 0xac]);
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(euro.subarray(0, 1));
+        controller.enqueue(euro.subarray(1));
+        controller.close();
+      },
+    });
+    const out = await readBodyCapped(new Response(stream), 1000);
+    expect(out.text).toBe('€');
+  });
+
+  it('falls back to text() when the response has no stream body', async () => {
+    const fake = { body: undefined, text: async () => 'from-text' } as unknown as Response;
+    expect(await readBodyCapped(fake, 1000)).toEqual({ text: 'from-text', truncated: false });
+  });
+
+  it('exposes a positive default ceiling', () => {
+    expect(MAX_RESPONSE_BYTES).toBeGreaterThan(0);
+  });
+});
+
+describe('wrapFetchResponse — Set-Cookie preservation (X7)', () => {
+  it('preserves every Set-Cookie value individually', async () => {
+    const headers = new Headers();
+    headers.append('set-cookie', 'a=1; Path=/');
+    headers.append('set-cookie', 'b=2; Expires=Wed, 21 Oct 2099 00:00:00 GMT');
+    const out = await wrapFetchResponse(new Response('ok', { headers }), 5);
+    expect(out.setCookies).toEqual(['a=1; Path=/', 'b=2; Expires=Wed, 21 Oct 2099 00:00:00 GMT']);
+  });
+
+  it('omits setCookies when the response set no cookies', async () => {
+    const out = await wrapFetchResponse(new Response('ok'), 5);
+    expect(out.setCookies).toBeUndefined();
+  });
+});
+
+describe('wrapFetchResponse — body handling', () => {
+  it('parses a JSON body read through the capped stream', async () => {
+    const res = new Response('{"a":1}', { headers: { 'content-type': 'application/json' } });
+    const out = await wrapFetchResponse(res, 1);
+    expect(out.body).toEqual({ a: 1 });
+    expect(out.rawBody).toBe('{"a":1}');
+  });
+
+  it('caps an oversized body and warns (X3)', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const out = await wrapFetchResponse(new Response('y'.repeat(1000)), 1, 20);
+    expect(out.rawBody!.length).toBe(20);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('truncated to protect the server'));
+    warn.mockRestore();
   });
 });
