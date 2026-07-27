@@ -7,7 +7,7 @@ import {
   generateBruEnvironmentFull,
   injectBruScript,
 } from '../../../src/bruno/bru-parser.js';
-import { BrunoError } from '../../../src/bruno/types.js';
+import { BrunoError, type EnvVariable } from '../../../src/bruno/types.js';
 
 const SAMPLE_BRU = `meta {
   name: Get Users
@@ -457,6 +457,33 @@ script:post-response {
 
       expect(byName['host']).toEqual({ name: 'host', value: 'localhost' });
       expect(byName['debug_url']).toEqual({ name: 'debug_url', value: 'http://debug', disabled: true });
+    });
+  });
+
+  describe('.bru environment secret flag round-trip (D7)', () => {
+    it('preserves secret:true across generate + parse', () => {
+      const vars: EnvVariable[] = [
+        { name: 'apiKey', value: 's3cret', secret: true },
+        { name: 'host', value: 'example.com' },
+      ];
+      const bru = generateBruEnvironmentFull(vars);
+      const parsed = parseBruEnvironmentRaw(bru);
+      const byName = Object.fromEntries(parsed.map((v) => [v.name, v]));
+      expect(byName['apiKey'].secret).toBe(true);
+      // A non-secret var must not gain a secret flag.
+      expect(byName['host'].secret).toBeUndefined();
+    });
+
+    it('does not downgrade a secret var when the file is re-saved', () => {
+      // A secret var's value is intentionally not persisted to the .bru env
+      // file (only its name lands in the vars:secret block); the regression is
+      // that the secret FLAG was being rewritten as false. Re-saving must keep
+      // the flag so the var stays secret.
+      const original = generateBruEnvironmentFull([{ name: 'token', value: 'old', secret: true }]);
+      const parsed = parseBruEnvironmentRaw(original);
+      const regenerated = generateBruEnvironmentFull(parsed);
+      const reparsed = parseBruEnvironmentRaw(regenerated);
+      expect(reparsed.find((v) => v.name === 'token')!.secret).toBe(true);
     });
   });
 });
