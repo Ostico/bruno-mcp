@@ -1,5 +1,6 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join, basename, relative, dirname, resolve, isAbsolute } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
 import { parseYamlRequest } from './yaml-parser.js';
 import { parseBruRequest } from './bru-parser.js';
 import { loadEnvironment, substitute, findUnresolvedPlaceholders } from './env-loader.js';
@@ -213,17 +214,52 @@ function isMultipartBody(body: YamlRequest['http']['body']): boolean {
   );
 }
 
+let uploadDirsCache: string[] | null = null;
+
 /**
- * Resolve a multipart file-part path and confine it to the collection root.
+ * Extra upload directories the operator trusts, from BRUNO_UPLOAD_DIRS
+ * (comma-separated absolute paths). Read once and cached.
+ */
+function operatorUploadDirs(): string[] {
+  if (uploadDirsCache === null) {
+    uploadDirsCache = (process.env.BRUNO_UPLOAD_DIRS ?? '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean)
+      .map(s => resolve(s));
+  }
+  return uploadDirsCache;
+}
+
+/** Reset the cached BRUNO_UPLOAD_DIRS. Exported for testing. */
+export function resetUploadDirsCache(): void {
+  uploadDirsCache = null;
+}
+
+/** True if `p` is within `root` (lexically; `root` itself does not count). */
+function isWithin(root: string, p: string): boolean {
+  const rel = relative(root, p);
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+}
+
+/**
+ * Resolve a multipart file-part path and confine it to a trusted upload
+ * location.
  *
  * The path comes from the (untrusted) collection, so without confinement a
  * collection could name `/etc/passwd`, `~/.ssh/id_rsa`, an env file, etc. and
  * have its contents POSTed to any host — arbitrary file read + exfiltration
- * (finding S05). A relative path is resolved against the collection root; an
- * absolute or `..` path that escapes the root is refused, as is any file part
- * when no collection root is known (there is no trusted base to confine to).
+ * (finding S05).
+ *
+ * The read is allowed only when the resolved path sits under one of: the
+ * collection root, the user's home directory, the OS temp dir (and `/tmp`), or
+ * an operator-configured `BRUNO_UPLOAD_DIRS` entry. On top of that, ANY path
+ * component starting with `.` is refused — so even though home is allowed,
+ * dotfiles and dot-directories (`~/.ssh`, `.aws`, `.env`, `.git`, …) are not
+ * readable. Relative paths resolve against the collection root; a file part
+ * with no known collection root is refused (no trusted base).
  */
-function confineToCollection(filePath: string, collectionRoot: string | undefined): string {
+function confineUploadPath(filePath: string, collectionRoot: string | undefined): string {
   if (!collectionRoot) {
     throw new Error(
       `Refusing to read multipart file part "${basename(filePath)}": no collection root to confine it to`,
@@ -231,10 +267,24 @@ function confineToCollection(filePath: string, collectionRoot: string | undefine
   }
   const root = resolve(collectionRoot);
   const resolved = resolve(root, filePath);
-  const rel = relative(root, resolved);
-  if (rel.startsWith('..') || isAbsolute(rel)) {
+
+  const allowedRoots = [root, resolve(homedir()), resolve(tmpdir()), resolve('/tmp'), ...operatorUploadDirs()];
+  // Match against the most specific (longest) allowed root, so the hidden-segment
+  // check runs only below that root — a collection legitimately nested under a
+  // hidden ancestor (e.g. ~/.config/bruno/coll) still works.
+  const matched = allowedRoots
+    .filter(r => isWithin(r, resolved))
+    .sort((a, b) => b.length - a.length)[0];
+  if (!matched) {
     throw new Error(
-      `Refusing to read multipart file part outside the collection root: "${filePath}"`,
+      `Refusing to read multipart file part outside the allowed upload directories: "${filePath}"`,
+    );
+  }
+
+  const belowRoot = relative(matched, resolved).split(/[\\/]+/);
+  if (belowRoot.some(seg => seg.startsWith('.'))) {
+    throw new Error(
+      `Refusing to read a hidden file or directory as a multipart file part: "${filePath}"`,
     );
   }
   return resolved;
@@ -316,7 +366,7 @@ export async function buildFetchOptions(
           // A file-part path is collection-controlled; confine the read to the
           // collection root so a collection cannot exfiltrate arbitrary host
           // files (finding S05).
-          const resolvedPath = confineToCollection(filePath, collectionRoot);
+          const resolvedPath = confineUploadPath(filePath, collectionRoot);
           const buf = await readFile(resolvedPath);
           form.append(
             part.name,

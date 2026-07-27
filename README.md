@@ -284,6 +284,8 @@ Generate request files (`.bru` or `.yml` based on collection format).
 
 A request with a `form-data` body is sent as real `multipart/form-data` at execution time: file `value`s are read from disk (each array entry becomes its own part with the same field name), and each part's `Content-Type` header is set from `contentType` when provided (defaults to `application/octet-stream` for files, or none for `text` parts).
 
+**Upload file confinement.** Because a collection is untrusted input, a multipart file `value` cannot read arbitrary host files. A file path is accepted only when it resolves under a trusted location — the **collection root** (relative paths resolve here), the user's **home directory**, the **OS temp dir** / `/tmp`, or a directory listed in the **`BRUNO_UPLOAD_DIRS`** environment variable (comma-separated absolute paths, set when launching the server). On top of that, any path segment beginning with `.` is refused, so **dotfiles and dot-directories** (`~/.ssh`, `.aws`, `.env`, `.git`, …) are never readable even though home is allowed. A path outside every trusted location, or through a hidden segment, is refused before any read.
+
 > **Note:** `create_test_suite` supports a subset of auth types (`bearer`, `basic`, `oauth2`, `api-key`) and body types (`json`, `text`, `xml`, `form-data`, `form-urlencoded`). `digest` auth and `binary` body are only available in `create_request`.
 
 ### `modify_request`
