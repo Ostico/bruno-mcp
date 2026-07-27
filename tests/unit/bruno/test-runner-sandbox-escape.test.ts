@@ -93,20 +93,179 @@ describe('TestRunner sandbox escape prevention', () => {
     expect(variables).toEqual({ token: 'abc', echo: 'abc', num: 42 });
   });
 
-  it('should not crash when a script sabotages the variable store', async () => {
-    // A hostile script can replace __bruVars with a throwing getter. Extraction
-    // must swallow that and return an empty set rather than letting the throw
-    // bubble out of runScript.
-    const result = await TestRunner.runScript(
-      `Object.defineProperty(this, "__bruVars", {
-         get: function() { throw new Error("sabotage"); },
-         configurable: true,
-       });`,
-      res200,
+  describe('a sabotaged variable store degrades to empty', () => {
+    // Every one of these is reachable: __bruDump is a plain global a script can
+    // overwrite. None may throw out of runScript or return a non-plain object.
+    it.each([
+      ['a dump that throws', 'function() { throw new Error("sabotage"); }'],
+      ['a dump returning a non-string', 'function() { return 42; }'],
+      ['a dump returning invalid JSON', 'function() { return "not json"; }'],
+      ['a dump returning a JSON array', 'function() { return "[1,2,3]"; }'],
+      ['a dump returning JSON null', 'function() { return "null"; }'],
+      ['a non-function dump', '"clobbered"'],
+    ])('should return {} for %s', async (_label, expr) => {
+      const result = await TestRunner.runScript(`__bruDump = ${expr};`, res200);
+
+      expect(result.variables).toEqual({});
+      expect(result.results).toEqual([]);
+    });
+  });
+
+  // The timeout is the only thing bounding a hostile script. Any work the host
+  // performs on a script-controlled value AFTER runInContext returns escapes
+  // it, because the V8 interrupt is no longer armed. These tests pin that
+  // nothing a script can reach buys it unbounded host time.
+  describe('no script can outlive its timeout', () => {
+    const SPIN = 'var __e = Date.now() + 4000; while (Date.now() < __e) {}';
+    const BUDGET = 200;
+
+    // Generous ceiling: we are distinguishing "bounded" from "hung", not
+    // measuring scheduler precision.
+    const CEILING = 3000;
+
+    it('should bound a spinning dump function', async () => {
+      const started = Date.now();
+      const result = await TestRunner.runScript(
+        `__bruDump = function() { ${SPIN} };`,
+        res200,
+        { timeout: BUDGET },
+      );
+
+      expect(Date.now() - started).toBeLessThan(CEILING);
+      expect(result.variables).toEqual({});
+    });
+
+    it('should bound a spinning toJSON on a stored value', async () => {
+      const started = Date.now();
+      await TestRunner.runScript(
+        `bru.setVar("evil", { toJSON: function() { ${SPIN} } });`,
+        res200,
+        { timeout: BUDGET },
+      );
+
+      expect(Date.now() - started).toBeLessThan(CEILING);
+    });
+
+    it('should bound a spinning getter on a stored value', async () => {
+      const started = Date.now();
+      await TestRunner.runScript(
+        `bru.setVar("evil", Object.defineProperty({}, "x", {
+           enumerable: true,
+           get: function() { ${SPIN} }
+         }));`,
+        res200,
+        { timeout: BUDGET },
+      );
+
+      expect(Date.now() - started).toBeLessThan(CEILING);
+    });
+
+    it('should bound deferred microtask work in the pre-request sandbox', async () => {
+      const started = Date.now();
+      const result = await TestRunner.runPreRequestScript(
+        `Promise.resolve().then(function() { ${SPIN} });`,
+        { url: 'https://api.example.com', method: 'GET', headers: {}, body: null },
+        { timeout: BUDGET },
+      );
+
+      expect(Date.now() - started).toBeLessThan(CEILING);
+      expect(result.error).toContain('timed out');
+    });
+  });
+
+  describe('hostile thrown values cannot break the error handler', () => {
+    // Reporting an error must not hand control back to the script. A thrown
+    // object whose toString or constructor getter throws would otherwise take
+    // out the handler trying to describe it.
+    const HOSTILE = [
+      ['throwing toString', '{ toString: function() { throw new Error("ts"); } }'],
+      ['throwing constructor getter', '{ get constructor() { throw new Error("ctor"); } }'],
+      [
+        'throwing Symbol.toPrimitive',
+        '{ get [Symbol.toPrimitive]() { throw new Error("prim"); } }',
+      ],
+    ] as const;
+
+    it.each(HOSTILE)('should survive a %s', async (_label, expr) => {
+      const result = await TestRunner.runScript(`throw ${expr};`, res200);
+
+      expect(result.results).toHaveLength(1);
+      expect(result.results[0].status).toBe('fail');
+      expect(typeof result.results[0].error).toBe('string');
+    });
+
+    it.each(HOSTILE)('should survive a %s in the pre-request sandbox', async (_label, expr) => {
+      const result = await TestRunner.runPreRequestScript(
+        `throw ${expr};`,
+        { url: 'https://api.example.com', method: 'GET', headers: {}, body: null },
+      );
+
+      expect(typeof result.error).toBe('string');
+    });
+  });
+
+  describe('injected identifiers do not collide with user declarations', () => {
+    // bru is installed by assignment, so it is a configurable global property
+    // that user code can shadow with a lexical declaration — as it was when bru
+    // was a sandbox property. (test/expect remain var declarations and are not
+    // shadowable; that predates this change and is unaltered by it.)
+    it.each(['let bru = 1;', 'const bru = 1;', 'class bru {}'])(
+      'should allow user script to declare: %s',
+      async decl => {
+        const result = await TestRunner.runScript(decl, res200);
+
+        expect(result.results).toEqual([]);
+      },
     );
 
-    expect(result.variables).toEqual({});
-    expect(result.results).toEqual([]);
+    it('should allow a user script to shadow bru in the pre-request sandbox', async () => {
+      const result = await TestRunner.runPreRequestScript(
+        `let bru = 1;`,
+        { url: 'https://api.example.com', method: 'GET', headers: {}, body: null },
+      );
+
+      expect(result.error).toBeUndefined();
+    });
+  });
+
+  describe('extracted variables are inert data', () => {
+    it('should drop a __proto__ key rather than return it', async () => {
+      const { variables } = await TestRunner.runScript(
+        `bru.setVar("__proto__", { polluted: true });
+         bru.setVar("safe", 1);`,
+        res200,
+      );
+
+      expect(Object.keys(variables)).toEqual(['safe']);
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    });
+
+    it('should reduce values to plain JSON data with no live accessors', async () => {
+      const { variables } = await TestRunner.runScript(
+        `bru.setVar("fn", function() { return 1; });
+         bru.setVar("obj", { nested: { n: 1 } });
+         bru.setVar("str", "plain");`,
+        res200,
+      );
+
+      // A function is not JSON-representable, so it does not survive at all —
+      // nothing the caller does with the result can re-enter the sandbox.
+      expect(variables.fn).toBeUndefined();
+      expect(variables.obj).toEqual({ nested: { n: 1 } });
+      expect(variables.str).toBe('plain');
+    });
+  });
+
+  it('should fail the script rather than reject when the body cannot be serialised', async () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+
+    const result = await TestRunner.runScript(`test("t", function() {});`, {
+      ...res200,
+      body: circular,
+    });
+
+    expect(result.results[0].status).toBe('fail');
   });
 
   it('should not leak host intrinsics through an in-context Function either', async () => {

@@ -589,32 +589,116 @@ export function detectDoubleParse(message: string): string[] {
  *
  * would hand sandboxed script the host global and read the server's
  * environment. Defining bru in-context makes its .constructor the context's
- * own Function, which strings:false does block. __bruVars is read back out
- * after execution, exactly like __results and __reqMutations.
+ * own Function, which strings:false does block.
+ *
+ * The store itself stays inside a closure so script cannot name it, and it is
+ * read back as a JSON string rather than as an object: see extractBruVars for
+ * why handing the host a script-controlled object is its own vulnerability.
  */
 const SANDBOX_BRU_LIB = `
-var __bruVars = Object.create(null);
-var bru = Object.create(null);
-bru.setVar = function(name, value) { __bruVars[name] = value; };
-bru.getVar = function(name) { return __bruVars[name]; };
+(function() {
+  var store = Object.create(null);
+  var api = Object.create(null);
+  api.setVar = function(name, value) { store[name] = value; };
+  api.getVar = function(name) { return store[name]; };
+  // Plain assignment, deliberately not "var". A top-level var creates a
+  // non-configurable global binding, which makes a user-level "let bru" a
+  // redeclaration SyntaxError; assignment creates a configurable property that
+  // user code can shadow, matching how bru behaved as a sandbox property.
+  bru = api;
+  __bruDump = function() { return JSON.stringify(store); };
+})();
 `;
 
 /**
- * Best-effort read of the in-context __bruVars store, shallow-copied into a
- * plain host object. Safe on every exit path: on a syntax error the context
- * never ran, so there is no __bruVars (returns {}); after a runtime error or a
- * timeout the context persists with whatever was set before the throw, which
- * the "preserve variables set before an error" contract requires.
+ * Best-effort read of the sandbox variable store.
+ *
+ * Security-critical, and the reason this does not simply read the object out
+ * and spread it: any property access the host performs on a script-controlled
+ * object runs script-supplied code — getters and Proxy traps — on the HOST
+ * stack, after runInContext has returned and the V8 interrupt that implements
+ * the timeout is no longer armed. A one-line spinning getter would hang the
+ * process forever, with no timeout able to stop it.
+ *
+ * So the serialisation happens in-context, under the timeout, where a hostile
+ * getter is interruptible; only a JSON string crosses back. JSON.parse then
+ * yields plain data with no accessors, so nothing the caller does with the
+ * result can execute sandbox code either.
+ *
+ * Safe on every exit path: a syntax error means the prelude never ran (returns
+ * {}), while a runtime error or timeout leaves the store populated with
+ * whatever was set before the throw, which the "preserve variables set before
+ * an error" contract requires. A script that breaks __bruDump only loses its
+ * own variables.
  */
-function extractBruVars(context: vm.Context): Record<string, unknown> {
+function extractBruVars(
+  context: vm.Context,
+  timeout: number,
+): Record<string, unknown> {
+  let json: unknown;
   try {
-    const raw = vm.runInContext(
-      'typeof __bruVars !== "undefined" ? __bruVars : null',
+    json = vm.runInContext(
+      'typeof __bruDump === "function" ? __bruDump() : null',
       context,
-    ) as Record<string, unknown> | null;
-    return raw ? { ...raw } : {};
+      { timeout },
+    );
   } catch {
     return {};
+  }
+
+  if (typeof json !== 'string') {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(json) as Record<string, unknown>;
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {};
+    }
+    // Copy key by key, skipping __proto__ so the returned object cannot carry a
+    // prototype-shaped payload into whatever the caller merges it with.
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(parsed)) {
+      if (key !== '__proto__') {
+        out[key] = parsed[key];
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Turn a thrown value into a message without letting it run code on the host.
+ *
+ * A sandbox script can throw an object whose toString, Symbol.toPrimitive or
+ * constructor getter throws, which would otherwise take out the error handler
+ * that is trying to report it. Every access is guarded.
+ *
+ * Note the residual limit: a *spinning* getter still runs unbounded here,
+ * because by this point the value is already on the host stack and no vm
+ * timeout covers it. Only in-context capture could close that, which would
+ * change the reported error format; it is tracked separately.
+ */
+function describeSandboxError(error: unknown): { label: string; message: string } {
+  let label = 'Error';
+  try {
+    const name = (error as Error)?.constructor?.name;
+    if (typeof name === 'string' && name.length > 0) {
+      label = name;
+    }
+  } catch {
+    // keep the default label
+  }
+
+  try {
+    if (error instanceof Error) {
+      return { label, message: error.message };
+    }
+    return { label, message: String(error) };
+  } catch {
+    return { label, message: 'unknown sandbox error' };
   }
 }
 
@@ -630,43 +714,61 @@ export class TestRunner {
       return { variables: {}, mutations: {} };
     }
 
-    const setupScript = buildPreRequestSandboxScript(request);
-    // SANDBOX_BRU_LIB defines bru in-context; see its definition for why it must
-    // not be a host-realm closure.
-    const fullScript = SANDBOX_BRU_LIB + '\n' + setupScript + '\n' + script;
-
     // A sandbox with NO prototype chain to the main realm and NO host-realm
     // functions placed on it.
     const sandbox = Object.create(null);
     let context: vm.Context | undefined;
 
     try {
-      const vmScript = new vm.Script(fullScript, {
+      // Built inside the try: JSON.stringify of a caller-supplied body can throw
+      // (circular structures, BigInt), and that should surface as a failed
+      // script rather than rejecting the whole call.
+      const preludeScript = new vm.Script(
+        SANDBOX_BRU_LIB + '\n' + buildPreRequestSandboxScript(request),
+        { filename: 'bruno-sandbox-prelude.js' },
+      );
+      const userScript = new vm.Script(script, {
         filename: 'bruno-pre-request-script.js',
       });
 
+      // microtaskMode 'afterEvaluate' is as load-bearing here as in runScript:
+      // without it the context shares the host microtask queue, so a script
+      // that defers work with Promise.resolve().then(...) runs that work after
+      // runInContext returns, outside the V8 interrupt. A spin there hangs the
+      // process with no timeout able to stop it.
       context = vm.createContext(sandbox, {
         codeGeneration: { strings: false, wasm: false },
+        microtaskMode: 'afterEvaluate',
       });
 
-      vmScript.runInContext(context, { timeout });
+      // The prelude runs as its own script so its declarations become globals
+      // rather than sharing script scope with user code, which would make a
+      // user-level "let bru" a redeclaration SyntaxError.
+      const started = Date.now();
+      preludeScript.runInContext(context, { timeout });
+      const remaining = Math.max(1, timeout - (Date.now() - started));
+      userScript.runInContext(context, { timeout: remaining });
 
-      const mutations = vm.runInContext('__reqMutations', context) as RequestMutations;
-      return { variables: extractBruVars(context), mutations: mutations || {} };
+      const mutations = vm.runInContext('__reqMutations', context, {
+        timeout: Math.max(1, timeout - (Date.now() - started)),
+      }) as RequestMutations;
+      return {
+        variables: extractBruVars(context, timeout),
+        mutations: mutations || {},
+      };
     } catch (error: unknown) {
-      const message =
-        error instanceof Error ? error.message : String(error);
+      const { label, message } = describeSandboxError(error);
 
       const isTimeout =
         message.includes('Script execution timed out') ||
         message.includes('execution timed out');
 
       return {
-        variables: context ? extractBruVars(context) : {},
+        variables: context ? extractBruVars(context, timeout) : {},
         mutations: {},
         error: isTimeout
           ? `Script execution timed out after ${timeout}ms`
-          : `${(error as Error).constructor?.name ?? 'Error'}: ${message}`,
+          : `${label}: ${message}`,
       };
     }
   }
@@ -682,21 +784,28 @@ export class TestRunner {
       return { results: [], variables: {} };
     }
 
-    // Build the full script: bru store + expect lib + sandbox setup + user script.
-    // SANDBOX_BRU_LIB defines bru in-context so it exposes no host-realm closure
-    // whose .constructor could reach the host Function; __bruVars is read back
-    // out after execution, like __results.
-    const setupScript = buildSandboxSetupScript(response);
-    const fullScript =
-      SANDBOX_BRU_LIB + '\n' + SANDBOX_EXPECT_LIB + '\n' + setupScript + '\n' + script;
-
     // A sandbox with NO prototype chain to the main realm and NO host-realm
     // functions placed on it.
     const sandbox = Object.create(null);
     let context: vm.Context | undefined;
 
     try {
-      const vmScript = new vm.Script(fullScript, {
+      // Built inside the try: JSON.stringify of the response body can throw on
+      // a caller-supplied circular structure or BigInt, and that should surface
+      // as a failed script rather than rejecting the whole call.
+      //
+      // The prelude is a separate script so its declarations become globals
+      // instead of sharing script scope with user code, where a user-level
+      // "let bru" or "let test" would be a redeclaration SyntaxError.
+      const preludeScript = new vm.Script(
+        SANDBOX_BRU_LIB +
+          '\n' +
+          SANDBOX_EXPECT_LIB +
+          '\n' +
+          buildSandboxSetupScript(response),
+        { filename: 'bruno-sandbox-prelude.js' },
+      );
+      const vmScript = new vm.Script(script, {
         filename: 'bruno-test-script.js',
       });
 
@@ -715,11 +824,18 @@ export class TestRunner {
         microtaskMode: 'afterEvaluate',
       });
 
-      vmScript.runInContext(context, { timeout });
+      const started = Date.now();
+      preludeScript.runInContext(context, { timeout });
+      const remaining = Math.max(1, timeout - (Date.now() - started));
+      vmScript.runInContext(context, { timeout: remaining });
 
-      // Extract results from sandbox — the only thing we read back
+      // Extract results from sandbox — the only thing we read back.
+      // __results holds only objects this file's own test() built, so unlike
+      // the variable store it carries no script-supplied accessors.
       const rawResults =
-        (vm.runInContext('__results', context) as SandboxTestResult[]) || [];
+        (vm.runInContext('__results', context, {
+          timeout: Math.max(1, timeout - (Date.now() - started)),
+        }) as SandboxTestResult[]) || [];
       const results: TestResult[] = rawResults.map(raw =>
         raw.status === 'pending'
           ? {
@@ -745,12 +861,11 @@ export class TestRunner {
       ];
       return {
         results,
-        variables: extractBruVars(context),
+        variables: extractBruVars(context, timeout),
         ...(warnings.length > 0 ? { warnings } : {}),
       };
     } catch (error: unknown) {
-      const message =
-        error instanceof Error ? error.message : String(error);
+      const { label, message } = describeSandboxError(error);
 
       const isTimeout =
         message.includes('Script execution timed out') ||
@@ -765,10 +880,10 @@ export class TestRunner {
             status: 'fail',
             error: isTimeout
               ? `Script execution timed out after ${timeout}ms`
-              : `${(error as Error).constructor?.name ?? 'Error'}: ${message}`,
+              : `${label}: ${message}`,
           },
         ],
-        variables: context ? extractBruVars(context) : {},
+        variables: context ? extractBruVars(context, timeout) : {},
         ...(warnings.length > 0 ? { warnings } : {}),
       };
     }
