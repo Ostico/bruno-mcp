@@ -810,6 +810,26 @@ Security properties:
 - **Explicit entries only.** Wildcards (any entry containing `*`) are rejected with a warning; you must name a specific host, IP, or CIDR. Malformed entries are ignored with a warning (warnings go to stderr).
 - A request is allowed if its hostname matches an allowlisted host entry, **or** every resolved IP matches an allowlisted IP/CIDR.
 
+#### Collection-supplied TLS / proxy — `BRUNO_INSECURE_TLS_HOSTS`, `BRUNO_PROXY_HOSTS`
+A collection file is untrusted input, so its `settings.tls` and `settings.proxy` are **ignored by default**. Left unchecked, any collection could disable certificate verification (`rejectUnauthorized: false`), install its own CA/client certificate, or route every request — with all its credentials — through a proxy it names: a silent man-in-the-middle with no preconditions.
+
+To permit these overrides for specific targets, set — **when launching the server**, same as the SSRF allowlist — a comma-separated, exact-match, case-insensitive list of **target hosts**:
+
+| Variable | Permits, for the listed target hosts |
+|---|---|
+| `BRUNO_INSECURE_TLS_HOSTS` | a collection's `rejectUnauthorized: false`, `ca`, `cert`, `key` |
+| `BRUNO_PROXY_HOSTS` | a collection's `proxy` |
+
+```jsonc
+"env": { "BRUNO_INSECURE_TLS_HOSTS": "staging.internal.example", "BRUNO_PROXY_HOSTS": "staging.internal.example" }
+```
+
+Security properties (as for the SSRF allowlist):
+- **Operator-controlled only**, read once at startup; a tool call cannot set them.
+- **Host-scoped**, not a global switch: an override applies only to a request whose target host is listed. A plain `rejectUnauthorized: true` is never a downgrade and is always honoured.
+- **Explicit entries only**: any entry containing `*` is ignored with a warning.
+- When an override is ignored, a warning naming the host and the ignored setting **names** (never the CA/key/proxy **values**) is written to stderr.
+
 ### Path Traversal Prevention
 All tool inputs that accept file paths are validated:
 - `..` segments rejected
