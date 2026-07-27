@@ -1,7 +1,11 @@
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { loadEnvironment, substitute } from '../../../src/bruno/env-loader.js';
+import {
+  loadEnvironment,
+  substitute,
+  findUnresolvedPlaceholders,
+} from '../../../src/bruno/env-loader.js';
 
 describe('Environment Loader', () => {
   let tempDir: string;
@@ -184,6 +188,42 @@ describe('Environment Loader', () => {
       const vars = new Map<string, string>([['inner', 'world'], ['outer', '{{inner}}']]);
       const result = substitute('hello {{outer}}', vars);
       expect(result).toBe('hello {{inner}}');
+    });
+  });
+
+  describe('findUnresolvedPlaceholders (finding X8)', () => {
+    it('returns an empty array for an empty template', () => {
+      expect(findUnresolvedPlaceholders('', new Map())).toEqual([]);
+    });
+
+    it('returns an empty array when there are no placeholders', () => {
+      expect(findUnresolvedPlaceholders('https://api.test/x', new Map())).toEqual([]);
+    });
+
+    it('reports a placeholder that vars cannot resolve', () => {
+      expect(findUnresolvedPlaceholders('Bearer {{token}}', new Map())).toEqual(['token']);
+    });
+
+    it('does not report a placeholder that vars resolves', () => {
+      const vars = new Map([['token', 'abc']]);
+      expect(findUnresolvedPlaceholders('Bearer {{token}}', vars)).toEqual([]);
+    });
+
+    it('reports only the unresolved names, mixed with resolved ones', () => {
+      const vars = new Map([['a', '1']]);
+      expect(findUnresolvedPlaceholders('{{a}}/{{b}}/{{c}}', vars)).toEqual(['b', 'c']);
+    });
+
+    it('de-duplicates repeated placeholders, preserving first-seen order', () => {
+      expect(findUnresolvedPlaceholders('{{b}} {{a}} {{b}} {{a}}', new Map())).toEqual(['b', 'a']);
+    });
+
+    it('does not re-flag a resolved value that itself contains a placeholder (single-pass mitigation)', () => {
+      // `outer` resolves to a literal that looks like `{{inner}}`. Because
+      // detection runs on the ORIGINAL template — not the substituted output —
+      // and substitution is single-pass, `inner` is NOT reported as unresolved.
+      const vars = new Map([['outer', '{{inner}}']]);
+      expect(findUnresolvedPlaceholders('hello {{outer}}', vars)).toEqual([]);
     });
   });
 });

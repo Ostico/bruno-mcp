@@ -147,3 +147,111 @@ describe('bruAuthToYamlAuth (.bru auth reaches the executor)', () => {
     });
   });
 });
+
+/**
+ * Unresolved-variable warnings (finding X8).
+ *
+ * When substitution leaves a `{{var}}` placeholder unresolved the literal used
+ * to go on the wire silently. buildFetchOptions now names each unresolved
+ * placeholder in `warnings`, across every substituted surface (url, headers,
+ * auth, body). The warning names the placeholder only — never a resolved value,
+ * which may be a secret.
+ */
+describe('buildFetchOptions unresolved-variable warnings', () => {
+  const noVars = new Map<string, string>();
+
+  function reqWith(overrides: Partial<YamlRequest['http']>): YamlRequest {
+    return {
+      info: { name: 'R', type: 'http' },
+      http: { method: 'GET', url: 'https://api.test/resource', headers: [], ...overrides },
+    } as YamlRequest;
+  }
+
+  it('warns when the URL references an unresolved variable', async () => {
+    const { url, warnings } = await buildFetchOptions(
+      reqWith({ url: 'https://api.test/{{path}}' }),
+      noVars,
+    );
+    expect(url).toBe('https://api.test/{{path}}');
+    expect(warnings).toContain('unresolved variable: {{path}}');
+  });
+
+  it('warns when a header references an unresolved variable', async () => {
+    const { warnings } = await buildFetchOptions(
+      reqWith({ headers: [{ name: 'Authorization', value: 'Bearer {{token}}' }] }),
+      noVars,
+    );
+    expect(warnings).toContain('unresolved variable: {{token}}');
+  });
+
+  it('warns when a bearer token references an unresolved variable (auth surface)', async () => {
+    const { options, warnings } = await buildFetchOptions(
+      reqWith({ auth: { type: 'bearer', token: '{{token}}' } }),
+      noVars,
+    );
+    // Isolation preserved: the literal placeholder still reaches the wire.
+    expect((options.headers as Record<string, string>).Authorization).toBe('Bearer {{token}}');
+    expect(warnings).toContain('unresolved variable: {{token}}');
+  });
+
+  it('warns for an unresolved variable inside a string body', async () => {
+    const { warnings } = await buildFetchOptions(
+      reqWith({ method: 'POST', body: { type: 'json', data: '{"id": "{{userId}}"}' } }),
+      noVars,
+    );
+    expect(warnings).toContain('unresolved variable: {{userId}}');
+  });
+
+  it('warns for an unresolved variable inside a multipart text part', async () => {
+    const { warnings } = await buildFetchOptions(
+      reqWith({
+        method: 'POST',
+        body: {
+          type: 'multipart-form',
+          data: [{ name: 'field', value: '{{secretRef}}', type: 'text' }],
+        },
+      }),
+      noVars,
+    );
+    expect(warnings).toContain('unresolved variable: {{secretRef}}');
+  });
+
+  it('de-duplicates repeated placeholders and preserves first-seen order', async () => {
+    const { warnings } = await buildFetchOptions(
+      reqWith({
+        url: 'https://api.test/{{a}}/{{a}}',
+        headers: [{ name: 'X-B', value: '{{b}}' }],
+      }),
+      noVars,
+    );
+    expect(warnings).toEqual([
+      'unresolved variable: {{a}}',
+      'unresolved variable: {{b}}',
+    ]);
+  });
+
+  it('names only the placeholder, never the resolved secret value', async () => {
+    const { warnings } = await buildFetchOptions(
+      reqWith({
+        headers: [
+          { name: 'Authorization', value: 'Bearer {{known}}' },
+          { name: 'X-Extra', value: '{{missing}}' },
+        ],
+      }),
+      new Map([['known', 'super-secret-token']]),
+    );
+    expect(warnings).toEqual(['unresolved variable: {{missing}}']);
+    for (const w of warnings ?? []) {
+      expect(w).not.toContain('super-secret-token');
+    }
+  });
+
+  it('omits the warnings key entirely when every placeholder resolves', async () => {
+    const result = await buildFetchOptions(
+      reqWith({ url: 'https://api.test/{{path}}' }),
+      new Map([['path', 'users']]),
+    );
+    expect(result.url).toBe('https://api.test/users');
+    expect(result.warnings).toBeUndefined();
+  });
+});
