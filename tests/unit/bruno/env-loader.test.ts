@@ -6,6 +6,7 @@ import {
   substitute,
   findUnresolvedPlaceholders,
 } from '../../../src/bruno/env-loader.js';
+import { generateBruEnvironmentFull } from '../../../src/bruno/bru-parser.js';
 
 describe('Environment Loader', () => {
   let tempDir: string;
@@ -132,6 +133,84 @@ describe('Environment Loader', () => {
       const vars = await loadEnvironment(tempDir, 'dev');
       expect(vars.size).toBe(1);
       expect(vars.get('good')).toBe('yes');
+    });
+  });
+
+  describe('loadEnvironment — native .bru format (finding X11)', () => {
+    it('should load variables from a native .bru environment file when no .yml exists', async () => {
+      const envDir = join(tempDir, 'environments');
+      await fs.mkdir(envDir, { recursive: true });
+      await fs.writeFile(
+        join(envDir, 'dev.bru'),
+        `vars {\n  base_url: https://api.example.com\n  api_key: secret123\n}\n`,
+      );
+
+      const vars = await loadEnvironment(tempDir, 'dev');
+      expect(vars).toBeInstanceOf(Map);
+      expect(vars.size).toBe(2);
+      expect(vars.get('base_url')).toBe('https://api.example.com');
+      expect(vars.get('api_key')).toBe('secret123');
+    });
+
+    it('should skip disabled (~-prefixed) variables in a .bru environment', async () => {
+      const envDir = join(tempDir, 'environments');
+      await fs.mkdir(envDir, { recursive: true });
+      await fs.writeFile(
+        join(envDir, 'dev.bru'),
+        `vars {\n  base_url: https://api.example.com\n  ~disabled_var: old_value\n}\n`,
+      );
+
+      const vars = await loadEnvironment(tempDir, 'dev');
+      expect(vars.size).toBe(1);
+      expect(vars.has('base_url')).toBe(true);
+      expect(vars.has('disabled_var')).toBe(false);
+    });
+
+    it('should keep secret variables (preserving the secret flag) rather than dropping them', async () => {
+      // Bruno stores a secret variable's NAME in the `.bru` file but not its
+      // plaintext value, so `parseBruEnvironmentRaw` carries secret:true with an
+      // empty value. The loader must still include the variable, not drop it.
+      const envDir = join(tempDir, 'environments');
+      await fs.mkdir(envDir, { recursive: true });
+      const content = generateBruEnvironmentFull([
+        { name: 'apiKey', value: 's3cret', secret: true },
+        { name: 'plain', value: 'visible' },
+      ]);
+      await fs.writeFile(join(envDir, 'prod.bru'), content);
+
+      const vars = await loadEnvironment(tempDir, 'prod');
+      expect(vars.size).toBe(2);
+      expect(vars.has('apiKey')).toBe(true);
+      expect(vars.get('apiKey')).toBe('');
+      expect(vars.get('plain')).toBe('visible');
+    });
+
+    it('should prefer the .yml file when both .yml and .bru exist', async () => {
+      const envDir = join(tempDir, 'environments');
+      await fs.mkdir(envDir, { recursive: true });
+      await fs.writeFile(
+        join(envDir, 'dev.yml'),
+        `name: dev\nvariables:\n  - name: source\n    value: yml\n`,
+      );
+      await fs.writeFile(
+        join(envDir, 'dev.bru'),
+        `vars {\n  source: bru\n  bru_only: present\n}\n`,
+      );
+
+      const vars = await loadEnvironment(tempDir, 'dev');
+      expect(vars.size).toBe(1);
+      expect(vars.get('source')).toBe('yml');
+      expect(vars.has('bru_only')).toBe(false);
+    });
+
+    it('should return an empty map when a .bru environment is malformed', async () => {
+      const envDir = join(tempDir, 'environments');
+      await fs.mkdir(envDir, { recursive: true });
+      await fs.writeFile(join(envDir, 'broken.bru'), 'vars {{{{ invalid');
+
+      const vars = await loadEnvironment(tempDir, 'broken');
+      expect(vars).toBeInstanceOf(Map);
+      expect(vars.size).toBe(0);
     });
   });
 

@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'path';
 import { parse as parseYaml } from 'yaml';
 import type { EnvFile } from './types.js';
+import { parseBruEnvironmentRaw } from './bru-parser.js';
 
 export async function loadEnvironment(
   collectionPath: string,
@@ -13,7 +14,9 @@ export async function loadEnvironment(
   try {
     content = await readFile(envFilePath, 'utf-8');
   } catch {
-    return new Map();
+    // No YAML environment — fall back to a native Bruno `.bru` environment file
+    // (finding X11). Native collections store environments as `.bru`, not `.yml`.
+    return loadBruEnvironment(collectionPath, envName);
   }
 
   let parsed: EnvFile;
@@ -43,6 +46,45 @@ export async function loadEnvironment(
       : String(entry.value);
 
     vars.set(entry.name, value);
+  }
+
+  return vars;
+}
+
+/**
+ * Load a native Bruno `.bru` environment file (finding X11). Reuses
+ * `parseBruEnvironmentRaw` and maps its output to the same `name -> value`
+ * shape the `.yml` loader returns: disabled variables are dropped, while
+ * enabled variables — including `secret` ones — are kept with their value.
+ * Precedence lives in `loadEnvironment`: `.yml` wins when present, `.bru` is
+ * the fallback.
+ */
+async function loadBruEnvironment(
+  collectionPath: string,
+  envName: string,
+): Promise<Map<string, string>> {
+  const bruFilePath = join(collectionPath, 'environments', `${envName}.bru`);
+
+  let content: string;
+  try {
+    content = await readFile(bruFilePath, 'utf-8');
+  } catch {
+    return new Map();
+  }
+
+  let variables;
+  try {
+    variables = parseBruEnvironmentRaw(content);
+  } catch {
+    return new Map();
+  }
+
+  const vars = new Map<string, string>();
+  for (const entry of variables) {
+    if (entry.disabled === true) {
+      continue;
+    }
+    vars.set(entry.name, String(entry.value ?? ''));
   }
 
   return vars;
