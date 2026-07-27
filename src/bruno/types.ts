@@ -417,6 +417,10 @@ export interface MockResponseData {
   responseTime: number;
   /** Raw response text before any JSON parsing (consumed once from the stream). */
   rawBody?: string;
+  /** Every Set-Cookie value, preserved individually (finding X7) — the flat
+   * `headers` map comma-joins them, which is lossy because cookie values may
+   * contain commas. Present only when the response set at least one cookie. */
+  setCookies?: string[];
 }
 
 // ---------------------------------------------------------------------------
