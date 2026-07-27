@@ -396,6 +396,101 @@ describe('RequestBuilder', () => {
       const generated = generateBruRequest.mock.calls.at(-1)[0];
       expect(generated.meta.seq).toBe(7);
     });
+
+    // D1: modify_request must not drop auth credentials. Before the fix,
+    // applyUpdates only copied auth.type and discarded updates.auth.config,
+    // wiping the bearer/basic/api-key secret on every .bru modify.
+    it('should apply the bearer credential from config on .bru modify (D1)', async () => {
+      const { parseBruRequest } = require('../../../src/bruno/bru-parser.js');
+      parseBruRequest.mockReturnValueOnce({
+        meta: { name: 'Old', type: 'http' },
+        http: { method: 'GET', url: 'https://old.com', body: 'none', auth: 'bearer' },
+        auth: { type: 'bearer', bearer: { token: 'oldtoken' } },
+      });
+      fs.readFile.mockResolvedValue('meta { name: old }');
+
+      const result = await builder.updateRequest('/col/test.bru', {
+        auth: { type: 'bearer', config: { token: 'token123' } },
+      });
+
+      expect(result.success).toBe(true);
+      const generated = generateBruRequest.mock.calls.at(-1)[0];
+      expect(generated.auth.type).toBe('bearer');
+      // The credential must survive the modify, sourced from updates.auth.config.
+      expect(generated.auth.bearer).toEqual({ token: 'token123' });
+    });
+
+    it('should apply the basic credentials from config on .bru modify (D1)', async () => {
+      const { parseBruRequest } = require('../../../src/bruno/bru-parser.js');
+      parseBruRequest.mockReturnValueOnce({
+        meta: { name: 'Old', type: 'http' },
+        http: { method: 'GET', url: 'https://old.com', body: 'none', auth: 'none' },
+      });
+      fs.readFile.mockResolvedValue('meta { name: old }');
+
+      const result = await builder.updateRequest('/col/test.bru', {
+        auth: { type: 'basic', config: { username: 'user123', password: 'pass123' } },
+      });
+
+      expect(result.success).toBe(true);
+      const generated = generateBruRequest.mock.calls.at(-1)[0];
+      expect(generated.auth.type).toBe('basic');
+      expect(generated.auth.basic).toEqual({ username: 'user123', password: 'pass123' });
+    });
+
+    it('should apply the api-key credentials from config on .bru modify (D1)', async () => {
+      const { parseBruRequest } = require('../../../src/bruno/bru-parser.js');
+      parseBruRequest.mockReturnValueOnce({
+        meta: { name: 'Old', type: 'http' },
+        http: { method: 'GET', url: 'https://old.com', body: 'none', auth: 'none' },
+      });
+      fs.readFile.mockResolvedValue('meta { name: old }');
+
+      const result = await builder.updateRequest('/col/test.bru', {
+        auth: { type: 'api-key', config: { key: 'X-API-Key', value: 'value123', in: 'query' } },
+      });
+
+      expect(result.success).toBe(true);
+      const generated = generateBruRequest.mock.calls.at(-1)[0];
+      expect(generated.auth.type).toBe('api-key');
+      expect(generated.auth.apikey).toEqual({ key: 'X-API-Key', value: 'value123', in: 'query' });
+    });
+
+    it('should fall back to placeholders when auth config is missing on .bru modify (D1)', async () => {
+      const { parseBruRequest } = require('../../../src/bruno/bru-parser.js');
+      parseBruRequest.mockReturnValueOnce({
+        meta: { name: 'Old', type: 'http' },
+        http: { method: 'GET', url: 'https://old.com', body: 'none', auth: 'none' },
+      });
+      fs.readFile.mockResolvedValue('meta { name: old }');
+
+      const result = await builder.updateRequest('/col/test.bru', {
+        auth: { type: 'bearer', config: undefined as any },
+      });
+
+      expect(result.success).toBe(true);
+      const generated = generateBruRequest.mock.calls.at(-1)[0];
+      expect(generated.auth.type).toBe('bearer');
+      expect(generated.auth.bearer).toEqual({ token: '{{token}}' });
+    });
+
+    it('should set only type for auth: none on .bru modify (D1)', async () => {
+      const { parseBruRequest } = require('../../../src/bruno/bru-parser.js');
+      parseBruRequest.mockReturnValueOnce({
+        meta: { name: 'Old', type: 'http' },
+        http: { method: 'GET', url: 'https://old.com', body: 'none', auth: 'bearer' },
+        auth: { type: 'bearer', bearer: { token: 'oldtoken' } },
+      });
+      fs.readFile.mockResolvedValue('meta { name: old }');
+
+      const result = await builder.updateRequest('/col/test.bru', {
+        auth: { type: 'none', config: {} },
+      });
+
+      expect(result.success).toBe(true);
+      const generated = generateBruRequest.mock.calls.at(-1)[0];
+      expect(generated.auth).toEqual({ type: 'none' });
+    });
   });
 
   describe('createCrudRequests()', () => {

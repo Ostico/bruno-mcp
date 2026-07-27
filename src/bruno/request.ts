@@ -636,6 +636,31 @@ export class RequestBuilder {
       updated.auth = {
         type: updates.auth.type
       };
+
+      // Carry the credential fields over from updates.auth.config so a modify
+      // that touches auth updates the secret instead of wiping it. Mirror the
+      // creation path (buildBruFile) so the persisted shape stays identical.
+      const config = updates.auth.config || {};
+      switch (updates.auth.type) {
+        case 'bearer':
+          updated.auth.bearer = {
+            token: config.token || '{{token}}'
+          };
+          break;
+        case 'basic':
+          updated.auth.basic = {
+            username: config.username || '{{username}}',
+            password: config.password || '{{password}}'
+          };
+          break;
+        case 'api-key':
+          updated.auth.apikey = {
+            key: config.key || 'X-API-Key',
+            value: config.value || '{{apiKey}}',
+            in: (config.in as 'header' | 'query') || 'header'
+          };
+          break;
+      }
     }
 
     return updated;
