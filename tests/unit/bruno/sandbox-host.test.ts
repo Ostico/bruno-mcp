@@ -10,6 +10,7 @@ import type { fork as forkType } from 'node:child_process';
 import {
   runInWorker,
   setMaxConcurrency,
+  toSendableJob,
   type RunInWorkerOptions,
 } from '../../../src/bruno/sandbox-host';
 import { WORKER_ARGV_SENTINEL, type SandboxJob, type SandboxJobResult } from '../../../src/bruno/sandbox-worker';
@@ -206,6 +207,105 @@ describe('runInWorker robustness', () => {
 
     // Late failure callback must be a no-op: no throw, no change to the result.
     expect(() => deferredSendCb?.(new Error('too late'))).not.toThrow();
+  });
+});
+
+describe('toSendableJob (S19: bodies that cannot cross the IPC codec)', () => {
+  const preRequestJob = (body: unknown): SandboxJob => ({
+    kind: 'pre-request',
+    script: 'noop',
+    request: { url: 'https://x.test', method: 'POST', headers: {}, body },
+    timeout: 100,
+  });
+
+  it('a raw FormData body is destroyed by the JSON IPC codec (the defect)', () => {
+    // Baseline documenting why the transform exists: child.send() serializes
+    // with the default 'json' codec, and FormData has no JSON representation, so
+    // it arrives at the child as {} — a pre-request script would see an empty
+    // body instead of the multipart request it was handed.
+    const form = new FormData();
+    form.append('file', 'contents');
+    expect(JSON.parse(JSON.stringify(form))).toEqual({});
+  });
+
+  it('replaces a FormData body with a names-only descriptor that survives serialization', () => {
+    const form = new FormData();
+    form.append('file', 'secret-contents');
+    form.append('field', 'secret-value');
+    const sent = toSendableJob(preRequestJob(form));
+
+    if (sent.kind !== 'pre-request') throw new Error('unreachable');
+    // Survives the round-trip the real fork would perform...
+    const roundTripped = JSON.parse(JSON.stringify(sent.request.body));
+    expect(roundTripped).toEqual({ type: 'multipart/form-data', parts: ['file', 'field'] });
+    // ...and carries part NAMES only — never the part values or file contents.
+    expect(JSON.stringify(sent.request.body)).not.toContain('secret');
+  });
+
+  it('collapses duplicate multipart part names in the descriptor', () => {
+    const form = new FormData();
+    form.append('items', 'a');
+    form.append('items', 'b');
+    const sent = toSendableJob(preRequestJob(form));
+    if (sent.kind !== 'pre-request') throw new Error('unreachable');
+    expect((sent.request.body as { parts: string[] }).parts).toEqual(['items']);
+  });
+
+  it('replaces a Blob body with a size/type descriptor', () => {
+    const blob = new Blob(['abcdef'], { type: 'application/pdf' });
+    const sent = toSendableJob(preRequestJob(blob));
+    if (sent.kind !== 'pre-request') throw new Error('unreachable');
+    expect(sent.request.body).toEqual({ type: 'blob', contentType: 'application/pdf', size: 6 });
+  });
+
+  it('defaults a typeless Blob to application/octet-stream', () => {
+    const sent = toSendableJob(preRequestJob(new Blob(['abc'])));
+    if (sent.kind !== 'pre-request') throw new Error('unreachable');
+    expect(sent.request.body).toEqual({ type: 'blob', contentType: 'application/octet-stream', size: 3 });
+  });
+
+  it.each([
+    ['a string body', '{"a":1}'],
+    ['a null body', null],
+    ['a plain object body', { a: 1, b: [2, 3] }],
+  ])('leaves %s untouched (same reference)', (_label, body) => {
+    const job = preRequestJob(body);
+    expect(toSendableJob(job)).toBe(job);
+  });
+
+  it('returns a test job untouched — it carries a response, not a request body', () => {
+    expect(toSendableJob(testJob)).toBe(testJob);
+  });
+
+  it('returns a pre-request job with no request untouched', () => {
+    const job: SandboxJob = { kind: 'pre-request', script: 'noop', timeout: 100 };
+    expect(toSendableJob(job)).toBe(job);
+  });
+});
+
+describe('runInWorker sanitizes the outbound body (S19)', () => {
+  it('sends a FormData pre-request body to the child as a descriptor, not raw', async () => {
+    const form = new FormData();
+    form.append('avatar', 'bytes');
+    const job: SandboxJob = {
+      kind: 'pre-request',
+      script: 'noop',
+      request: { url: 'https://x.test', method: 'POST', headers: {}, body: form },
+      timeout: 100,
+    };
+    const p = runInWorker(job, baseOpts());
+    await tick();
+
+    expect(children[0].sentJobs).toHaveLength(1);
+    const sent = children[0].sentJobs[0] as SandboxJob;
+    if (sent.kind !== 'pre-request') throw new Error('unreachable');
+    expect(sent.request.body).toEqual({ type: 'multipart/form-data', parts: ['avatar'] });
+
+    children[0].emit('message', {
+      kind: 'pre-request',
+      result: { variables: {}, mutations: {} },
+    } as SandboxJobResult);
+    await p;
   });
 });
 
