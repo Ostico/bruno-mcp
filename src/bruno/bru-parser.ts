@@ -6,7 +6,9 @@ import {
   type BruHttpRequest,
   type BruAuth,
   type BruHeaders,
+  type BruHeader,
   type BruBody,
+  type BruFilePart,
   type MultipartFormPart,
   type BrunoEnvironment,
   type EnvVariable,
@@ -63,11 +65,18 @@ export function parseBruRequest(content: string): BruFile {
   };
 
   const headers: BruHeaders = {};
+  const headersList: BruHeader[] = [];
   if (json.headers && Array.isArray(json.headers)) {
     for (const h of json.headers) {
+      // The map holds only enabled headers (it drives what is actually sent);
+      // headersList preserves every header with its disabled flag so a header
+      // the user switched off survives generate and is not silently re-armed.
       if (h.enabled !== false) {
         headers[h.name] = h.value;
       }
+      const entry: BruHeader = { name: h.name, value: h.value };
+      if (h.enabled === false) entry.enabled = false;
+      headersList.push(entry);
     }
   }
 
@@ -100,15 +109,47 @@ export function parseBruRequest(content: string): BruFile {
       };
     } else {
       body = { type: http.body };
-      const bodyContent = json.body[http.body];
+      const rawBody = json.body as Record<string, unknown>;
+      const bodyContent = rawBody[http.body];
+      const graphql = rawBody.graphql as { query?: string; variables?: string } | undefined;
+      const formUrlEncoded = rawBody.formUrlEncoded as
+        | Array<{ name?: string; value?: string; enabled?: boolean }>
+        | undefined;
+      const fileParts = rawBody.file as
+        | Array<{ filePath?: string; contentType?: string; selected?: boolean }>
+        | undefined;
       if (typeof bodyContent === 'string') {
+        // json / text / xml / sparql — the body is a raw string.
         body.content = bodyContent;
+      } else if (graphql && typeof graphql === 'object') {
+        // graphql — { query, variables? }; the string guard above dropped it.
+        body.graphql = { query: graphql.query ?? '' };
+        if (graphql.variables != null) body.graphql.variables = graphql.variables;
+      } else if (Array.isArray(formUrlEncoded)) {
+        // form-urlencoded — array of { name, value, enabled }.
+        body.formUrlEncoded = formUrlEncoded.map((entry) => {
+          const item: { name: string; value: string; enabled?: boolean } = {
+            name: String(entry.name ?? ''),
+            value: String(entry.value ?? ''),
+          };
+          if (entry.enabled === false) item.enabled = false;
+          return item;
+        });
+      } else if (Array.isArray(fileParts)) {
+        // file — array of { filePath, contentType?, selected }.
+        body.file = fileParts.map((entry) => {
+          const item: BruFilePart = { filePath: String(entry.filePath ?? '') };
+          if (entry.contentType) item.contentType = String(entry.contentType);
+          if (entry.selected === false) item.selected = false;
+          return item;
+        });
       }
     }
   }
 
   const bruFile: BruFile = { meta, http };
   if (Object.keys(headers).length > 0) bruFile.headers = headers;
+  if (headersList.length > 0) bruFile.headersList = headersList;
   if (auth) bruFile.auth = auth;
   if (body) bruFile.body = body;
 
@@ -148,7 +189,15 @@ export function generateBruRequest(bruFile: BruFile): string {
     },
   };
 
-  if (bruFile.headers && Object.keys(bruFile.headers).length > 0) {
+  if (bruFile.headersList && bruFile.headersList.length > 0) {
+    // Source of truth when present: preserves each header's disabled (`~`) state
+    // so a header the user switched off is re-emitted disabled, not re-armed.
+    json.headers = bruFile.headersList.map((h) => ({
+      name: h.name,
+      value: h.value,
+      enabled: h.enabled !== false,
+    }));
+  } else if (bruFile.headers && Object.keys(bruFile.headers).length > 0) {
     json.headers = Object.entries(bruFile.headers).map(([name, value]) => ({
       name,
       value,
@@ -190,6 +239,36 @@ export function generateBruRequest(bruFile: BruFile): string {
           enabled: field.enabled !== false,
         };
       }),
+    };
+  } else if (bruFile.body?.graphql) {
+    // @usebruno/lang emits body:graphql from { query } and body:graphql:vars
+    // from { variables }.
+    const graphql: { query: string; variables?: string } = {
+      query: bruFile.body.graphql.query,
+    };
+    if (bruFile.body.graphql.variables != null) {
+      graphql.variables = bruFile.body.graphql.variables;
+    }
+    json.body = { graphql };
+  } else if (bruFile.body?.formUrlEncoded) {
+    // @usebruno/lang splits body.formUrlEncoded on a truthy `enabled` flag,
+    // prefixing disabled entries with `~`.
+    json.body = {
+      formUrlEncoded: bruFile.body.formUrlEncoded.map((field) => ({
+        name: field.name,
+        value: field.value,
+        enabled: field.enabled !== false,
+      })),
+    };
+  } else if (bruFile.body?.file) {
+    // @usebruno/lang splits body.file on a truthy `selected` flag and emits
+    // each value as @file(<filePath>) with an optional @contentType(...).
+    json.body = {
+      file: bruFile.body.file.map((part) => ({
+        filePath: part.filePath,
+        contentType: part.contentType ?? '',
+        selected: part.selected !== false,
+      })),
     };
   } else if (bruFile.body?.content) {
     json.body = { [bruFile.http.body]: bruFile.body.content };

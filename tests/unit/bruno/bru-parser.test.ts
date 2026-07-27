@@ -257,6 +257,188 @@ get {
     });
   });
 
+  describe('non-string body round-trips (D2)', () => {
+    it('preserves a graphql body (query + variables) through parse -> generate -> parse', () => {
+      const bru = `meta {
+  name: GQL
+  type: graphql
+}
+
+post {
+  url: https://api.example.com/graphql
+  body: graphql
+  auth: none
+}
+
+body:graphql {
+  query Hero { hero { name } }
+}
+
+body:graphql:vars {
+  {"episode":"JEDI"}
+}
+`;
+      const parsed = parseBruRequest(bru);
+      expect(parsed.http.body).toBe('graphql');
+      expect(parsed.body?.type).toBe('graphql');
+      expect(parsed.body?.graphql?.query).toBe('query Hero { hero { name } }');
+      expect(parsed.body?.graphql?.variables).toBe('{"episode":"JEDI"}');
+
+      const reparsed = parseBruRequest(generateBruRequest(parsed));
+      expect(reparsed.body?.graphql?.query).toBe('query Hero { hero { name } }');
+      expect(reparsed.body?.graphql?.variables).toBe('{"episode":"JEDI"}');
+    });
+
+    it('preserves a graphql body with no variables block', () => {
+      const bru = `meta {
+  name: GQL2
+  type: graphql
+}
+
+post {
+  url: https://api.example.com/graphql
+  body: graphql
+  auth: none
+}
+
+body:graphql {
+  query Ping { ping }
+}
+`;
+      const parsed = parseBruRequest(bru);
+      expect(parsed.body?.graphql?.query).toBe('query Ping { ping }');
+      expect(parsed.body?.graphql?.variables).toBeUndefined();
+
+      const reparsed = parseBruRequest(generateBruRequest(parsed));
+      expect(reparsed.body?.graphql?.query).toBe('query Ping { ping }');
+      expect(reparsed.body?.graphql?.variables).toBeUndefined();
+    });
+
+    it('preserves a form-urlencoded body, including disabled fields', () => {
+      const bru = `meta {
+  name: FUE
+  type: http
+}
+
+post {
+  url: https://api.example.com/form
+  body: form-urlencoded
+  auth: none
+}
+
+body:form-urlencoded {
+  grant_type: client_credentials
+  ~debug: 1
+}
+`;
+      const parsed = parseBruRequest(bru);
+      expect(parsed.http.body).toBe('form-urlencoded');
+      expect(parsed.body?.type).toBe('form-urlencoded');
+      const byName = Object.fromEntries((parsed.body?.formUrlEncoded ?? []).map((f) => [f.name, f]));
+      expect(byName['grant_type'].value).toBe('client_credentials');
+      expect(byName['grant_type'].enabled).toBeUndefined();
+      expect(byName['debug'].value).toBe('1');
+      expect(byName['debug'].enabled).toBe(false);
+
+      const reparsed = parseBruRequest(generateBruRequest(parsed));
+      const rByName = Object.fromEntries((reparsed.body?.formUrlEncoded ?? []).map((f) => [f.name, f]));
+      expect(rByName['grant_type'].value).toBe('client_credentials');
+      expect(rByName['debug'].value).toBe('1');
+      expect(rByName['debug'].enabled).toBe(false);
+    });
+
+    it('preserves a file body (filePath, contentType, disabled state)', () => {
+      const bru = `meta {
+  name: FILE
+  type: http
+}
+
+post {
+  url: https://api.example.com/upload
+  body: file
+  auth: none
+}
+
+body:file {
+  file: @file(/tmp/a.png) @contentType(image/png)
+  ~file: @file(/tmp/b.txt)
+}
+`;
+      const parsed = parseBruRequest(bru);
+      expect(parsed.http.body).toBe('file');
+      expect(parsed.body?.type).toBe('file');
+      const files = parsed.body?.file ?? [];
+      expect(files[0].filePath).toBe('/tmp/a.png');
+      expect(files[0].contentType).toBe('image/png');
+      expect(files[0].selected).toBeUndefined();
+      expect(files[1].filePath).toBe('/tmp/b.txt');
+      expect(files[1].contentType).toBeUndefined();
+      expect(files[1].selected).toBe(false);
+
+      const reparsed = parseBruRequest(generateBruRequest(parsed));
+      const rFiles = reparsed.body?.file ?? [];
+      expect(rFiles[0].filePath).toBe('/tmp/a.png');
+      expect(rFiles[0].contentType).toBe('image/png');
+      expect(rFiles[1].filePath).toBe('/tmp/b.txt');
+      expect(rFiles[1].selected).toBe(false);
+    });
+  });
+
+  describe('disabled header round-trip (D3)', () => {
+    const BRU_WITH_DISABLED_HEADER = `meta {
+  name: Sec
+  type: http
+}
+
+get {
+  url: https://api.example.com/secure
+  body: none
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  ~X-Debug-Auth-Bypass: true
+}
+`;
+
+    it('carries the disabled flag onto the parsed header list', () => {
+      const parsed = parseBruRequest(BRU_WITH_DISABLED_HEADER);
+      const list = parsed.headersList ?? [];
+      const byName = Object.fromEntries(list.map((h) => [h.name, h]));
+      expect(byName['Content-Type'].value).toBe('application/json');
+      expect(byName['Content-Type'].enabled).toBeUndefined();
+      expect(byName['X-Debug-Auth-Bypass'].value).toBe('true');
+      expect(byName['X-Debug-Auth-Bypass'].enabled).toBe(false);
+      // The effective (enabled-only) header map must not contain the disabled one.
+      expect(parsed.headers?.['X-Debug-Auth-Bypass']).toBeUndefined();
+      expect(parsed.headers?.['Content-Type']).toBe('application/json');
+    });
+
+    it('re-emits a disabled header still disabled (not silently re-armed)', () => {
+      const parsed = parseBruRequest(BRU_WITH_DISABLED_HEADER);
+      const generated = generateBruRequest(parsed);
+      // The generated .bru must keep the ~ marker on the disabled header.
+      expect(generated).toContain('~X-Debug-Auth-Bypass: true');
+
+      const reparsed = parseBruRequest(generated);
+      const byName = Object.fromEntries((reparsed.headersList ?? []).map((h) => [h.name, h]));
+      expect(byName['X-Debug-Auth-Bypass'].enabled).toBe(false);
+      expect(reparsed.headers?.['X-Debug-Auth-Bypass']).toBeUndefined();
+    });
+
+    it('generates from the enabled-only header map when no header list is present', () => {
+      const bruFile: any = {
+        meta: { name: 'MapOnly', type: 'http' },
+        http: { method: 'GET', url: 'https://example.com', body: 'none', auth: 'none' },
+        headers: { 'X-Api-Key': 'k' },
+      };
+      const generated = generateBruRequest(bruFile);
+      const reparsed = parseBruRequest(generated);
+      expect(reparsed.headers?.['X-Api-Key']).toBe('k');
+    });
+  });
+
   describe('parseBruEnvironment', () => {
     it('parses environment variables', () => {
       const result = parseBruEnvironment(SAMPLE_ENV_BRU, 'dev');
