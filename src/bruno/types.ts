@@ -16,9 +16,11 @@ export type BodyType =
   | 'json'
   | 'text'
   | 'xml'
+  | 'graphql'
   | 'form-data'
   | 'multipart-form'
   | 'form-urlencoded'
+  | 'file'
   | 'binary';
 
 // Bruno Collection Configuration (bruno.json)
@@ -94,6 +96,24 @@ export interface MultipartFormPart {
   enabled?: boolean;
 }
 
+// A single `body:file` entry. `@usebruno/lang` returns `@file(path)` parts as
+// { filePath, contentType, selected } (name/value/enabled are stripped for file
+// parts), so this mirrors that shape. `selected` is only recorded when the part
+// is explicitly disabled; default stays selected/enabled.
+export interface BruFilePart {
+  filePath: string;
+  contentType?: string;
+  selected?: boolean;
+}
+
+// A `body:graphql` payload. `@usebruno/lang` returns the graphql body as an
+// object { query, variables? } (both raw strings), not a string — the string
+// guard in the parser used to discard it entirely (finding D2).
+export interface BruGraphql {
+  query: string;
+  variables?: string;
+}
+
 // Request body configurations
 export interface BruBody {
   type: BodyType;
@@ -104,11 +124,26 @@ export interface BruBody {
     value: string;
     enabled?: boolean;
   }>;
+  graphql?: BruGraphql;
+  file?: BruFilePart[];
 }
 
-// HTTP headers
+// HTTP headers — effective (enabled-only) name→value map. Disabled headers are
+// intentionally excluded here because this map drives what actually gets sent;
+// their names/values/flags are preserved separately in BruFile.headersList so
+// they survive a parse→generate round-trip (finding D3).
 export interface BruHeaders {
   [key: string]: string;
+}
+
+// A single header entry preserving its enabled/disabled state, following the
+// MultipartFormPart `enabled?` pattern (finding X13). `enabled` is only recorded
+// when the header is explicitly disabled (Bruno's leading `~`); default stays
+// enabled. Used for lossless round-tripping alongside the BruHeaders map.
+export interface BruHeader {
+  name: string;
+  value: string;
+  enabled?: boolean;
 }
 
 // Query parameters
@@ -142,6 +177,13 @@ export interface BruFile {
   http: BruHttpRequest;
   auth?: BruAuth;
   headers?: BruHeaders;
+  /**
+   * Full ordered header list preserving each header's enabled/disabled (`~`)
+   * state (finding D3). `headers` above holds only the enabled subset for value
+   * lookup and stays for backward compatibility; when present, this list is the
+   * source of truth on generate so a disabled header is never silently re-armed.
+   */
+  headersList?: BruHeader[];
   query?: BruQuery;
   body?: BruBody;
   vars?: BruVars;
