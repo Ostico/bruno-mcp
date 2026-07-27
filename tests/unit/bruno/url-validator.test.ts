@@ -215,6 +215,92 @@ describe('validateUrl', () => {
   });
 
   // -----------------------------------------------------------------------
+  // Additional reserved IPv4 ranges (S18) — cloud-metadata / CGNAT /
+  // broadcast / multicast / documentation / benchmarking / protocol
+  // -----------------------------------------------------------------------
+  describe('blocks additional reserved IPv4 ranges (S18)', () => {
+    it('blocks 100.100.100.200 (Alibaba/Oracle cloud metadata, in 100.64/10)', async () => {
+      const result = await validateUrl('http://100.100.100.200/latest/meta-data/');
+      expect(result.valid).toBe(false);
+      expect(result.reason).toMatch(/cgnat|shared/i);
+    });
+
+    it('blocks 100.64.0.1 (100.64.0.0/10 lower bound)', async () => {
+      const result = await validateUrl('http://100.64.0.1/');
+      expect(result.valid).toBe(false);
+      expect(result.reason).toMatch(/cgnat|shared/i);
+    });
+
+    it('blocks 100.127.255.255 (100.64.0.0/10 upper bound)', async () => {
+      const result = await validateUrl('http://100.127.255.255/');
+      expect(result.valid).toBe(false);
+    });
+
+    it('allows 100.63.255.255 (just below 100.64/10)', async () => {
+      const result = await validateUrl('http://100.63.255.255/');
+      expect(result.valid).toBe(true);
+    });
+
+    it('allows 100.128.0.0 (just above 100.64/10)', async () => {
+      const result = await validateUrl('http://100.128.0.0/');
+      expect(result.valid).toBe(true);
+    });
+
+    it('blocks 255.255.255.255 (limited broadcast)', async () => {
+      const result = await validateUrl('http://255.255.255.255/');
+      expect(result.valid).toBe(false);
+      expect(result.reason).toMatch(/broadcast/i);
+    });
+
+    it('blocks 239.255.255.250 (SSDP multicast, in 224/4)', async () => {
+      const result = await validateUrl('http://239.255.255.250/');
+      expect(result.valid).toBe(false);
+      expect(result.reason).toMatch(/multicast/i);
+    });
+
+    it('blocks 224.0.0.1 (224.0.0.0/4 lower bound)', async () => {
+      const result = await validateUrl('http://224.0.0.1/');
+      expect(result.valid).toBe(false);
+      expect(result.reason).toMatch(/multicast/i);
+    });
+
+    it('allows 223.255.255.255 (just below 224/4)', async () => {
+      const result = await validateUrl('http://223.255.255.255/');
+      expect(result.valid).toBe(true);
+    });
+
+    it('blocks 192.0.0.1 (192.0.0.0/24 IETF protocol assignments)', async () => {
+      const result = await validateUrl('http://192.0.0.1/');
+      expect(result.valid).toBe(false);
+    });
+
+    it('blocks 192.0.2.1 (192.0.2.0/24 TEST-NET-1)', async () => {
+      const result = await validateUrl('http://192.0.2.1/');
+      expect(result.valid).toBe(false);
+    });
+
+    it('blocks 198.18.0.1 (198.18.0.0/15 benchmarking, lower bound)', async () => {
+      const result = await validateUrl('http://198.18.0.1/');
+      expect(result.valid).toBe(false);
+    });
+
+    it('blocks 198.19.255.255 (198.18.0.0/15 upper bound)', async () => {
+      const result = await validateUrl('http://198.19.255.255/');
+      expect(result.valid).toBe(false);
+    });
+
+    it('blocks 198.51.100.1 (198.51.100.0/24 TEST-NET-2)', async () => {
+      const result = await validateUrl('http://198.51.100.1/');
+      expect(result.valid).toBe(false);
+    });
+
+    it('blocks 203.0.113.1 (203.0.113.0/24 TEST-NET-3)', async () => {
+      const result = await validateUrl('http://203.0.113.1/');
+      expect(result.valid).toBe(false);
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // Blocked IPv6 addresses
   // -----------------------------------------------------------------------
   describe('blocks private/reserved IPv6 addresses', () => {
@@ -474,6 +560,20 @@ describe('validateUrl', () => {
       process.env.BRUNO_SSRF_ALLOWLIST = 'fd00::1';
       resetAllowlistCache();
       const result = await validateUrl('http://[fd00::1]/health');
+      expect(result.valid).toBe(true);
+    });
+
+    it('allows an allowlisted cloud-metadata IP in 100.64/10 (100.100.100.200)', async () => {
+      process.env.BRUNO_SSRF_ALLOWLIST = '100.100.100.200';
+      resetAllowlistCache();
+      const result = await validateUrl('http://100.100.100.200/latest/meta-data/');
+      expect(result.valid).toBe(true);
+    });
+
+    it('allows a multicast IP within an allowlisted CIDR (239.255.255.250)', async () => {
+      process.env.BRUNO_SSRF_ALLOWLIST = '239.0.0.0/8';
+      resetAllowlistCache();
+      const result = await validateUrl('http://239.255.255.250/');
       expect(result.valid).toBe(true);
     });
 

@@ -242,6 +242,48 @@ function checkIPv4(hostname: string): UrlValidationResult | null {
     return { valid: false, reason: 'Blocked IP: link-local address (169.254.0.0/16)' };
   }
 
+  // 100.64.0.0/10 — shared address space / CGNAT (RFC 6598).
+  // Also contains 100.100.100.200 (Alibaba/Oracle Cloud metadata endpoint).
+  if (a === 100 && b >= 64 && b <= 127) {
+    return { valid: false, reason: 'Blocked IP: shared address space / CGNAT (100.64.0.0/10)' };
+  }
+
+  // 192.0.0.0/24 — IETF protocol assignments (RFC 6890).
+  if (a === 192 && b === 0 && c === 0) {
+    return { valid: false, reason: 'Blocked IP: IETF protocol assignments (192.0.0.0/24)' };
+  }
+
+  // 192.0.2.0/24 — documentation range TEST-NET-1 (RFC 5737).
+  if (a === 192 && b === 0 && c === 2) {
+    return { valid: false, reason: 'Blocked IP: documentation range TEST-NET-1 (192.0.2.0/24)' };
+  }
+
+  // 198.18.0.0/15 — benchmarking (RFC 2544); 198.18.0.0 - 198.19.255.255.
+  if (a === 198 && (b === 18 || b === 19)) {
+    return { valid: false, reason: 'Blocked IP: benchmarking range (198.18.0.0/15)' };
+  }
+
+  // 198.51.100.0/24 — documentation range TEST-NET-2 (RFC 5737).
+  if (a === 198 && b === 51 && c === 100) {
+    return { valid: false, reason: 'Blocked IP: documentation range TEST-NET-2 (198.51.100.0/24)' };
+  }
+
+  // 203.0.113.0/24 — documentation range TEST-NET-3 (RFC 5737).
+  if (a === 203 && b === 0 && c === 113) {
+    return { valid: false, reason: 'Blocked IP: documentation range TEST-NET-3 (203.0.113.0/24)' };
+  }
+
+  // 224.0.0.0/4 — multicast (RFC 5771); 224.0.0.0 - 239.255.255.255.
+  // Includes 239.255.255.250 (SSDP) — internal service discovery.
+  if (a >= 224 && a <= 239) {
+    return { valid: false, reason: 'Blocked IP: multicast address (224.0.0.0/4)' };
+  }
+
+  // 255.255.255.255 — limited broadcast (RFC 919).
+  if (a === 255 && b === 255 && c === 255 && d === 255) {
+    return { valid: false, reason: 'Blocked IP: limited broadcast address (255.255.255.255)' };
+  }
+
   return null;
 }
 
