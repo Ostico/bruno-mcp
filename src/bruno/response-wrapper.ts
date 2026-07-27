@@ -78,6 +78,30 @@ export class BrunoResponse {
 export const MAX_RESPONSE_BYTES = 50 * 1024 * 1024; // 50 MB
 
 /**
+ * Build a TextDecoder that honors the response's declared Content-Type charset
+ * (finding X4). Decoding a non-UTF-8 body (e.g. `text/html; charset=ISO-8859-1`
+ * or Shift_JIS) as UTF-8 mojibakes the text. Rules:
+ *   - no `charset=` token  → default to UTF-8
+ *   - known/valid label    → decode with that charset
+ *   - unknown/invalid label (TextDecoder throws RangeError) → fall back to UTF-8
+ *     rather than failing the whole read.
+ */
+function decoderForContentType(contentType: string | null): TextDecoder {
+  const charset = contentType
+    ?.match(/;\s*charset\s*=\s*"?([^";]+)"?/i)?.[1]
+    ?.trim();
+  if (!charset) {
+    return new TextDecoder('utf-8');
+  }
+  try {
+    return new TextDecoder(charset);
+  } catch {
+    // Unknown/unsupported label — TextDecoder throws RangeError. Degrade to UTF-8.
+    return new TextDecoder('utf-8');
+  }
+}
+
+/**
  * Read a response body as UTF-8 text without buffering more than `maxBytes`.
  *
  * Real (undici) responses expose a ReadableStream `body`, which is read
@@ -95,7 +119,7 @@ export async function readBodyCapped(
   }
 
   const reader = response.body.getReader();
-  const decoder = new TextDecoder('utf-8');
+  const decoder = decoderForContentType(response.headers.get('content-type'));
   let text = '';
   let total = 0;
   let truncated = false;

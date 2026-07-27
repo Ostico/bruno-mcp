@@ -313,6 +313,46 @@ describe('readBodyCapped (X3: bounded response read)', () => {
   });
 });
 
+describe('readBodyCapped — Content-Type charset (X4)', () => {
+  it('decodes a non-UTF-8 body using the declared charset (ISO-8859-1)', async () => {
+    // 0xE9 is 'é' in ISO-8859-1 (latin1) but an invalid UTF-8 lead byte.
+    const body = new Uint8Array([0x63, 0x61, 0x66, 0xe9]); // "café" in latin1
+    const res = new Response(body, {
+      headers: { 'content-type': 'text/plain; charset=ISO-8859-1' },
+    });
+    const out = await readBodyCapped(res, 1000);
+    expect(out.text).toBe('café');
+    expect(out.truncated).toBe(false);
+  });
+
+  it('defaults to UTF-8 when no charset is declared', async () => {
+    // "café" in UTF-8: é = 0xC3 0xA9.
+    const body = new Uint8Array([0x63, 0x61, 0x66, 0xc3, 0xa9]);
+    const res = new Response(body, {
+      headers: { 'content-type': 'text/plain' },
+    });
+    const out = await readBodyCapped(res, 1000);
+    expect(out.text).toBe('café');
+  });
+
+  it('defaults to UTF-8 when there is no content-type header at all', async () => {
+    const body = new Uint8Array([0x63, 0x61, 0x66, 0xc3, 0xa9]);
+    const res = new Response(body);
+    const out = await readBodyCapped(res, 1000);
+    expect(out.text).toBe('café');
+  });
+
+  it('falls back to UTF-8 when the declared charset is unknown', async () => {
+    const body = new Uint8Array([0x63, 0x61, 0x66, 0xc3, 0xa9]);
+    const res = new Response(body, {
+      headers: { 'content-type': 'text/plain; charset=totally-bogus-label' },
+    });
+    // Must not throw; unknown label falls back to UTF-8 decoding.
+    const out = await readBodyCapped(res, 1000);
+    expect(out.text).toBe('café');
+  });
+});
+
 describe('wrapFetchResponse — Set-Cookie preservation (X7)', () => {
   it('preserves every Set-Cookie value individually', async () => {
     const headers = new Headers();
