@@ -597,18 +597,71 @@ export function detectDoubleParse(message: string): string[] {
  */
 const SANDBOX_BRU_LIB = `
 (function() {
+  // Two stores, deliberately separate (finding X10):
+  //   store   - everything the script can READ via getVar: the external
+  //             env/collection variables seeded by __bruSeed PLUS the script's
+  //             own writes.
+  //   written - only what the script itself set via setVar.
+  // __bruDump returns 'written', never the seeds, so an external variable a
+  // script merely read is not echoed back as if the script had produced it.
+  // That keeps a seeded secret out of the propagated result set, and stops a
+  // read-only script from silently re-emitting the whole environment.
   var store = Object.create(null);
+  var written = Object.create(null);
   var api = Object.create(null);
-  api.setVar = function(name, value) { store[name] = value; };
+  api.setVar = function(name, value) { store[name] = value; written[name] = value; };
   api.getVar = function(name) { return store[name]; };
+  // Seed external variables the script may read. Populates 'store' only. Values
+  // arrive as a JSON string embedded in the per-job prelude source (see
+  // buildSeedVarsScript) and are parsed in-context, so no host object crosses
+  // the realm boundary. __proto__ is skipped so a hostile key cannot reshape
+  // the store's prototype. Malformed input is ignored rather than throwing,
+  // matching how the rest of the prelude degrades.
+  __bruSeed = function(json) {
+    var parsed;
+    try { parsed = JSON.parse(json); } catch (e) { return; }
+    if (parsed === null || typeof parsed !== 'object') { return; }
+    var keys = Object.keys(parsed);
+    for (var i = 0; i < keys.length; i++) {
+      if (keys[i] !== '__proto__') { store[keys[i]] = parsed[keys[i]]; }
+    }
+  };
   // Plain assignment, deliberately not "var". A top-level var creates a
   // non-configurable global binding, which makes a user-level "let bru" a
   // redeclaration SyntaxError; assignment creates a configurable property that
   // user code can shadow, matching how bru behaved as a sandbox property.
   bru = api;
-  __bruDump = function() { return JSON.stringify(store); };
+  __bruDump = function() { return JSON.stringify(written); };
 })();
 `;
+
+/**
+ * Per-job JS source that seeds the sandbox variable store with external
+ * (env/collection) variables so a script's bru.getVar can read them (finding
+ * X10). Emitted AFTER SANDBOX_BRU_LIB so __bruSeed is defined, and BEFORE the
+ * user script so reads see the values.
+ *
+ * The variables cross as a JSON string literal, double-encoded: the inner
+ * JSON.stringify produces the payload, the outer one turns it into a safely
+ * escaped JS string literal. Even a value containing `");evil(` therefore stays
+ * inside the string argument rather than becoming source. (Belt and braces: the
+ * only realm it could reach is the already-locked sandbox.) Returns '' when
+ * there is nothing to seed so the prelude is byte-identical to before for
+ * scripts that need no variables.
+ *
+ * Built by the caller inside its try: JSON.stringify can throw on a BigInt or
+ * circular value, which must surface as a failed script, not a rejected call.
+ */
+function buildSeedVarsScript(variables?: Record<string, unknown>): string {
+  if (!variables) {
+    return '';
+  }
+  const keys = Object.keys(variables);
+  if (keys.length === 0) {
+    return '';
+  }
+  return `__bruSeed(${JSON.stringify(JSON.stringify(variables))});`;
+}
 
 /**
  * Best-effort read of the sandbox variable store.
@@ -717,6 +770,12 @@ export interface SandboxJob {
   request?: MockRequestData;
   /** Present when kind is 'test'. */
   response?: MockResponseData;
+  /**
+   * External (env/collection) variables to seed into the sandbox so the
+   * script's bru.getVar can read them (finding X10). Plain JSON-serialisable
+   * data; the worker never treats it as anything but values to read back.
+   */
+  variables?: Record<string, unknown>;
 }
 
 /** The worker's reply, discriminated by the same kind the job carried. */
@@ -734,6 +793,7 @@ export function runPreRequestJob(
   script: string,
   request: MockRequestData,
   timeout: number,
+  variables?: Record<string, unknown>,
 ): PreRequestScriptResult {
     if (!script || script.trim().length === 0) {
       return { variables: {}, mutations: {} };
@@ -745,11 +805,15 @@ export function runPreRequestJob(
     let context: vm.Context | undefined;
 
     try {
-      // Built inside the try: JSON.stringify of a caller-supplied body can throw
-      // (circular structures, BigInt), and that should surface as a failed
-      // script rather than rejecting the whole call.
+      // Built inside the try: JSON.stringify of a caller-supplied body (or of
+      // the seeded variables) can throw (circular structures, BigInt), and that
+      // should surface as a failed script rather than rejecting the whole call.
       const preludeScript = new vm.Script(
-        SANDBOX_BRU_LIB + '\n' + buildPreRequestSandboxScript(request),
+        SANDBOX_BRU_LIB +
+          '\n' +
+          buildPreRequestSandboxScript(request) +
+          '\n' +
+          buildSeedVarsScript(variables),
         { filename: 'bruno-sandbox-prelude.js' },
       );
       const userScript = new vm.Script(script, {
@@ -852,6 +916,7 @@ export function runTestJob(
   script: string,
   response: MockResponseData,
   timeout: number,
+  variables?: Record<string, unknown>,
 ): ScriptResult {
     if (!script || script.trim().length === 0) {
       return { results: [], variables: {} };
@@ -863,9 +928,10 @@ export function runTestJob(
     let context: vm.Context | undefined;
 
     try {
-      // Built inside the try: JSON.stringify of the response body can throw on
-      // a caller-supplied circular structure or BigInt, and that should surface
-      // as a failed script rather than rejecting the whole call.
+      // Built inside the try: JSON.stringify of the response body (or of the
+      // seeded variables) can throw on a caller-supplied circular structure or
+      // BigInt, and that should surface as a failed script rather than
+      // rejecting the whole call.
       //
       // The prelude is a separate script so its declarations become globals
       // instead of sharing script scope with user code, where a user-level
@@ -875,7 +941,9 @@ export function runTestJob(
           '\n' +
           SANDBOX_EXPECT_LIB +
           '\n' +
-          buildSandboxSetupScript(response),
+          buildSandboxSetupScript(response) +
+          '\n' +
+          buildSeedVarsScript(variables),
         { filename: 'bruno-sandbox-prelude.js' },
       );
       const vmScript = new vm.Script(script, {
@@ -990,6 +1058,7 @@ export function runJob(job: SandboxJob): SandboxJobResult {
         job.script,
         job.request as MockRequestData,
         job.timeout,
+        job.variables,
       ),
     };
   }
@@ -999,6 +1068,7 @@ export function runJob(job: SandboxJob): SandboxJobResult {
       job.script,
       job.response as MockResponseData,
       job.timeout,
+      job.variables,
     ),
   };
 }

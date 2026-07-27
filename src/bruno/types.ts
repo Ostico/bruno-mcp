@@ -435,6 +435,12 @@ export interface TestResult {
 
 export interface TestRunnerOptions {
   timeout?: number;
+  /**
+   * External (env/collection) variables the script may read via bru.getVar
+   * (finding X10). Seeded into the sandbox's read store only; a variable the
+   * script merely reads is not echoed back in the result's `variables`.
+   */
+  variables?: Record<string, unknown>;
 }
 
 export interface ScriptResult {

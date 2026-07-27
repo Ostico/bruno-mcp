@@ -636,6 +636,13 @@ async function executeSingleRequest(
     };
     const preResult = await scriptRunner.runPreRequestScript(preScript, mockReqData, {
       timeout: yaml.settings?.timeout ?? 5000,
+      // Seed the merged env/collection/runtime vars so the script can read them
+      // via bru.getVar (finding X10). effectiveVars is the same set fed to
+      // buildFetchOptions, so getVar and {{placeholder}} substitution see one
+      // consistent view. Object.fromEntries defines every entry as an OWN data
+      // property (so a variable literally named "__proto__" is a plain key, not
+      // a prototype write); the sandbox seeder then skips that key.
+      variables: Object.fromEntries(effectiveVars),
     });
 
     // Feed variables the script set into the store FIRST, so they are visible
@@ -842,7 +849,14 @@ async function executeSingleRequest(
     let scriptWarnings: string[] | undefined;
     const testScript = getAfterResponseScript(yaml);
     if (testScript) {
-      const scriptResult = await scriptRunner.runScript(testScript, wrappedResponse);
+      const scriptResult = await scriptRunner.runScript(testScript, wrappedResponse, {
+        // Seed the current merged vars (env/collection/runtime plus anything the
+        // pre-request script wrote into the store) so a post-response script can
+        // read them via bru.getVar (finding X10).
+        variables: Object.fromEntries(
+          variableStore ? variableStore.merge(vars) : vars,
+        ),
+      });
       tests = scriptResult.results;
       if (scriptResult.warnings && scriptResult.warnings.length > 0) {
         scriptWarnings = scriptResult.warnings;

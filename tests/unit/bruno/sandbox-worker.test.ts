@@ -105,3 +105,104 @@ describe('sandbox-worker runJob dispatch', () => {
     });
   });
 });
+
+describe('sandbox-worker external variable seeding (finding X10)', () => {
+  it('lets a pre-request script read a seeded env/collection var via bru.getVar', () => {
+    const res = runPreRequestJob(
+      'bru.setVar("echo", bru.getVar("baseUrl"));',
+      mockRequest,
+      DEFAULT_TIMEOUT,
+      { baseUrl: 'https://api.example.test' },
+    );
+    expect(res.error).toBeUndefined();
+    expect(res.variables.echo).toBe('https://api.example.test');
+  });
+
+  it('without seeding, bru.getVar of an external var is undefined (unchanged)', () => {
+    const res = runPreRequestJob(
+      'bru.setVar("echo", bru.getVar("baseUrl") === undefined ? "MISS" : "HIT");',
+      mockRequest,
+      DEFAULT_TIMEOUT,
+    );
+    expect(res.variables.echo).toBe('MISS');
+  });
+
+  it('does NOT echo a seeded var back as a script output (only script writes propagate)', () => {
+    const res = runPreRequestJob(
+      'void bru.getVar("secretToken");', // read only, never write
+      mockRequest,
+      DEFAULT_TIMEOUT,
+      { secretToken: 's3cr3t', baseUrl: 'https://api.example.test' },
+    );
+    // The script produced no writes, so nothing propagates — the seeded secret
+    // must not leak into the result's variables.
+    expect(res.variables).toEqual({});
+  });
+
+  it('propagates a seeded var only once the script explicitly re-sets it', () => {
+    const res = runPreRequestJob(
+      'bru.setVar("baseUrl", bru.getVar("baseUrl") + "/v2");',
+      mockRequest,
+      DEFAULT_TIMEOUT,
+      { baseUrl: 'https://api.example.test' },
+    );
+    expect(res.variables).toEqual({ baseUrl: 'https://api.example.test/v2' });
+  });
+
+  it('ignores a __proto__ seed key without polluting the store prototype', () => {
+    const res = runPreRequestJob(
+      'bru.setVar("polluted", ({}).polluted === undefined ? "clean" : "polluted");',
+      mockRequest,
+      DEFAULT_TIMEOUT,
+      JSON.parse('{"__proto__": {"polluted": "yes"}, "safe": "ok"}') as Record<
+        string,
+        unknown
+      >,
+    );
+    expect(res.variables.polluted).toBe('clean');
+  });
+
+  it('seeds a test (post-response) script too', () => {
+    const out = runTestJob(
+      'test("reads seed", function () { expect(bru.getVar("token")).to.equal("abc"); });',
+      mockResponse,
+      DEFAULT_TIMEOUT,
+      { token: 'abc' },
+    );
+    expect(out.results[0]).toMatchObject({ description: 'reads seed', status: 'pass' });
+  });
+
+  it('routes seeded variables through runJob dispatch (pre-request)', () => {
+    const out = runJob({
+      kind: 'pre-request',
+      script: 'bru.setVar("echo", bru.getVar("host"));',
+      request: mockRequest,
+      timeout: DEFAULT_TIMEOUT,
+      variables: { host: 'seeded-host' },
+    });
+    if (out.kind !== 'pre-request') throw new Error('unreachable');
+    expect(out.result.variables.echo).toBe('seeded-host');
+  });
+
+  it('routes seeded variables through runJob dispatch (test)', () => {
+    const out = runJob({
+      kind: 'test',
+      script: 'test("t", function () { expect(bru.getVar("k")).to.equal("v"); });',
+      response: mockResponse,
+      timeout: DEFAULT_TIMEOUT,
+      variables: { k: 'v' },
+    });
+    if (out.kind !== 'test') throw new Error('unreachable');
+    expect(out.result.results[0]).toMatchObject({ status: 'pass' });
+  });
+
+  it('treats an empty seed set as no seeding (prelude unchanged)', () => {
+    const res = runPreRequestJob(
+      'bru.setVar("echo", bru.getVar("baseUrl") === undefined ? "MISS" : "HIT");',
+      mockRequest,
+      DEFAULT_TIMEOUT,
+      {},
+    );
+    expect(res.variables.echo).toBe('MISS');
+  });
+});

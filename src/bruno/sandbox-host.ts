@@ -316,6 +316,7 @@ export function createForkingScriptRunner(
           script,
           request,
           timeout: options?.timeout ?? DEFAULT_TIMEOUT,
+          variables: options?.variables,
         },
         { workerPath },
       );
@@ -332,6 +333,7 @@ export function createForkingScriptRunner(
           script,
           response,
           timeout: options?.timeout ?? DEFAULT_TIMEOUT,
+          variables: options?.variables,
         },
         { workerPath },
       );
