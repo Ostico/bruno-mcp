@@ -2,7 +2,7 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import { join, basename, relative, dirname } from 'node:path';
 import { parseYamlRequest } from './yaml-parser.js';
 import { parseBruRequest } from './bru-parser.js';
-import { loadEnvironment, substitute } from './env-loader.js';
+import { loadEnvironment, substitute, findUnresolvedPlaceholders } from './env-loader.js';
 import { TestRunner } from './test-runner.js';
 import type { ScriptRunner } from './sandbox-host.js';
 import { wrapFetchResponse } from './response-wrapper.js';
@@ -217,11 +217,29 @@ export async function buildFetchOptions(
   yaml: YamlRequest,
   vars: Map<string, string>,
 ): Promise<{ url: string; options: RequestInit; warnings?: string[] }> {
+  // Finding X8: surface any {{var}} that substitution could not resolve so an
+  // unsubstituted placeholder can no longer reach the wire silently. The
+  // failure mode is starkest under parallel per-folder isolation — a variable
+  // set by a script in one folder is invisible to another folder's requests —
+  // but an unresolved placeholder is a latent bug in serial mode too. Detection
+  // runs on the ORIGINAL templates below, not the substituted output, so a
+  // resolved value that itself contains `{{...}}` is never mis-flagged
+  // (substitution is deliberately single-pass). Names accumulate across every
+  // substituted surface (url, headers, auth, body).
+  const unresolvedNames = new Set<string>();
+  const trackUnresolved = (template: string): void => {
+    for (const name of findUnresolvedPlaceholders(template, vars)) {
+      unresolvedNames.add(name);
+    }
+  };
+
+  trackUnresolved(yaml.http.url);
   let url = substitute(yaml.http.url, vars);
 
   const headers: Record<string, string> = {};
   if (yaml.http.headers) {
     for (const h of yaml.http.headers) {
+      trackUnresolved(h.value);
       headers[h.name] = substitute(h.value, vars);
     }
   }
@@ -231,7 +249,15 @@ export async function buildFetchOptions(
   // api-key comes back to be appended to the URL; a scheme we cannot apply
   // automatically is surfaced as a warning rather than dropped in silence.
   const authWarnings: string[] = [];
-  const queryAuth = applyAuth(yaml.http.auth, headers, s => substitute(s, vars), authWarnings);
+  const queryAuth = applyAuth(
+    yaml.http.auth,
+    headers,
+    s => {
+      trackUnresolved(s);
+      return substitute(s, vars);
+    },
+    authWarnings,
+  );
   if (queryAuth) {
     url +=
       (url.includes('?') ? '&' : '?') +
@@ -249,6 +275,7 @@ export async function buildFetchOptions(
     const parts = body!.data as MultipartFormPart[];
 
     for (const part of parts) {
+      if (part.contentType) trackUnresolved(part.contentType);
       const contentType = part.contentType
         ? substitute(part.contentType, vars)
         : undefined;
@@ -256,6 +283,7 @@ export async function buildFetchOptions(
       if (part.type === 'file') {
         const paths = Array.isArray(part.value) ? part.value : [part.value];
         for (const rawPath of paths) {
+          trackUnresolved(String(rawPath));
           const filePath = substitute(String(rawPath), vars);
           const buf = await readFile(filePath);
           form.append(
@@ -267,6 +295,7 @@ export async function buildFetchOptions(
       } else {
         const values = Array.isArray(part.value) ? part.value : [part.value];
         for (const rawValue of values) {
+          trackUnresolved(String(rawValue));
           const value = substitute(String(rawValue), vars);
           if (contentType) {
             form.append(part.name, new Blob([value], { type: contentType }));
@@ -287,13 +316,22 @@ export async function buildFetchOptions(
       }
     }
   } else if (typeof body?.data === 'string') {
+    trackUnresolved(body.data);
     options.body = substitute(body.data, vars);
   }
+
+  // Name the placeholder (e.g. `{{token}}`) but never a resolved value — the
+  // value may be a secret. authWarnings first (auth is applied earliest), then
+  // the unresolved-variable warnings in first-seen order.
+  const unresolvedWarnings = [...unresolvedNames].map(
+    name => `unresolved variable: {{${name}}}`,
+  );
+  const warnings = [...authWarnings, ...unresolvedWarnings];
 
   return {
     url,
     options,
-    ...(authWarnings.length > 0 ? { warnings: authWarnings } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
 }
 
@@ -681,6 +719,14 @@ export class RequestExecutor {
       const folderResults = await Promise.allSettled(
         sortedFolders.map(async (folder) => {
           const folderRequests = folderMap.get(folder)!;
+          // Folders are isolated by design: each gets its own VariableStore so
+          // concurrent folder tasks never share a mutable store (which would
+          // reintroduce a setVar/getVar race). A variable set by a script in
+          // one folder is therefore invisible to another folder's requests. We
+          // do NOT bridge stores across folders; instead buildFetchOptions
+          // surfaces any {{var}} left unresolved as a per-request warning
+          // (finding X8), so this isolation can no longer let an unsubstituted
+          // placeholder reach the wire silently the way serial mode would not.
           const folderStore = new VariableStore();
           const folderRes: RequestExecutionResult[] = [];
           for (const req of folderRequests) {
