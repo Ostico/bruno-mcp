@@ -943,3 +943,101 @@ export function runJob(job: SandboxJob): SandboxJobResult {
     ),
   };
 }
+
+/**
+ * A result of the job's own kind that carries a single failure. Used by both
+ * sides of the process boundary: the worker returns it if runJob itself throws
+ * (a script bug never should, but a boundary must not depend on that), and the
+ * host returns it when the child dies, times out, or never replies. Keeping one
+ * builder means both paths surface a failure in the exact shape a caller of the
+ * in-process path already handles.
+ */
+export function failingResultFor(
+  kind: SandboxJob['kind'],
+  message: string,
+): SandboxJobResult {
+  if (kind === 'pre-request') {
+    return {
+      kind: 'pre-request',
+      result: { variables: {}, mutations: {}, error: message },
+    };
+  }
+  return {
+    kind: 'test',
+    result: {
+      results: [{ description: 'sandbox', status: 'fail', error: message }],
+      variables: {},
+    },
+  };
+}
+
+/** argv token the parent sets so a forked child knows to run the worker loop. */
+export const WORKER_ARGV_SENTINEL = '__bruno_sandbox_worker__';
+
+/**
+ * The minimal slice of the process object the worker loop needs. Narrowed to an
+ * interface so the loop is testable without forking a real child.
+ */
+export interface WorkerChannel {
+  on(event: 'message', listener: (job: SandboxJob) => void): void;
+  send?(message: unknown, callback?: (error: Error | null) => void): boolean;
+  exit(code: number): never;
+}
+
+/**
+ * Handle exactly one job off the IPC channel, reply, and exit — one job per
+ * process, so nothing a script leaves behind (globals, pending microtasks,
+ * timers) can reach the next job. runJob is trusted to turn script failures
+ * into results rather than throw; the try is only for a catastrophic bug in the
+ * boundary itself, which is still reported as a failing result rather than a
+ * silent hang.
+ */
+export function runWorkerLoop(channel: WorkerChannel): void {
+  channel.on('message', (job: SandboxJob) => {
+    let reply: SandboxJobResult;
+    try {
+      reply = runJob(job);
+    } catch (error) {
+      reply = failingResultFor(
+        job?.kind === 'pre-request' ? 'pre-request' : 'test',
+        `sandbox worker crashed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    if (channel.send) {
+      channel.send(reply, () => channel.exit(0));
+    } else {
+      channel.exit(0);
+    }
+  });
+}
+
+/**
+ * Start the worker loop only when this module was forked as the sandbox child,
+ * identified by the argv sentinel. Importing the module (as the parent and the
+ * tests do) leaves it dormant. Returns whether the loop was started.
+ */
+export function maybeStartWorker(argv: string[], channel: WorkerChannel): boolean {
+  if (!argv.includes(WORKER_ARGV_SENTINEL)) {
+    return false;
+  }
+  runWorkerLoop(channel);
+  return true;
+}
+
+/**
+ * Adapt a Node process to the narrow WorkerChannel the loop needs. Extracted so
+ * the adapter is testable without forking: its arrows would otherwise only ever
+ * run inside a real child, where the parent's coverage cannot see them.
+ */
+export function processWorkerChannel(proc: NodeJS.Process): WorkerChannel {
+  return {
+    on: (event, listener) => {
+      proc.on(event, listener as (...args: unknown[]) => void);
+    },
+    send: proc.send ? proc.send.bind(proc) : undefined,
+    exit: proc.exit.bind(proc),
+  };
+}
+
+maybeStartWorker(process.argv, processWorkerChannel(process));
