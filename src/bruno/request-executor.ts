@@ -520,9 +520,12 @@ async function executeSingleRequest(
     fetchOpts.signal = AbortSignal.timeout(timeout);
   }
 
-  // Build custom dispatcher for TLS/proxy settings
+  // Build custom dispatcher for TLS/proxy settings. The target host gates the
+  // operator trust boundary (a collection's TLS-downgrade/CA/proxy overrides
+  // are honoured only for allowlisted hosts). `url` was validated above, so it
+  // parses.
   const dispatcherResult = yaml.settings
-    ? await buildDispatcher(yaml.settings)
+    ? await buildDispatcher(yaml.settings, new URL(url).hostname)
     : undefined;
 
   const fetchFn = dispatcherResult ? dispatcherResult.fetch : fetch;
