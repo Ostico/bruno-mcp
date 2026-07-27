@@ -9,6 +9,7 @@ import {
   BrunoResponse,
   wrapFetchResponse,
   readBodyCapped,
+  isJsonContentType,
   MAX_RESPONSE_BYTES,
 } from '../../../src/bruno/response-wrapper';
 
@@ -365,6 +366,55 @@ describe('wrapFetchResponse — Set-Cookie preservation (X7)', () => {
   it('omits setCookies when the response set no cookies', async () => {
     const out = await wrapFetchResponse(new Response('ok'), 5);
     expect(out.setCookies).toBeUndefined();
+  });
+});
+
+describe('isJsonContentType — unified predicate boundary (X6)', () => {
+  it.each([
+    ['application/json', true],
+    ['application/json; charset=utf-8', true],
+    ['Application/JSON', true],
+    ['text/json', true],
+    ['application/ld+json', true],
+    ['application/vnd.api+json', true],
+    ['text/plain', false],
+    ['application/xml', false],
+    ['text/html; charset=utf-8', false],
+    ['application/notjson', false],
+    ['json', false],
+    ['', false],
+  ])('%s → %s', (contentType, expected) => {
+    expect(isJsonContentType(contentType)).toBe(expected);
+  });
+
+  it('returns false for null / undefined content types', () => {
+    expect(isJsonContentType(null)).toBe(false);
+    expect(isJsonContentType(undefined)).toBe(false);
+  });
+});
+
+describe('JSON content-type detection consistency (X6)', () => {
+  it('text/json: getBody() and wrapFetchResponse agree — both parse to the same object', async () => {
+    const jsonBody = JSON.stringify({ ok: true });
+
+    // Path 1: BrunoResponse.getBody()
+    const wrapper = new BrunoResponse(
+      buildResponseData({
+        headers: { 'content-type': 'text/json' },
+        body: jsonBody,
+      }),
+    );
+
+    // Path 2: wrapFetchResponse()
+    const out = await wrapFetchResponse(
+      new Response(jsonBody, { headers: { 'content-type': 'text/json' } }),
+      1,
+    );
+
+    expect(wrapper.getBody()).toEqual({ ok: true });
+    expect(out.body).toEqual({ ok: true });
+    // The two JSON-detection paths must not disagree.
+    expect(out.body).toEqual(wrapper.getBody());
   });
 });
 

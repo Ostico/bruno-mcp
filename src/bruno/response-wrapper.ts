@@ -1,5 +1,33 @@
 import type { ResponseData, MockResponseData } from './types.js';
 
+/**
+ * Single source of truth for "should this response body be parsed as JSON?"
+ * (finding X6). Two divergent rules previously lived in this file — a loose
+ * `.includes('json')` in `BrunoResponse.getBody()` and a stricter
+ * `application/json` / `+json` check in `wrapFetchResponse()` — which disagreed
+ * for content types like `text/json`, so the same response could be typed as a
+ * parsed object on one path and a raw string on the other.
+ *
+ * The rule matches a media type whose subtype is exactly `json` or uses the
+ * `+json` structured-syntax suffix (RFC 6839): `application/json`, `text/json`,
+ * `application/ld+json`, `application/vnd.api+json`, … It is case-insensitive
+ * and ignores parameters (`; charset=…`). Subtypes that merely contain the
+ * substring `json` (e.g. `application/notjson`) are intentionally NOT matched.
+ *
+ * This is the exact set `detectDoubleParse` refers to when it warns callers that
+ * `res.getBody()` already returns parsed JSON "when the response Content-Type is
+ * JSON": routing every JSON decision through this predicate makes that contract
+ * consistent across the wrapper.
+ */
+export function isJsonContentType(contentType: string | null | undefined): boolean {
+  if (!contentType) {
+    return false;
+  }
+  const mediaType = contentType.split(';', 1)[0].trim().toLowerCase();
+  const subtype = mediaType.split('/')[1] ?? '';
+  return subtype === 'json' || subtype.endsWith('+json');
+}
+
 export class BrunoResponse {
   private readonly status: number;
   private readonly statusText: string;
@@ -48,8 +76,8 @@ export class BrunoResponse {
 
     this.bodyParsed = true;
 
-    const contentType = this.getHeader('content-type') ?? '';
-    if (contentType.toLowerCase().includes('json')) {
+    const contentType = this.getHeader('content-type');
+    if (isJsonContentType(contentType)) {
       try {
         this.parsedBody = JSON.parse(this.body);
       } catch {
@@ -174,8 +202,8 @@ export async function wrapFetchResponse(
   }
 
   let body: unknown = rawText;
-  const contentType = headers['content-type'] ?? '';
-  if (contentType.includes('application/json') || contentType.includes('+json')) {
+  const contentType = headers['content-type'];
+  if (isJsonContentType(contentType)) {
     try {
       body = JSON.parse(rawText);
     } catch {
