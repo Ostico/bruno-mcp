@@ -290,11 +290,37 @@ function confineUploadPath(filePath: string, collectionRoot: string | undefined)
   return resolved;
 }
 
+/** Credential headers always dropped on a cross-origin redirect, in addition to the request's own auth headers. */
+const CROSS_ORIGIN_STRIP_HEADERS = ['authorization', 'cookie', 'proxy-authorization'];
+
+/**
+ * Drop credential-bearing headers when a redirect crosses to a different origin
+ * (findings S06/S07). Real fetch() strips these on a cross-origin redirect; the
+ * manual redirect loop must do the same, or a target that 302s to an attacker
+ * hands it the caller's Authorization / api-key / cookies. `authHeaderNames`
+ * are the header names auth was actually applied to, so a caller-named api-key
+ * header (e.g. X-Api-Key) is stripped too — not just the standard set.
+ */
+export function stripCredentialHeaders(
+  headers: Record<string, string>,
+  authHeaderNames: string[],
+): Record<string, string> {
+  const deny = new Set([
+    ...CROSS_ORIGIN_STRIP_HEADERS,
+    ...authHeaderNames.map(n => n.toLowerCase()),
+  ]);
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) {
+    if (!deny.has(k.toLowerCase())) out[k] = v;
+  }
+  return out;
+}
+
 export async function buildFetchOptions(
   yaml: YamlRequest,
   vars: Map<string, string>,
   collectionRoot?: string,
-): Promise<{ url: string; options: RequestInit; warnings?: string[] }> {
+): Promise<{ url: string; options: RequestInit; warnings?: string[]; authHeaderNames?: string[] }> {
   // Finding X8: surface any {{var}} that substitution could not resolve so an
   // unsubstituted placeholder can no longer reach the wire silently. The
   // failure mode is starkest under parallel per-folder isolation — a variable
@@ -327,6 +353,7 @@ export async function buildFetchOptions(
   // api-key comes back to be appended to the URL; a scheme we cannot apply
   // automatically is surfaced as a warning rather than dropped in silence.
   const authWarnings: string[] = [];
+  const authHeaderNames: string[] = [];
   const queryAuth = applyAuth(
     yaml.http.auth,
     headers,
@@ -335,6 +362,7 @@ export async function buildFetchOptions(
       return substitute(s, vars);
     },
     authWarnings,
+    authHeaderNames,
   );
   if (queryAuth) {
     url +=
@@ -414,6 +442,7 @@ export async function buildFetchOptions(
     url,
     options,
     ...(warnings.length > 0 ? { warnings } : {}),
+    ...(authHeaderNames.length > 0 ? { authHeaderNames } : {}),
   };
 }
 
@@ -432,6 +461,7 @@ function applyAuth(
   headers: Record<string, string>,
   subst: (value: string) => string,
   warnings: string[],
+  authHeaderNames: string[],
 ): { key: string; value: string } | undefined {
   if (!auth) {
     return undefined;
@@ -455,6 +485,7 @@ function applyAuth(
         return undefined;
       }
       headers['Authorization'] = `Bearer ${token}`;
+      authHeaderNames.push('Authorization');
       return undefined;
     }
 
@@ -463,6 +494,7 @@ function applyAuth(
       const password = subst(String(auth.password ?? ''));
       headers['Authorization'] =
         'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
+      authHeaderNames.push('Authorization');
       return undefined;
     }
 
@@ -478,6 +510,7 @@ function applyAuth(
         return { key, value };
       }
       headers[key] = value;
+      authHeaderNames.push(key);
       return undefined;
     }
 
@@ -537,6 +570,7 @@ async function executeSingleRequest(
   let url = built.url;
   let options = built.options;
   const authWarnings = built.warnings;
+  const authHeaderNames = built.authHeaderNames ?? [];
   const name = yaml.info.name;
   const method = yaml.http.method;
 
@@ -625,7 +659,8 @@ async function executeSingleRequest(
   const maxRedirects = yaml.settings?.maxRedirects ?? 10;
 
   try {
-    let response = await fetchFn(url, fetchOpts);
+    let currentOpts = fetchOpts;
+    let response = await fetchFn(url, currentOpts);
     let currentUrl = url;
     let redirectCount = 0;
 
@@ -655,7 +690,20 @@ async function executeSingleRequest(
         };
       }
 
-      response = await fetchFn(redirectUrl, fetchOpts);
+      // S06/S07: strip credential headers when the hop crosses origin, so a
+      // redirect to another host cannot harvest the caller's Authorization,
+      // api-key, or cookies. Once stripped they stay stripped for later hops.
+      if (new URL(redirectUrl).origin !== new URL(currentUrl).origin) {
+        currentOpts = {
+          ...currentOpts,
+          headers: stripCredentialHeaders(
+            currentOpts.headers as Record<string, string>,
+            authHeaderNames,
+          ),
+        };
+      }
+
+      response = await fetchFn(redirectUrl, currentOpts);
       currentUrl = redirectUrl;
       redirectCount++;
     }
