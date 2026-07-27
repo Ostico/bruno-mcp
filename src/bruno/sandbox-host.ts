@@ -99,6 +99,52 @@ function releaseSlot(): void {
 }
 
 /**
+ * Make a request body safe to cross the IPC channel.
+ *
+ * child.send() serializes with the default 'json' codec. A FormData or Blob
+ * body has no JSON representation, so it arrives at the child as {} — a
+ * pre-request script would then inspect an empty object instead of the
+ * multipart/binary body it was handed (finding S19). Switching the codec to
+ * 'advanced' is not an option: structured clone throws on FormData rather than
+ * degrading, and file contents / field values must not cross the boundary
+ * regardless. So a non-serializable body is replaced with a truthful,
+ * names-only descriptor. String, null and plain object/array bodies (JSON,
+ * text, form-urlencoded-as-string) already serialize losslessly and pass
+ * through unchanged.
+ */
+function toSerializableBody(body: unknown): unknown {
+  if (body === null || body === undefined || typeof body === 'string') {
+    return body;
+  }
+  if (typeof FormData !== 'undefined' && body instanceof FormData) {
+    // Part NAMES only — never the part values or file contents.
+    return { type: 'multipart/form-data', parts: [...new Set(body.keys())] };
+  }
+  if (typeof Blob !== 'undefined' && body instanceof Blob) {
+    return {
+      type: 'blob',
+      contentType: body.type || 'application/octet-stream',
+      size: body.size,
+    };
+  }
+  return body;
+}
+
+/**
+ * Return a copy of the job whose request body is safe to send over IPC (see
+ * toSerializableBody). Only the pre-request job carries a request body; the
+ * test job carries a response and is returned untouched, as is any pre-request
+ * job whose body already serializes losslessly (returned by identity so callers
+ * can cheaply detect the no-op).
+ */
+export function toSendableJob(job: SandboxJob): SandboxJob {
+  if (job.kind !== 'pre-request' || !job.request) return job;
+  const safe = toSerializableBody(job.request.body);
+  if (safe === job.request.body) return job;
+  return { ...job, request: { ...job.request, body: safe } };
+}
+
+/**
  * Run one job in a forked worker and resolve with its reply. Never rejects: a
  * child that crashes, times out, or never replies resolves as a failing result
  * of the job's kind, so a misbehaving script can never take down the caller.
@@ -202,7 +248,7 @@ export async function runInWorker(
       );
     });
 
-    child.send(job, (error: Error | null) => {
+    child.send(toSendableJob(job), (error: Error | null) => {
       if (error) {
         finish(
           failingResultFor(

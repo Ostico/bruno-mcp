@@ -50,9 +50,23 @@ boundary, nothing more, and should be described that way.
 Exactly one job in, exactly one result out, per child. All fields are
 JSON-serialisable so the message survives both `child.send()` structured clone
 and a plain JSON round-trip; neither side may place a function, a `Blob`, a
-`FormData`, a `BigInt`, or a circular reference on the wire (projecting
-non-serialisable request bodies to a safe form is the parent's job — deferred to
-a follow-up, tracked in the finding register).
+`FormData`, a `BigInt`, or a circular reference on the wire.
+
+Projecting a non-serialisable **request body** to a safe form is the parent's
+job, done by `toSendableJob` in `sandbox-host.ts` before `child.send()`. Under
+the default `'json'` codec a `FormData` or `Blob` body would otherwise arrive as
+`{}`, so a pre-request script would inspect an empty object instead of the body
+it was handed (finding S19). Instead the parent substitutes a truthful,
+**names-only** descriptor:
+
+- `FormData` → `{ type: 'multipart/form-data', parts: string[] }` — the part
+  names only, de-duplicated; **never** part values or file contents.
+- `Blob` → `{ type: 'blob', contentType: string, size: number }` — no bytes.
+
+String, `null`, and plain object/array bodies already round-trip losslessly and
+cross unchanged. This projection is a read-only view for the script; the actual
+wire request is dispatched by the executor from the original body, not from what
+crosses the boundary.
 
 ### Parent → worker: `SandboxJob`
 
