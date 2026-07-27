@@ -1899,6 +1899,194 @@ http:
       expect(result.results[1].name).toBe('B Request');
     });
 
+    // A folder task rejects when something throws before executeSingleRequest's
+    // own try/catch. buildDispatcher is one such call: undici's ProxyAgent
+    // constructor throws `TypeError: Invalid URL` on a malformed uri, so a bad
+    // `settings.proxy` reaches the executor as a rejection. buildDispatcher is
+    // mocked in this suite, so the tests below reproduce that throw through the
+    // mock rather than by constructing a real ProxyAgent.
+    //
+    // Serial mode lets such an error propagate out of executeCollection;
+    // parallel mode used to swallow it and report only the surviving folders as
+    // a fully passed run.
+    const BAD_PROXY = 'not a url';
+
+    const BAD_PROXY_REQ = (name: string) => `
+info:
+  name: ${name}
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/x"
+settings:
+  proxy: "${BAD_PROXY}"
+`;
+
+    function throwOnBadProxy(): void {
+      mockedBuildDispatcher.mockImplementation(async (settings) => {
+        if (settings?.proxy === BAD_PROXY) {
+          throw new TypeError('Invalid URL');
+        }
+        return undefined;
+      });
+    }
+
+    // clearAllMocks() keeps implementations, so restore the suite-wide default.
+    afterEach(() => {
+      mockedBuildDispatcher.mockReset();
+      mockedBuildDispatcher.mockResolvedValue(undefined);
+    });
+
+    it('should not swallow a rejected folder and report the survivors as a passing run', async () => {
+      const GOOD_REQ = `
+info:
+  name: A Request
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/a"
+`;
+
+      setupFsReaddirRecursive({
+        '/test-collection': [
+          { name: 'folderA', isFile: false, isDirectory: true },
+          { name: 'folderB', isFile: false, isDirectory: true },
+        ],
+        '/test-collection/folderA': [
+          { name: 'A Request.yml', isFile: true, isDirectory: false },
+        ],
+        '/test-collection/folderB': [
+          { name: 'B Request.yml', isFile: true, isDirectory: false },
+        ],
+      });
+
+      setupFsReadFile({
+        'A Request.yml': GOOD_REQ,
+        'B Request.yml': BAD_PROXY_REQ('B Request'),
+      });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValue(createMockResponse({ ok: true }));
+      throwOnBadProxy();
+
+      await expect(
+        RequestExecutor.executeCollection('/test-collection', { parallel: true }),
+      ).rejects.toThrow(/Invalid URL/);
+    });
+
+    it('should rethrow the original error when exactly one folder rejects', async () => {
+      setupFsReaddirRecursive({
+        '/test-collection': [
+          { name: 'folderB', isFile: false, isDirectory: true },
+        ],
+        '/test-collection/folderB': [
+          { name: 'B Request.yml', isFile: true, isDirectory: false },
+        ],
+      });
+
+      setupFsReadFile({ 'B Request.yml': BAD_PROXY_REQ('B Request') });
+      setupFsStat(['/test-collection']);
+      throwOnBadProxy();
+
+      // Not an AggregateError: a single failure propagates unchanged so the
+      // message and type match what serial execution would surface.
+      await expect(
+        RequestExecutor.executeCollection('/test-collection', { parallel: true }),
+      ).rejects.toThrow(TypeError);
+    });
+
+    it('should aggregate every reason when more than one folder rejects', async () => {
+      setupFsReaddirRecursive({
+        '/test-collection': [
+          { name: 'folderA', isFile: false, isDirectory: true },
+          { name: 'folderB', isFile: false, isDirectory: true },
+          { name: 'folderC', isFile: false, isDirectory: true },
+        ],
+        '/test-collection/folderA': [
+          { name: 'A Request.yml', isFile: true, isDirectory: false },
+        ],
+        '/test-collection/folderB': [
+          { name: 'B Request.yml', isFile: true, isDirectory: false },
+        ],
+        '/test-collection/folderC': [
+          { name: 'C Request.yml', isFile: true, isDirectory: false },
+        ],
+      });
+
+      setupFsReadFile({
+        'A Request.yml': `
+info:
+  name: A Request
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/a"
+`,
+        'B Request.yml': BAD_PROXY_REQ('B Request'),
+        'C Request.yml': BAD_PROXY_REQ('C Request'),
+      });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValue(createMockResponse({ ok: true }));
+      throwOnBadProxy();
+
+      let caught: unknown;
+      try {
+        await RequestExecutor.executeCollection('/test-collection', { parallel: true });
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught).toBeInstanceOf(AggregateError);
+      const aggregate = caught as AggregateError;
+      expect(aggregate.errors).toHaveLength(2);
+      // Callers render only `.message`, so both reasons must be inlined there.
+      expect(aggregate.message).toContain('2 of 3 parallel folders failed');
+      expect(aggregate.message).toContain('Invalid URL');
+    });
+
+    it('should stringify a non-Error rejection reason in the aggregate message', async () => {
+      setupFsReaddirRecursive({
+        '/test-collection': [
+          { name: 'folderB', isFile: false, isDirectory: true },
+          { name: 'folderC', isFile: false, isDirectory: true },
+        ],
+        '/test-collection/folderB': [
+          { name: 'B Request.yml', isFile: true, isDirectory: false },
+        ],
+        '/test-collection/folderC': [
+          { name: 'C Request.yml', isFile: true, isDirectory: false },
+        ],
+      });
+
+      setupFsReadFile({
+        'B Request.yml': BAD_PROXY_REQ('B Request'),
+        'C Request.yml': BAD_PROXY_REQ('C Request'),
+      });
+      setupFsStat(['/test-collection']);
+
+      // A user script is free to `throw 'string'`, so the reason is not always
+      // an Error and must still make it into the message.
+      let call = 0;
+      mockedBuildDispatcher.mockImplementation(async () => {
+        call += 1;
+        throw call === 1 ? new TypeError('Invalid URL') : 'plain string reason';
+      });
+
+      let caught: unknown;
+      try {
+        await RequestExecutor.executeCollection('/test-collection', { parallel: true });
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught).toBeInstanceOf(AggregateError);
+      expect((caught as AggregateError).message).toContain('plain string reason');
+    });
+
     it('should isolate variables between parallel folders', async () => {
       const FOLDER_A_SETTER = `
 info:
