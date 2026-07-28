@@ -34,10 +34,8 @@ jobs:
     - name: Typecheck
       run: npm run typecheck
 
-    # Advisory only: the repo has no ESLint config yet, so this cannot gate.
     - name: Run linting
       run: npm run lint
-      continue-on-error: true
 
     # Blocking: a failing test suite must fail the build.
     - name: Run tests

@@ -18,10 +18,19 @@ const repoRoot = path.resolve(__dirname, '../..');
 const workerPath = path.join(repoRoot, 'dist', 'bruno', 'sandbox-worker.js');
 
 beforeAll(() => {
-  if (!existsSync(workerPath)) {
-    execSync('npm run build', { cwd: repoRoot, stdio: 'ignore' });
-  }
-}, 60_000);
+  // Always rebuild rather than reusing whatever dist/ happens to hold. Skipping
+  // the build when the file merely exists let a stale artifact keep this suite
+  // green after the build script stopped emitting the worker at all — the exact
+  // breakage this test exists to catch.
+  execSync('npm run build', { cwd: repoRoot, stdio: 'ignore' });
+}, 120_000);
+
+it('the build emits the worker where the production resolver looks for it', () => {
+  // resolveWorkerPath() points at dist/bruno/sandbox-worker.js. If the build
+  // stops emitting that entry, forking is broken for every installed copy while
+  // every unit test still passes, because they fork a fake.
+  expect(existsSync(workerPath)).toBe(true);
+});
 
 describe('sandbox fork (real child)', () => {
   it('runs a test job in a forked worker and returns its results', async () => {

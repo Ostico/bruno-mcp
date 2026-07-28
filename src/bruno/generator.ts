@@ -17,8 +17,7 @@ import {
   BruTests,
   BruGeneratorOptions,
   BruValidationError,
-  AuthType,
-  BodyType
+  HttpMethod
 } from './types.js';
 
 export class BruGenerator {
@@ -447,7 +446,7 @@ export function createBasicBruFile(
       seq: sequence
     },
     http: {
-      method: method.toUpperCase() as any,
+      method: method.toUpperCase() as HttpMethod,
       url,
       body: 'none',
       auth: 'none'

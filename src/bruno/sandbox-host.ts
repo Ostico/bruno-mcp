@@ -167,7 +167,6 @@ export async function runInWorker(
   return new Promise<SandboxJobResult>(resolve => {
     let settled = false;
     let deadlineTimer: NodeJS.Timeout | undefined;
-    let killTimer: NodeJS.Timeout | undefined;
 
     const child: ChildProcess = fork(workerPath, [WORKER_ARGV_SENTINEL], {
       // fd 1 (stdout) and fd 2 (stderr) are PIPED, never inherited: inheriting
@@ -192,9 +191,9 @@ export async function runInWorker(
 
     const cleanup = (): void => {
       if (deadlineTimer) clearTimeout(deadlineTimer);
-      // killTimer is deliberately NOT cleared: it is only ever scheduled on the
-      // deadline path, and the caller is resolved before SIGKILL fires. Clearing
-      // it here would cancel the escalation and leave the runaway child alive.
+      // The SIGKILL escalation is deliberately NOT cleared: it is only ever
+      // scheduled on the deadline path, and the caller is resolved before it
+      // fires. Cancelling it would leave the runaway child alive.
       child.removeAllListeners();
       child.stdout?.removeAllListeners();
       child.stderr?.removeAllListeners();
@@ -213,7 +212,9 @@ export async function runInWorker(
     // spinning on the child's stack.
     const killChild = (): void => {
       child.kill('SIGTERM');
-      killTimer = setTimeout(() => {
+      // The handle is deliberately not kept: this escalation must never be
+      // cancelled, or a runaway child would survive the SIGTERM it ignored.
+      setTimeout(() => {
         child.kill('SIGKILL');
       }, killGraceMs);
     };

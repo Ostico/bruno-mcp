@@ -3,15 +3,27 @@
   "version": "1.2.3",
   "description": "MCP server for generating Bruno API testing files",
   "main": "dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "type": "module",
   "scripts": {
-    "build": "tsup src/index.ts src/bruno/sandbox-worker.ts --format esm --sourcemap --clean --shims",
+    "build": "tsup src/index.ts src/bruno/sandbox-worker.ts --format esm --sourcemap --clean --shims --dts",
     "typecheck": "tsc --noEmit",
     "dev": "ts-node-esm src/index.ts",
     "start": "node dist/index.js",
     "test": "jest",
     "test:unit": "jest tests/unit",
-    "test:integration": "npm run build && bruno-cli run examples/",
+    "test:integration": "jest tests/integration",
     "lint": "eslint src/ --ext .ts",
     "format": "prettier --write src/",
     "clean": "rm -rf dist",
