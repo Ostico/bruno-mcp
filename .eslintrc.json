@@ -27,6 +27,14 @@
       }
     ],
     "no-console": "off",
+    "max-lines": [
+      "error",
+      {
+        "max": 1300,
+        "skipBlankLines": false,
+        "skipComments": false
+      }
+    ],
     "prefer-const": [
       "error",
       {
