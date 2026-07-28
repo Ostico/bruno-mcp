@@ -15,6 +15,11 @@ import { BrunoMcpServer } from '../../../src/server';
 
 const mockReadFile = jest.fn();
 const mockWriteFile = jest.fn();
+// D9: server.ts writes through writeFileAtomic now; route it to the same mock so
+// these tests keep asserting on the content and path written.
+jest.mock('../../../src/bruno/atomic-write', () => ({
+  writeFileAtomic: (...args: unknown[]) => mockWriteFile(...args),
+}));
 const mockUnlink = jest.fn();
 jest.mock('node:fs/promises', () => ({
   access: jest.fn(),

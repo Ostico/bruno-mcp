@@ -8,7 +8,9 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 
 import path from 'path';
-import { readFile, writeFile, unlink } from 'node:fs/promises';
+import { readFile, unlink } from 'node:fs/promises';
+import { writeFileAtomic } from './bruno/atomic-write.js';
+import { withPathLock } from './bruno/path-mutex.js';
 
 // Import our Bruno modules
 import { createCollectionManager } from './bruno/collection.js';
@@ -820,21 +822,27 @@ export class BrunoMcpServer {
             };
           }
 
-          // 7. Read file content (also serves as existence check — ENOENT caught below)
-          // Note: read-modify-write is not atomic. Concurrent writes to the same file
-          // may lose data. Single-client MCP usage is safe; multi-client needs locking.
-          const content = await readFile(args.bruFilePath, 'utf-8');
-
-          // 8. Normalize aliases to canonical script type, then inject
+          // 7. Normalize aliases to canonical script type
           const canonicalScriptType = normalizeScriptType(args.scriptType);
-          const writer = createWriter(detection.format);
           // Default explicitly: the zod default only applies when the SDK
           // validates input, not when the handler is invoked directly.
           const scriptMode = args.scriptMode ?? 'append';
-          const updated = writer.injectScript(content, canonicalScriptType, args.script, scriptMode);
 
-          // 9. Write back
-          await writeFile(args.bruFilePath, updated);
+          // 8. Read, inject, write back under a per-file lock. The pair is what
+          // needs guarding: two concurrent injections would both read the
+          // original and the second write would discard the first script (D8).
+          // The read also serves as an existence check — ENOENT caught below.
+          await withPathLock(args.bruFilePath, async () => {
+            const content = await readFile(args.bruFilePath, 'utf-8');
+            const writer = createWriter(detection.format);
+            const updated = writer.injectScript(
+              content,
+              canonicalScriptType,
+              args.script,
+              scriptMode,
+            );
+            await writeFileAtomic(args.bruFilePath, updated);
+          });
 
           // 10. Return success
           return {
@@ -936,13 +944,24 @@ export class BrunoMcpServer {
             };
           }
 
-          // Read-modify-write is not atomic; single-client MCP usage is safe.
-          const content = await readFile(args.bruFilePath, 'utf-8');
           const canonicalScriptType = normalizeScriptType(args.scriptType);
-          const writer = createWriter(resolved.format);
-          const updated = writer.removeScript(content, canonicalScriptType);
 
-          if (updated === content) {
+          // Read and write under one lock: unguarded, a concurrent injection
+          // landing between them would be erased by this write (D8).
+          const removed = await withPathLock(args.bruFilePath, async () => {
+            const content = await readFile(args.bruFilePath, 'utf-8');
+            const writer = createWriter(resolved.format);
+            const updated = writer.removeScript(content, canonicalScriptType);
+
+            if (updated === content) {
+              return false;
+            }
+
+            await writeFileAtomic(args.bruFilePath, updated);
+            return true;
+          });
+
+          if (!removed) {
             return {
               content: [
                 {
@@ -952,8 +971,6 @@ export class BrunoMcpServer {
               ]
             };
           }
-
-          await writeFile(args.bruFilePath, updated);
 
           return {
             content: [

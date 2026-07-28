@@ -1,6 +1,15 @@
 import { EnvironmentManager, createEnvironmentManager } from '../../../src/bruno/environment';
 import { BrunoError, BruFileError } from '../../../src/bruno/types';
 
+// D9: writers now go through writeFileAtomic instead of a plain fs write. Route it
+// back to the same fs mock so these tests keep asserting on the content and path
+// written; the write mechanism itself is covered by the atomic-write suites.
+jest.mock('../../../src/bruno/atomic-write.js', () => ({
+  writeFileAtomic: (...args: unknown[]) =>
+    (jest.requireMock('fs') as { promises: { writeFile: (...a: unknown[]) => Promise<void> } })
+      .promises.writeFile(...args),
+}));
+
 jest.mock('fs', () => ({
   promises: {
     readFile: jest.fn(),
