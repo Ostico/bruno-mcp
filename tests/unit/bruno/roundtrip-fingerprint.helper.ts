@@ -14,6 +14,12 @@
  * NOTE: this file is deliberately not named `*.test.ts` — jest's `testMatch`
  * is `tests/**\/*.test.ts`, so it is imported by the guards rather than run as
  * a suite of its own.
+ *
+ * The `*.helper.ts` suffix is the project-wide convention for that: a `.ts`
+ * file under `tests/` that is support code, not a suite. It is what keeps the
+ * file out of jest's `testMatch` AND out of the test-guard gate's changed-
+ * source set — see `extra-exclude-patterns` in `.github/workflows/ci.yml`.
+ * Name any future shared test helper the same way.
  */
 
 import { readFileSync } from 'node:fs';

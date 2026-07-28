@@ -29,7 +29,7 @@ import {
   lostFields,
   lostKeys,
   readTypesSource,
-} from './roundtrip-fingerprint';
+} from './roundtrip-fingerprint.helper';
 
 interface BruFixture {
   /** Fixture name, used as the describe title. */

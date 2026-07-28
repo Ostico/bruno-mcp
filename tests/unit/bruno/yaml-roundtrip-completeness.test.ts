@@ -24,7 +24,7 @@ import {
   lostFields,
   lostKeys,
   readTypesSource,
-} from './roundtrip-fingerprint';
+} from './roundtrip-fingerprint.helper';
 
 interface YamlFixture {
   name: string;

@@ -238,7 +238,16 @@ jobs:
           # with "no relevant tests in PR". Tests are already kept out of the
           # coverage-target set by test-patterns below, and non-test files under
           # tests/ (yml fixtures) are dropped because they don't match src_pattern.
-          extra-exclude-patterns: '.github/**, dist/**, coverage/**, **/*.d.ts, src/index.ts'
+          #
+          # `**/*.helper.ts` is the project convention for a `.ts` file under
+          # tests/ that is shared support code rather than a suite (jest's
+          # testMatch only runs `*.test.ts`). Without this the gate saw such a
+          # helper as changed *source* — the ts-* defaults that test-patterns
+          # merges onto use `src_pattern: **/*.ts`, so ANY .ts path qualifies —
+          # and demanded a `{name}.test.ts` plus coverage for it, producing a
+          # neutral verdict on pure noise. Narrow by filename suffix, the same
+          # shape as **/*.d.ts above; never by the tests/** directory.
+          extra-exclude-patterns: '.github/**, dist/**, coverage/**, **/*.d.ts, src/index.ts, **/*.helper.ts'
           ai-enabled: 'true'
           ai-model: 'openai/gpt-4.1-mini'
           test-patterns: |
