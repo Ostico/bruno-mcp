@@ -73,6 +73,8 @@ export interface BruAuth {
     scope?: string;
     username?: string;
     password?: string;
+    /** Extra parameters attached to the authorization/token/refresh calls (D6). */
+    additionalParameters?: BruOAuth2AdditionalParameters;
   };
   apikey?: {
     key: string;
@@ -172,6 +174,71 @@ export interface BruTests {
 }
 
 // Complete .bru file structure
+/**
+ * A `params:query` / `params:path` entry. Kept as an ordered list rather than a
+ * record so duplicate names and the disabled (`~`) marker both survive a
+ * round-trip (finding D5).
+ */
+export interface BruParam {
+  name: string;
+  value: string;
+  enabled: boolean;
+  type: 'query' | 'path';
+}
+
+/** An `assert` entry: an expression and the operator+operand applied to it. */
+export interface BruAssertion {
+  name: string;
+  value: string;
+  enabled: boolean;
+}
+
+/** The request-level `settings` block. */
+export interface BruRequestSettings {
+  encodeUrl?: boolean;
+  timeout?: number;
+}
+
+/** A `vars:pre-request` / `vars:post-response` entry. */
+export interface BruVar {
+  name: string;
+  value: string;
+  enabled: boolean;
+  local?: boolean;
+}
+
+/**
+ * Full-fidelity vars, split by phase. `BruVars` above is a flat name/value map
+ * kept for backward compatibility; it cannot express the disabled or local
+ * flags, so this list is the source of truth on generate (same split as
+ * `headers`/`headersList`).
+ */
+export interface BruVarSets {
+  req?: BruVar[];
+  res?: BruVar[];
+}
+
+/** Where an oauth2 additional parameter is attached to its request. */
+export type BruOAuth2ParamTarget = 'headers' | 'queryparams' | 'body';
+
+export interface BruOAuth2AdditionalParam {
+  name: string;
+  value: string;
+  enabled: boolean;
+  sendIn: BruOAuth2ParamTarget;
+}
+
+/**
+ * Extra parameters attached to the three oauth2 exchanges (finding D6). The
+ * grammar allows eight blocks: the authorization request takes headers and
+ * queryparams, while the token and refresh requests also take body.
+ */
+export interface BruOAuth2AdditionalParameters {
+  authorization?: BruOAuth2AdditionalParam[];
+  token?: BruOAuth2AdditionalParam[];
+  refresh?: BruOAuth2AdditionalParam[];
+}
+
 export interface BruFile {
   meta: BruMeta;
   http: BruHttpRequest;
@@ -193,6 +260,14 @@ export interface BruFile {
   };
   tests?: BruTests;
   docs?: string;
+  /** `params:query` and `params:path` entries, in document order (D5). */
+  params?: BruParam[];
+  /** `assert` entries, in document order (D5). */
+  assertions?: BruAssertion[];
+  /** The request-level `settings` block (D5). */
+  settings?: BruRequestSettings;
+  /** Vars with their disabled/local flags preserved (D5). */
+  varSets?: BruVarSets;
 }
 
 // Request creation input
@@ -384,12 +459,36 @@ export interface YamlSettings {
   proxy?: string;
 }
 
+/** An `assert` entry in a .yml request (finding D11). */
+export interface YamlAssertion {
+  name: string;
+  value: string;
+  disabled?: boolean;
+}
+
+/** A `vars` entry in a .yml request (finding D11). */
+export interface YamlVar {
+  name: string;
+  value: string;
+  disabled?: boolean;
+  local?: boolean;
+}
+
+export interface YamlVars {
+  preRequest?: YamlVar[];
+  postResponse?: YamlVar[];
+}
+
 export interface YamlRequest {
   info: YamlInfo;
   http: YamlHttp;
   runtime?: YamlRuntime;
   settings?: YamlSettings;
   docs?: string;
+  /** Assertions, preserved across a round-trip (D11). */
+  assert?: YamlAssertion[];
+  /** Pre-request and post-response vars, preserved across a round-trip (D11). */
+  vars?: YamlVars;
 }
 
 export interface YamlFolder {

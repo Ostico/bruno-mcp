@@ -15,6 +15,13 @@ import {
   type HttpMethod,
   type AuthType,
   type BodyType,
+  type BruParam,
+  type BruAssertion,
+  type BruRequestSettings,
+  type BruVar,
+  type BruVarSets,
+  type BruOAuth2AdditionalParameters,
+  type BruOAuth2ParamTarget,
 } from './types.js';
 
 const MAX_SCRIPT_SIZE = 50_000;
@@ -30,6 +37,11 @@ interface BruLangJson {
   script?: { req?: string; res?: string };
   tests?: string;
   docs?: string;
+  params?: unknown;
+  assertions?: unknown;
+  settings?: unknown;
+  // The reader also returns eight flat `oauth2_additional_parameters_*` keys.
+  [key: string]: unknown;
 }
 
 interface BruLangEnvJson {
@@ -171,7 +183,148 @@ export function parseBruRequest(content: string): BruFile {
     bruFile.docs = json.docs;
   }
 
+  // Carry through the parts of the document the model used to drop, so editing
+  // one field does not delete the rest of the user's request (D5/D6).
+  const params = readParams(json.params);
+  if (params.length > 0) bruFile.params = params;
+
+  const assertions = readAssertions(json.assertions);
+  if (assertions.length > 0) bruFile.assertions = assertions;
+
+  const settings = readRequestSettings(json.settings);
+  if (settings) bruFile.settings = settings;
+
+  const varSets = readVarSets(json.vars);
+  if (varSets) bruFile.varSets = varSets;
+
+  const additionalParameters = readOAuth2AdditionalParams(json as Record<string, unknown>);
+  if (additionalParameters && bruFile.auth?.oauth2) {
+    bruFile.auth.oauth2.additionalParameters = additionalParameters;
+  }
+
   return bruFile;
+}
+
+/** Shape the writer expects for a vars entry. */
+function toLangVar(v: BruVar): Record<string, unknown> {
+  return { name: v.name, value: v.value, enabled: v.enabled, local: v.local === true };
+}
+
+// ---------------------------------------------------------------------------
+// Round-trip preservation (findings D5 / D6)
+//
+// `bruToJsonV2` and `jsonToBruV2` are not symmetric for oauth2 additional
+// parameters: the reader returns eight flat `oauth2_additional_parameters_*`
+// keys, while the writer expects them grouped under
+// `auth.oauth2.additionalParameters` with a `sendIn` discriminator. These
+// helpers translate between the two shapes.
+// ---------------------------------------------------------------------------
+
+/** Which grouped bucket and `sendIn` each flat reader key corresponds to. */
+const OAUTH2_PARAM_SOURCES: ReadonlyArray<{
+  key: string;
+  group: keyof BruOAuth2AdditionalParameters;
+  sendIn: BruOAuth2ParamTarget;
+}> = [
+  { key: 'oauth2_additional_parameters_auth_req_headers', group: 'authorization', sendIn: 'headers' },
+  { key: 'oauth2_additional_parameters_auth_req_queryparams', group: 'authorization', sendIn: 'queryparams' },
+  { key: 'oauth2_additional_parameters_access_token_req_headers', group: 'token', sendIn: 'headers' },
+  { key: 'oauth2_additional_parameters_access_token_req_queryparams', group: 'token', sendIn: 'queryparams' },
+  { key: 'oauth2_additional_parameters_access_token_req_bodyvalues', group: 'token', sendIn: 'body' },
+  { key: 'oauth2_additional_parameters_refresh_token_req_headers', group: 'refresh', sendIn: 'headers' },
+  { key: 'oauth2_additional_parameters_refresh_token_req_queryparams', group: 'refresh', sendIn: 'queryparams' },
+  { key: 'oauth2_additional_parameters_refresh_token_req_bodyvalues', group: 'refresh', sendIn: 'body' },
+];
+
+interface RawNameValue {
+  name?: unknown;
+  value?: unknown;
+  enabled?: unknown;
+  local?: unknown;
+  type?: unknown;
+}
+
+function asEntries(value: unknown): RawNameValue[] {
+  return Array.isArray(value) ? (value as RawNameValue[]) : [];
+}
+
+function readParams(value: unknown): BruParam[] {
+  return asEntries(value)
+    .filter((p) => typeof p.name === 'string')
+    .map((p) => ({
+      name: String(p.name),
+      value: p.value === undefined || p.value === null ? '' : String(p.value),
+      enabled: p.enabled !== false,
+      type: p.type === 'path' ? ('path' as const) : ('query' as const),
+    }));
+}
+
+function readAssertions(value: unknown): BruAssertion[] {
+  return asEntries(value)
+    .filter((a) => typeof a.name === 'string')
+    .map((a) => ({
+      name: String(a.name),
+      value: a.value === undefined || a.value === null ? '' : String(a.value),
+      enabled: a.enabled !== false,
+    }));
+}
+
+function readRequestSettings(value: unknown): BruRequestSettings | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as { encodeUrl?: unknown; timeout?: unknown };
+  const settings: BruRequestSettings = {};
+  if (typeof raw.encodeUrl === 'boolean') settings.encodeUrl = raw.encodeUrl;
+  if (typeof raw.timeout === 'number') settings.timeout = raw.timeout;
+  return Object.keys(settings).length > 0 ? settings : undefined;
+}
+
+function readVars(value: unknown): BruVar[] {
+  return asEntries(value)
+    .filter((v) => typeof v.name === 'string')
+    .map((v) => {
+      const entry: BruVar = {
+        name: String(v.name),
+        value: v.value === undefined || v.value === null ? '' : String(v.value),
+        enabled: v.enabled !== false,
+      };
+      if (v.local === true) entry.local = true;
+      return entry;
+    });
+}
+
+function readVarSets(value: unknown): BruVarSets | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as { req?: unknown; res?: unknown };
+  const sets: BruVarSets = {};
+  const req = readVars(raw.req);
+  const res = readVars(raw.res);
+  if (req.length > 0) sets.req = req;
+  if (res.length > 0) sets.res = res;
+  return sets.req || sets.res ? sets : undefined;
+}
+
+function readOAuth2AdditionalParams(
+  json: Record<string, unknown>,
+): BruOAuth2AdditionalParameters | undefined {
+  const result: BruOAuth2AdditionalParameters = {};
+
+  for (const { key, group, sendIn } of OAUTH2_PARAM_SOURCES) {
+    const entries = asEntries(json[key]).filter((p) => typeof p.name === 'string');
+    if (entries.length === 0) continue;
+
+    const bucket = result[group] ?? [];
+    for (const entry of entries) {
+      bucket.push({
+        name: String(entry.name),
+        value: entry.value === undefined || entry.value === null ? '' : String(entry.value),
+        enabled: entry.enabled !== false,
+        sendIn,
+      });
+    }
+    result[group] = bucket;
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 export function generateBruRequest(bruFile: BruFile): string {
@@ -291,6 +444,50 @@ export function generateBruRequest(bruFile: BruFile): string {
 
   if (bruFile.docs) {
     json.docs = bruFile.docs;
+  }
+
+  // Write back the blocks the model now carries, so a read-modify-write keeps
+  // the parts of the request the caller never touched (D5/D6).
+  if (bruFile.params && bruFile.params.length > 0) {
+    json.params = bruFile.params.map((p) => ({
+      name: p.name,
+      value: p.value,
+      enabled: p.enabled,
+      type: p.type,
+    }));
+  }
+
+  if (bruFile.assertions && bruFile.assertions.length > 0) {
+    json.assertions = bruFile.assertions.map((a) => ({
+      name: a.name,
+      value: a.value,
+      enabled: a.enabled,
+    }));
+  }
+
+  if (bruFile.settings && Object.keys(bruFile.settings).length > 0) {
+    json.settings = { ...bruFile.settings };
+  }
+
+  if (bruFile.varSets?.req || bruFile.varSets?.res) {
+    const vars: Record<string, unknown> = {};
+    if (bruFile.varSets.req && bruFile.varSets.req.length > 0) {
+      vars.req = bruFile.varSets.req.map(toLangVar);
+    }
+    if (bruFile.varSets.res && bruFile.varSets.res.length > 0) {
+      vars.res = bruFile.varSets.res.map(toLangVar);
+    }
+    json.vars = vars;
+  }
+
+  // The writer wants these grouped under auth.oauth2, which is where the parser
+  // put them — but only if an auth block is actually being emitted.
+  const additionalParameters = bruFile.auth?.oauth2?.additionalParameters;
+  if (additionalParameters && json.auth && typeof json.auth === 'object') {
+    const auth = json.auth as { oauth2?: Record<string, unknown> };
+    if (auth.oauth2) {
+      auth.oauth2.additionalParameters = additionalParameters;
+    }
   }
 
   try {

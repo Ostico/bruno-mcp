@@ -10,12 +10,14 @@ import {
   type YamlRequest,
   type YamlCollection,
   type EnvFile,
+  type YamlVar,
 } from './types.js';
 
 /**
  * Strip undefined and null values from an object tree so they
  * don't appear as `key: null` in the YAML output.
  */
+
 function stripEmpty(obj: unknown): unknown {
   if (obj === null || obj === undefined) return undefined;
   if (Array.isArray(obj)) {
@@ -33,6 +35,16 @@ function stripEmpty(obj: unknown): unknown {
     return Object.keys(result).length > 0 ? result : undefined;
   }
   return obj;
+}
+
+/** Serialise a vars entry, omitting flags that are not set. */
+function toYamlVar(v: YamlVar): Record<string, unknown> {
+  return {
+    name: v.name,
+    value: v.value,
+    ...(v.disabled === true ? { disabled: true } : {}),
+    ...(v.local === true ? { local: true } : {}),
+  };
 }
 
 /**
@@ -81,6 +93,27 @@ export function generateYamlRequest(request: YamlRequest): string {
   // settings section
   if (request.settings) {
     doc.settings = stripEmpty(request.settings);
+  }
+
+  // assert — write back what the parser now preserves (D11)
+  if (request.assert && request.assert.length > 0) {
+    doc.assert = request.assert.map((a) => ({
+      name: a.name,
+      value: a.value,
+      ...(a.disabled === true ? { disabled: true } : {}),
+    }));
+  }
+
+  // vars (D11)
+  if (request.vars?.preRequest?.length || request.vars?.postResponse?.length) {
+    const vars: Record<string, unknown> = {};
+    if (request.vars.preRequest && request.vars.preRequest.length > 0) {
+      vars.preRequest = request.vars.preRequest.map(toYamlVar);
+    }
+    if (request.vars.postResponse && request.vars.postResponse.length > 0) {
+      vars.postResponse = request.vars.postResponse.map(toYamlVar);
+    }
+    doc.vars = vars;
   }
 
   // docs
