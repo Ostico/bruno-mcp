@@ -376,6 +376,44 @@ export function stripCredentialHeaders(
 }
 
 /**
+ * Request headers whose value is NOT defined as a comma-separated list, so a
+ * sender must not repeat them at all (finding D15).
+ *
+ * RFC 9110 §5.2/§5.3 permit combining repeated field lines only when the field
+ * is defined as a list (ABNF `#rule`). Repeating a singleton field and joining
+ * with a comma produces a syntactically invalid value — `Content-Type` becomes
+ * "application/json, text/plain" — which the origin will usually reject. The
+ * combine still happens, because fetch cannot emit two field lines for one
+ * name under any input shape; the warning is what keeps that from being a
+ * second silent behaviour replacing the first.
+ *
+ * Deliberately a known set rather than an exhaustive one: warning on "every
+ * header not known to be a list" would fire on legitimate custom list headers,
+ * and noisy warnings get ignored. Missing an entry only costs a warning.
+ *
+ * `cookie` is excluded on purpose — repeating it is normal authoring and
+ * appendHeader already joins it the way RFC 6265 §5.4 requires.
+ */
+const SINGLE_VALUE_HEADERS = new Set([
+  'authorization',
+  'proxy-authorization',
+  'content-type',
+  'content-length',
+  'content-location',
+  'host',
+  'user-agent',
+  'referer',
+  'from',
+  'date',
+  'max-forwards',
+  'range',
+  'if-range',
+  'if-modified-since',
+  'if-unmodified-since',
+  'origin',
+]);
+
+/**
  * Add one authored header to the outgoing set, combining rather than replacing
  * when the name has already been seen (finding D4).
  *
@@ -444,6 +482,10 @@ export async function buildFetchOptions(
   // repeat under different casing lands on the first occurrence's casing
   // instead of creating a second entry.
   const headerKeys = new Map<string, string>();
+  // Counted per lowercased name so a singleton header repeated N times warns
+  // once, on the transition to the second occurrence, rather than N-1 times.
+  const headerCounts = new Map<string, number>();
+  const headerWarnings: string[] = [];
   if (yaml.http.headers) {
     for (const h of yaml.http.headers) {
       // A header explicitly disabled in the collection must not be sent (D13).
@@ -451,6 +493,16 @@ export async function buildFetchOptions(
       // reported as unresolved either.
       if (h.disabled === true) continue;
       trackUnresolved(h.value);
+      const lower = h.name.toLowerCase();
+      const occurrence = (headerCounts.get(lower) ?? 0) + 1;
+      headerCounts.set(lower, occurrence);
+      if (occurrence === 2 && SINGLE_VALUE_HEADERS.has(lower)) {
+        // Name only, never the value: a repeated Authorization or Cookie
+        // carries a credential, and warnings surface to the caller.
+        headerWarnings.push(
+          `Header "${headerKeys.get(lower) ?? h.name}" is defined by HTTP as a single-value field but is set more than once; the values were combined into one and the server may reject the request. Remove the duplicate.`,
+        );
+      }
       appendHeader(headers, headerKeys, h.name, substitute(h.value, vars));
     }
   }
@@ -542,12 +594,13 @@ export async function buildFetchOptions(
   }
 
   // Name the placeholder (e.g. `{{token}}`) but never a resolved value — the
-  // value may be a secret. authWarnings first (auth is applied earliest), then
-  // the unresolved-variable warnings in first-seen order.
+  // value may be a secret. Ordered by the stage that produced them:
+  // headerWarnings (the authored header list is read first), then authWarnings,
+  // then the unresolved-variable warnings in first-seen order.
   const unresolvedWarnings = [...unresolvedNames].map(
     name => `unresolved variable: {{${name}}}`,
   );
-  const warnings = [...authWarnings, ...unresolvedWarnings];
+  const warnings = [...headerWarnings, ...authWarnings, ...unresolvedWarnings];
 
   return {
     url,

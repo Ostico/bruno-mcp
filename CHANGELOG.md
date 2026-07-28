@@ -42,6 +42,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   matched case-insensitively while the first occurrence's casing is preserved
   on the wire. Headers explicitly disabled in the collection are still not sent.
 
+### Added
+
+- A warning when a request repeats a header that HTTP defines as single-valued
+  (`Content-Type`, `Authorization`, `Host`, and similar).
+
+  Combining is only semantics-preserving for fields defined as a comma-separated
+  list; RFC 9110 §5.2 does not permit a sender to repeat a singleton field at
+  all, and joining two `Content-Type` values with a comma yields a value the
+  origin will usually reject. `fetch` cannot emit two field lines for one header
+  name, so the combine stands — the warning exists so that an authoring mistake
+  is reported rather than silently turned into an invalid request.
+
+  The warning names the header and never its value. `Cookie` is excluded: it is
+  legitimately repeated and is already joined correctly.
+
 ## [1.2.3]
 
 Released before this changelog was introduced. See the git history for
