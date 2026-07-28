@@ -2760,9 +2760,11 @@ settings:
 
       const customFetch = jest.fn().mockResolvedValue(createMockResponse({ secure: true }));
       const fakeDispatcher = { _type: 'FakeAgent' };
+      const close = jest.fn().mockResolvedValue(undefined);
       mockedBuildDispatcher.mockResolvedValueOnce({
         dispatcher: fakeDispatcher,
         fetch: customFetch as unknown as typeof fetch,
+        close,
       });
 
       const result = await RequestExecutor.executeCollection('/test-collection');
@@ -2773,6 +2775,161 @@ settings:
       expect(mockFetch).not.toHaveBeenCalled();
       const [, fetchOptions] = customFetch.mock.calls[0];
       expect(fetchOptions.dispatcher).toBe(fakeDispatcher);
+      // The dispatcher is torn down once the body has been read
+      expect(close).toHaveBeenCalledTimes(1);
+    });
+
+    // =======================================================================
+    // S20/S21 — a dispatcher is built for every hop so the connection is
+    // pinned to the addresses that hop's SSRF check approved.
+    // =======================================================================
+
+    const PLAIN_REQUEST = `
+info:
+  name: Plain Request
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/api"
+`;
+
+    /** A dispatcher whose fetch resolves to `response`, tagged for identification. */
+    function fakeDispatcherResult(tag: string, response: unknown) {
+      const fetchFn = jest.fn().mockResolvedValue(response);
+      return {
+        dispatcher: { _tag: tag },
+        fetch: fetchFn as unknown as typeof fetch,
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+    }
+
+    function redirectTo(location: string): Response {
+      return {
+        status: 302,
+        statusText: 'Found',
+        headers: new Headers({ location }),
+        ok: false,
+        text: jest.fn().mockResolvedValue(''),
+      } as unknown as Response;
+    }
+
+    it('pins the addresses the SSRF check approved for the target', async () => {
+      setupFsReaddir(['Plain Request.yml']);
+      setupFsReadFile({ 'Plain Request.yml': PLAIN_REQUEST });
+      setupFsStat(['/test-collection']);
+
+      mockedValidateUrl.mockReturnValueOnce({
+        valid: true,
+        addresses: ['93.184.216.34', '104.18.32.7'],
+      });
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      await RequestExecutor.executeCollection('/test-collection');
+
+      expect(mockedBuildDispatcher).toHaveBeenCalledTimes(1);
+      expect(mockedBuildDispatcher).toHaveBeenCalledWith(expect.anything(), 'api.example.com', [
+        '93.184.216.34',
+        '104.18.32.7',
+      ]);
+    });
+
+    it('builds a dispatcher even when the collection has no TLS or proxy settings', async () => {
+      // Before pinning, a settings-less request went straight to global fetch()
+      // and re-resolved the hostname — the DNS-rebinding hole this closes.
+      setupFsReaddir(['Plain Request.yml']);
+      setupFsReadFile({ 'Plain Request.yml': PLAIN_REQUEST });
+      setupFsStat(['/test-collection']);
+
+      mockedValidateUrl.mockReturnValueOnce({ valid: true, addresses: ['93.184.216.34'] });
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      await RequestExecutor.executeCollection('/test-collection');
+
+      expect(mockedBuildDispatcher).toHaveBeenCalledTimes(1);
+    });
+
+    it('pins each redirect hop to its own validated addresses', async () => {
+      setupFsReaddir(['Plain Request.yml']);
+      setupFsReadFile({ 'Plain Request.yml': PLAIN_REQUEST });
+      setupFsStat(['/test-collection']);
+
+      mockedValidateUrl
+        .mockReturnValueOnce({ valid: true, addresses: ['93.184.216.34'] })
+        .mockReturnValueOnce({ valid: true, addresses: ['104.18.32.7'] });
+
+      const first = fakeDispatcherResult('hop-1', redirectTo('https://cdn.example.com/final'));
+      const second = fakeDispatcherResult('hop-2', createMockResponse({ done: true }));
+      mockedBuildDispatcher
+        .mockResolvedValueOnce(first)
+        .mockResolvedValueOnce(second);
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.results[0].status).toBe(200);
+      expect(mockedBuildDispatcher).toHaveBeenNthCalledWith(1, expect.anything(), 'api.example.com', [
+        '93.184.216.34',
+      ]);
+      expect(mockedBuildDispatcher).toHaveBeenNthCalledWith(2, expect.anything(), 'cdn.example.com', [
+        '104.18.32.7',
+      ]);
+
+      // Each hop travelled on its own dispatcher, never the previous hop's.
+      expect(first.fetch).toHaveBeenCalledTimes(1);
+      expect(second.fetch).toHaveBeenCalledTimes(1);
+      const [, hopOpts] = (second.fetch as unknown as jest.Mock).mock.calls[0];
+      expect(hopOpts.dispatcher).toBe(second.dispatcher);
+
+      // Both are released, not just the last one.
+      expect(first.close).toHaveBeenCalledTimes(1);
+      expect(second.close).toHaveBeenCalledTimes(1);
+    });
+
+    it('clears the previous hop dispatcher when the next hop has nothing to pin', async () => {
+      // An operator-allowlisted host is not resolved, so it yields no addresses
+      // and no dispatcher. Carrying the previous hop's pin over would aim the
+      // connection at the wrong host's address.
+      setupFsReaddir(['Plain Request.yml']);
+      setupFsReadFile({ 'Plain Request.yml': PLAIN_REQUEST });
+      setupFsStat(['/test-collection']);
+
+      mockedValidateUrl
+        .mockReturnValueOnce({ valid: true, addresses: ['93.184.216.34'] })
+        .mockReturnValueOnce({ valid: true });
+
+      const first = fakeDispatcherResult('hop-1', redirectTo('https://orders.internal.test/final'));
+      mockedBuildDispatcher
+        .mockResolvedValueOnce(first)
+        .mockResolvedValueOnce(undefined);
+      mockFetch.mockResolvedValueOnce(createMockResponse({ done: true }));
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.results[0].status).toBe(200);
+      // The unpinned hop fell through to global fetch with no dispatcher set.
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const [, hopOpts] = mockFetch.mock.calls[0];
+      expect(hopOpts.dispatcher).toBeUndefined();
+      expect(first.close).toHaveBeenCalledTimes(1);
+    });
+
+    it('releases the dispatcher even when the request throws', async () => {
+      setupFsReaddir(['Plain Request.yml']);
+      setupFsReadFile({ 'Plain Request.yml': PLAIN_REQUEST });
+      setupFsStat(['/test-collection']);
+
+      mockedValidateUrl.mockReturnValueOnce({ valid: true, addresses: ['93.184.216.34'] });
+      const failing = {
+        dispatcher: { _tag: 'boom' },
+        fetch: jest.fn().mockRejectedValue(new Error('connection reset')) as unknown as typeof fetch,
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+      mockedBuildDispatcher.mockResolvedValueOnce(failing);
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      expect(result.results[0].status).toBe(0);
+      expect(failing.close).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -9,7 +9,7 @@ import type { ScriptRunner } from './sandbox-host.js';
 import { wrapFetchResponse } from './response-wrapper.js';
 import { validateUrl, ssrfRemediation } from './url-validator.js';
 import { VariableStore } from './variable-store.js';
-import { buildDispatcher } from './fetch-dispatcher.js';
+import { buildDispatcher, type DispatcherResult } from './fetch-dispatcher.js';
 import { describeNetworkError } from './network-error.js';
 import type {
   BruFile,
@@ -736,13 +736,36 @@ async function executeSingleRequest(
     fetchOpts.signal = AbortSignal.timeout(timeout);
   }
 
-  // Build custom dispatcher for TLS/proxy settings. The target host gates the
-  // operator trust boundary (a collection's TLS-downgrade/CA/proxy overrides
-  // are honoured only for allowlisted hosts). `url` was validated above, so it
-  // parses.
-  const dispatcherResult = yaml.settings
-    ? await buildDispatcher(yaml.settings, new URL(url).hostname)
-    : undefined;
+  // Build a custom dispatcher for TLS/proxy settings and, above all, to pin the
+  // addresses validateUrl just approved. The target host gates the operator
+  // trust boundary (a collection's TLS-downgrade/CA/proxy overrides are honoured
+  // only for allowlisted hosts).
+  //
+  // A dispatcher is built for every hop, not only when the collection carries
+  // TLS/proxy settings: without one the request would go through global fetch(),
+  // which re-resolves the hostname and can land on an address the SSRF check
+  // never saw (S20). Each hop gets its own, so a socket is never reused for a
+  // target it was not validated against (S21).
+  const openDispatchers: DispatcherResult[] = [];
+  const dispatcherFor = async (
+    target: string,
+    addresses: string[] | undefined,
+  ): Promise<DispatcherResult | undefined> => {
+    // Deciding a target is unusable belongs to validateUrl, not here; an
+    // unparseable one simply has no host to check the operator allowlists
+    // against, which denies the privileged TLS/proxy overrides.
+    let host: string | undefined;
+    try {
+      host = new URL(target).hostname;
+    } catch {
+      host = undefined;
+    }
+    const built = await buildDispatcher(yaml.settings ?? {}, host, addresses);
+    if (built) openDispatchers.push(built);
+    return built;
+  };
+
+  const dispatcherResult = await dispatcherFor(url, urlCheck.addresses);
 
   const fetchFn = dispatcherResult ? dispatcherResult.fetch : fetch;
   if (dispatcherResult) {
@@ -815,7 +838,18 @@ async function executeSingleRequest(
         };
       }
 
-      response = await fetchFn(redirectUrl, currentOpts);
+      // Pin this hop to the addresses redirectCheck approved for it. The
+      // previous hop's dispatcher is pinned to a different host's addresses, so
+      // it must be replaced — or cleared, when this hop has nothing to pin.
+      const hop = await dispatcherFor(redirectUrl, redirectCheck.addresses);
+      currentOpts = { ...currentOpts };
+      if (hop) {
+        (currentOpts as { dispatcher?: unknown }).dispatcher = hop.dispatcher;
+      } else {
+        delete (currentOpts as { dispatcher?: unknown }).dispatcher;
+      }
+
+      response = await (hop ? hop.fetch : fetch)(redirectUrl, currentOpts);
       currentUrl = redirectUrl;
       redirectCount++;
     }
@@ -903,6 +937,11 @@ async function executeSingleRequest(
       tests: [],
       error: describeNetworkError(error, { url: shownUrl, timeoutMs: timeout, elapsedMs: durationMs }),
     };
+  } finally {
+    // The response body is fully materialised by wrapFetchResponse above, so
+    // every per-hop dispatcher can be torn down here. Skipping this would leak
+    // a socket pool per request now that a dispatcher is always built.
+    await Promise.all(openDispatchers.map((d) => d.close()));
   }
 }
 

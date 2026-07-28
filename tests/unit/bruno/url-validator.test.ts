@@ -784,3 +784,53 @@ describe('DNS lookup timeout (finding S19)', () => {
     expect(result.reason).toBe('DNS resolution failed for hostname: broken.example.com');
   });
 });
+
+// ===========================================================================
+// S20/S21 — the validated addresses are handed back so the caller can pin them
+// ===========================================================================
+
+describe('validateUrl — pinned addresses', () => {
+  it('returns the resolved addresses it checked', async () => {
+    dnsMap['multi.example.com'] = ['93.184.216.34', '104.18.32.7'];
+
+    const result = await validateUrl('https://multi.example.com/api');
+
+    expect(result.valid).toBe(true);
+    expect(result.addresses).toEqual(['93.184.216.34', '104.18.32.7']);
+  });
+
+  it('returns an IP literal target as its own pinned address without a lookup', async () => {
+    const result = await validateUrl('https://93.184.216.34/api');
+
+    expect(result.valid).toBe(true);
+    expect(result.addresses).toEqual(['93.184.216.34']);
+    expect(mockLookup).not.toHaveBeenCalled();
+  });
+
+  it('returns the IPv6 literal target as its own pinned address', async () => {
+    const result = await validateUrl('https://[2606:2800:220:1:248:1893:25c8:1946]/api');
+
+    expect(result.valid).toBe(true);
+    expect(result.addresses).toEqual(['2606:2800:220:1:248:1893:25c8:1946']);
+  });
+
+  it('pins nothing for an operator-allowlisted hostname, which is never resolved', async () => {
+    process.env.BRUNO_SSRF_ALLOWLIST = 'orders.internal.test';
+    resetAllowlistCache();
+
+    const result = await validateUrl('https://orders.internal.test/api');
+
+    expect(result.valid).toBe(true);
+    expect(result.addresses).toBeUndefined();
+    expect(mockLookup).not.toHaveBeenCalled();
+  });
+
+  it('pins nothing when the target is blocked', async () => {
+    dnsMap['rebind.example.com'] = ['10.0.0.5'];
+
+    const result = await validateUrl('https://rebind.example.com/api');
+
+    expect(result.valid).toBe(false);
+    expect(result.addresses).toBeUndefined();
+  });
+});
