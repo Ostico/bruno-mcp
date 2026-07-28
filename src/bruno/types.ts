@@ -401,6 +401,12 @@ export interface YamlInfo {
 export interface YamlHeader {
   name: string;
   value: string;
+  /**
+   * A header the author switched off. It must survive a round-trip and must not
+   * be sent (finding D13): dropping the flag silently re-armed a header the user
+   * had deliberately disabled, including a credential one.
+   */
+  disabled?: boolean;
 }
 
 export interface YamlBody {

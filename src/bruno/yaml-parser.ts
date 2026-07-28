@@ -74,10 +74,16 @@ function parseInfo(raw: Record<string, unknown>): YamlInfo {
 
 function parseHeaders(raw: unknown): YamlHeader[] | undefined {
   if (!Array.isArray(raw)) return undefined;
-  return raw.map((h: Record<string, unknown>) => ({
-    name: String(h.name ?? ''),
-    value: String(h.value ?? ''),
-  }));
+  return raw.map((h: Record<string, unknown>) => {
+    const header: YamlHeader = {
+      name: String(h.name ?? ''),
+      value: String(h.value ?? ''),
+    };
+    // Without this the flag was dropped at parse time and the header came back
+    // enabled, so a disabled credential header got sent (D13).
+    if (h.disabled === true) header.disabled = true;
+    return header;
+  });
 }
 
 function parseBody(raw: unknown): YamlBody | undefined {
@@ -99,6 +105,9 @@ function parseBody(raw: unknown): YamlBody | undefined {
       if (part.contentType !== undefined) {
         item.contentType = String(part.contentType);
       }
+      // The executor skips a part with enabled === false (X13), but nothing in
+      // the .yml path ever set it, so a disabled part was silently sent (D14).
+      if (part.disabled === true) item.enabled = false;
       return item;
     });
   } else if (obj.data !== undefined) {

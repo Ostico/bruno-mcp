@@ -300,13 +300,11 @@ docs: Everything, in one document.
   },
 
   // ---------------------------------------------------------------------
-  // Fixtures below document real, unfixed defects. See the report in
-  // `describe('known defects …')` at the bottom of this file.
+  // Switched-off entries. These were the D13/D14 defects; the flags now
+  // survive, so these fixtures are held to the full round-trip property.
   // ---------------------------------------------------------------------
   {
     name: 'header switched off with `disabled: true`',
-    knownSourceLoss:
-      'YamlHeader has no `disabled` field, so parseHeaders drops it and the header is re-armed',
     src: `${INFO}http:
   method: GET
   url: https://api.example.test/orders
@@ -320,8 +318,6 @@ docs: Everything, in one document.
   },
   {
     name: 'multipart part switched off with `disabled: true`',
-    knownSourceLoss:
-      'parseBody ignores the per-part disabled flag, so the part is re-armed',
     src: `${INFO}http:
   method: POST
   url: https://api.example.test/upload
@@ -449,44 +445,42 @@ describe('.yml completeness guard actually detects loss', () => {
   });
 });
 
-describe('known defects: .yml silently re-arms a switched-off entry', () => {
-  /**
-   * NOT FIXED, and out of scope for a tests-only change. Two of them:
-   *
-   * 1. `YamlHeader` (src/bruno/types.ts) models only `{ name, value }`, and
-   *    `parseHeaders` in src/bruno/yaml-parser.ts maps only those two fields.
-   *    A `.yml` request header carrying `disabled: true` therefore comes back
-   *    ENABLED from any read-modify-write — the `.yml` twin of finding D3,
-   *    which was fixed on the `.bru` side by adding `BruFile.headersList`.
-   *
-   * 2. `parseBody` ignores the per-part `disabled` flag on a multipart body,
-   *    so a switched-off form field is re-armed the same way. (`MultipartFormPart`
-   *    does carry `enabled?`, but nothing in the `.yml` path reads or writes it.)
-   *
-   * Both are silent: the file re-parses cleanly, and the model is identical
-   * before and after, because the data is already gone by the time the model
-   * exists. Only a source-document comparison can see them.
-   */
+describe('.yml keeps a switched-off entry switched off (D13/D14)', () => {
+  // Both of these used to lose the flag at parse time and hand the entry back
+  // enabled. For a header that meant a credential the author had deliberately
+  // disabled was sent on the next run, so these are regression guards, not
+  // fidelity nits.
+
   const header = FIXTURES.find((f) => f.name === 'header switched off with `disabled: true`')!;
   const multipart = FIXTURES.find(
     (f) => f.name === 'multipart part switched off with `disabled: true`',
   )!;
 
-  it('loses the disabled flag on a header', () => {
+  it('keeps the disabled flag on a header', () => {
     const before = yamlParse(header.src) as Record<string, unknown>;
     const after = yamlParse(roundTrip(header.src)) as Record<string, unknown>;
 
-    expect(lostFields(before, after, false)).toEqual(
-      expect.arrayContaining(['http.headers[].disabled = true']),
+    expect(lostFields(before, after)).toEqual([]);
+    expect(parseYamlRequest(header.src).http.headers).toEqual(
+      expect.arrayContaining([expect.objectContaining({ disabled: true })]),
     );
   });
 
-  it('loses the disabled flag on a multipart part', () => {
+  it('keeps the disabled flag on a multipart part', () => {
     const before = yamlParse(multipart.src) as Record<string, unknown>;
     const after = yamlParse(roundTrip(multipart.src)) as Record<string, unknown>;
 
-    expect(lostFields(before, after, false)).toEqual(
-      expect.arrayContaining(['http.body.data[].disabled = true']),
+    expect(lostFields(before, after)).toEqual([]);
+  });
+
+  it('models a disabled part as enabled: false, which the executor already skips', () => {
+    // The executor skips a part with enabled === false (X13). Nothing in the
+    // .yml path used to set it, which is what let a disabled part be sent.
+    const parts = parseYamlRequest(multipart.src).http.body?.data;
+
+    expect(Array.isArray(parts)).toBe(true);
+    expect(parts).toEqual(
+      expect.arrayContaining([expect.objectContaining({ enabled: false })]),
     );
   });
 });
