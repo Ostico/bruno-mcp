@@ -58,3 +58,9 @@ generated-collections/
 
 # Prettier cache
 .prettiercache
+
+# QA / verification artifacts (S23)
+# The verification workflow writes captured request/response data here, which
+# can include live Authorization/Cookie headers and full environment dumps.
+# This must never enter git history — keep it local-only.
+evidence/
