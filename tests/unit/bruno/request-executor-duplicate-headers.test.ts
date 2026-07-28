@@ -166,6 +166,116 @@ describe('credential stripping still holds over combined headers (S06/S07)', () 
   });
 });
 
+describe('duplicates on a single-value header are warned about (D15)', () => {
+  // Combining is right for comma-list fields, but RFC 9110 §5.2/§5.3 only allow
+  // it when the field is defined as a list — a sender must not repeat a
+  // singleton field at all. Repeating Content-Type yields
+  // "application/json, text/plain", which is invalid and the server will likely
+  // reject. fetch offers no way to emit two field lines, so the combine stays;
+  // the warning is what stops one silent behaviour (drop) being traded for
+  // another (invalid value).
+  async function warningsFor(headers: YamlHeader[]): Promise<string[]> {
+    const { warnings } = await buildFetchOptions(reqWithHeaders(headers), noVars);
+    return warnings ?? [];
+  }
+
+  it('warns when Content-Type is set twice', async () => {
+    const warnings = await warningsFor([
+      { name: 'Content-Type', value: 'application/json' },
+      { name: 'Content-Type', value: 'text/plain' },
+    ]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('Content-Type');
+  });
+
+  it('warns when Authorization is set twice', async () => {
+    const warnings = await warningsFor([
+      { name: 'Authorization', value: 'Bearer a' },
+      { name: 'Authorization', value: 'Bearer b' },
+    ]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('Authorization');
+  });
+
+  it('never puts the header values in the warning', async () => {
+    // Same rule the unresolved-variable warnings follow: name the header, never
+    // the value, because a repeated Authorization or Cookie carries a secret.
+    const warnings = await warningsFor([
+      { name: 'Authorization', value: 'Bearer supersecret' },
+      { name: 'Authorization', value: 'Bearer alsosecret' },
+    ]);
+    expect(warnings.join(' ')).not.toContain('supersecret');
+    expect(warnings.join(' ')).not.toContain('alsosecret');
+  });
+
+  it('does NOT warn for a comma-list field like Accept', async () => {
+    const warnings = await warningsFor([
+      { name: 'Accept', value: 'text/plain' },
+      { name: 'Accept', value: 'application/json' },
+    ]);
+    expect(warnings).toEqual([]);
+  });
+
+  it('does NOT warn for Cookie, which is combined correctly per RFC 6265', async () => {
+    const warnings = await warningsFor([
+      { name: 'Cookie', value: 'a=1' },
+      { name: 'Cookie', value: 'b=2' },
+    ]);
+    expect(warnings).toEqual([]);
+  });
+
+  it('warns exactly once when a singleton header appears three times', async () => {
+    const warnings = await warningsFor([
+      { name: 'Content-Type', value: 'a/b' },
+      { name: 'Content-Type', value: 'c/d' },
+      { name: 'Content-Type', value: 'e/f' },
+    ]);
+    expect(warnings).toHaveLength(1);
+  });
+
+  it('names the header using the first occurrence casing', async () => {
+    const warnings = await warningsFor([
+      { name: 'Content-Type', value: 'a/b' },
+      { name: 'content-type', value: 'c/d' },
+    ]);
+    expect(warnings[0]).toContain('Content-Type');
+    expect(warnings[0]).not.toContain('content-type');
+  });
+
+  it('does not warn when the repeat is disabled', async () => {
+    const warnings = await warningsFor([
+      { name: 'Content-Type', value: 'application/json' },
+      { name: 'Content-Type', value: 'text/plain', disabled: true },
+    ]);
+    expect(warnings).toEqual([]);
+  });
+
+  it('does not warn for a single occurrence', async () => {
+    expect(await warningsFor([{ name: 'Content-Type', value: 'application/json' }])).toEqual([]);
+  });
+
+  it('still combines the values — the warning does not change what is sent', async () => {
+    const headers = await sentHeaders([
+      { name: 'Content-Type', value: 'application/json' },
+      { name: 'Content-Type', value: 'text/plain' },
+    ]);
+    expect(headers['Content-Type']).toBe('application/json, text/plain');
+  });
+
+  it('reports alongside an unresolved-variable warning rather than replacing it', async () => {
+    const { warnings } = await buildFetchOptions(
+      reqWithHeaders([
+        { name: 'Content-Type', value: 'application/json' },
+        { name: 'Content-Type', value: '{{missing}}' },
+      ]),
+      noVars,
+    );
+    expect(warnings).toHaveLength(2);
+    expect(warnings!.some((w) => w.includes('Content-Type'))).toBe(true);
+    expect(warnings!.some((w) => w.includes('{{missing}}'))).toBe(true);
+  });
+});
+
 describe('bruFileToYamlRequest keeps duplicate headers from the .bru file', () => {
   function bru(partial: Partial<BruFile>): BruFile {
     return {
