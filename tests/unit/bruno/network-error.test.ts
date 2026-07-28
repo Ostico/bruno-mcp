@@ -63,6 +63,16 @@ describe('describeNetworkError — timeouts', () => {
     expect(msg).toContain('95867ms');
   });
 
+  it('attributes the overrun to pre-request setup work, not an upload stall', () => {
+    const msg = describeNetworkError(timeoutError(), { ...CTX, elapsedMs: 95867 });
+    // The overrun is caused by work done before the abort signal is armed —
+    // DNS resolution and connection setup — which settings.timeout cannot bound.
+    // It is NOT an upload/request-body stall, which is what the old text claimed.
+    expect(msg).not.toContain('request body');
+    expect(msg).toMatch(/before .*timeout|DNS|resolution|connection/i);
+    expect(msg).toContain('settings.timeout');
+  });
+
   it('does not flag an overrun when elapsed is close to the limit', () => {
     const msg = describeNetworkError(timeoutError(), { ...CTX, elapsedMs: 31000 });
     expect(msg).not.toContain('well past that limit');

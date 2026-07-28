@@ -106,7 +106,7 @@ export function describeNetworkError(error: unknown, ctx: NetworkErrorContext): 
     // have, which is a different problem from a genuinely slow endpoint.
     const overrun =
       timeoutMs > 0 && elapsedMs > timeoutMs * 1.5
-        ? ` Note: the request ran ${elapsedMs}ms, well past that limit, which can happen when a connection stalls while the request body is still being sent.`
+        ? ` Note: the request ran ${elapsedMs}ms, well past that limit, which can happen when setup work done before the request's timeout is armed — DNS resolution and connection establishment — runs long, since that phase is not bounded by settings.timeout.`
         : '';
 
     return (
