@@ -11,12 +11,32 @@ import {
   type YamlCollection,
   type EnvFile,
   type YamlVar,
+  type YamlBody,
+  type MultipartFormPart,
 } from './types.js';
 
 /**
  * Strip undefined and null values from an object tree so they
  * don't appear as `key: null` in the YAML output.
  */
+
+
+/**
+ * The model marks a switched-off multipart part with `enabled: false`, matching
+ * the .bru side. A .yml document spells it `disabled: true`, so translate on the
+ * way out — otherwise a round-trip would rename the key (D14).
+ */
+function serialiseBody(body: YamlBody): YamlBody | Record<string, unknown> {
+  if (!Array.isArray(body.data)) return body;
+
+  return {
+    ...body,
+    data: (body.data as MultipartFormPart[]).map((part) => {
+      const { enabled, ...rest } = part;
+      return enabled === false ? { ...rest, disabled: true } : rest;
+    }),
+  };
+}
 
 function stripEmpty(obj: unknown): unknown {
   if (obj === null || obj === undefined) return undefined;
@@ -65,10 +85,14 @@ export function generateYamlRequest(request: YamlRequest): string {
     url: request.http.url,
   };
   if (request.http.headers && request.http.headers.length > 0) {
-    http.headers = request.http.headers.map((h) => ({ name: h.name, value: h.value }));
+    http.headers = request.http.headers.map((h) => {
+      const header: Record<string, unknown> = { name: h.name, value: h.value };
+      if (h.disabled) header.disabled = true;
+      return header;
+    });
   }
   if (request.http.body) {
-    http.body = stripEmpty(request.http.body);
+    http.body = stripEmpty(serialiseBody(request.http.body));
   }
   if (request.http.params && request.http.params.length > 0) {
     http.params = request.http.params.map((p) => {

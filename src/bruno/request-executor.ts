@@ -385,6 +385,10 @@ export async function buildFetchOptions(
   const headers: Record<string, string> = {};
   if (yaml.http.headers) {
     for (const h of yaml.http.headers) {
+      // A header explicitly disabled in the collection must not be sent (D13).
+      // Skip before substituting, so a disabled header's placeholders are not
+      // reported as unresolved either.
+      if (h.disabled === true) continue;
       trackUnresolved(h.value);
       headers[h.name] = substitute(h.value, vars);
     }

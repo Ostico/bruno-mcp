@@ -40,6 +40,18 @@ interface BruFixture {
    * Set when the fixture is known to lose *position* (never data) on a
    * round-trip. The order assertions become `it.failing`, so the day the cause
    * is fixed this suite goes red and the waiver has to be removed.
+   *
+   * The cause is upstream and confirmed (finding D12): `@usebruno/lang`'s
+   * `jsonToBru.js` emits every ordered block in two filtered passes —
+   * `enabled(items)` then `disabled(items)` (see its lines 6-7 and 156-170) — so
+   * a `~`-disabled entry written mid-block is always relocated to the bottom.
+   * No ordering of the input we hand it can change that.
+   *
+   * Left waived deliberately rather than worked around. The only fixes available
+   * here are post-processing the emitted `.bru` text or re-implementing the
+   * emitter, and a bug in either corrupts a user's collection file — a far worse
+   * outcome than the tidier diff it would buy, given names, values and
+   * enabled/disabled state all survive today. The route is upstream.
    */
   knownOrderDefect?: string;
 }

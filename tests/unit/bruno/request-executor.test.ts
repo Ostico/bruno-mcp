@@ -2740,6 +2740,62 @@ runtime:
   // custom dispatcher (TLS/proxy) wiring
   // =========================================================================
 
+  // =========================================================================
+  // D13 — a header the author switched off must not be sent
+  // =========================================================================
+
+  describe('disabled headers', () => {
+    const DISABLED_AUTH_YAML = `
+info:
+  name: Disabled Auth
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/users"
+  headers:
+    - name: Accept
+      value: application/json
+    - name: Authorization
+      value: "Bearer secret-token"
+      disabled: true
+`;
+
+    it('does not send a header marked disabled', async () => {
+      setupFsReaddir(['Disabled Auth.yml']);
+      setupFsReadFile({ 'Disabled Auth.yml': DISABLED_AUTH_YAML });
+      setupFsStat(['/test-collection']);
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      await RequestExecutor.executeCollection('/test-collection');
+
+      const [, opts] = mockFetch.mock.calls[0];
+      const sent = opts.headers as Record<string, string>;
+      // The enabled header still goes; the disabled credential must not.
+      expect(sent.Accept).toBe('application/json');
+      expect(sent.Authorization).toBeUndefined();
+      expect(Object.keys(sent)).not.toContain('Authorization');
+      // And its value must not leak anywhere in the outgoing headers.
+      expect(JSON.stringify(sent)).not.toContain('secret-token');
+    });
+
+    it('does not report a disabled header’s placeholders as unresolved', async () => {
+      const WITH_PLACEHOLDER = DISABLED_AUTH_YAML.replace(
+        'Bearer secret-token',
+        'Bearer {{never_defined}}',
+      );
+      setupFsReaddir(['Disabled Auth.yml']);
+      setupFsReadFile({ 'Disabled Auth.yml': WITH_PLACEHOLDER });
+      setupFsStat(['/test-collection']);
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      const result = await RequestExecutor.executeCollection('/test-collection');
+
+      // A header that is never sent cannot have an unresolved variable problem.
+      expect(JSON.stringify(result)).not.toContain('never_defined');
+    });
+  });
+
   describe('custom dispatcher wiring', () => {
     it('uses the dispatcher fetch and attaches the dispatcher when buildDispatcher returns one', async () => {
       const REQUEST_WITH_TLS = `
