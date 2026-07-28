@@ -8,7 +8,6 @@
  * runaway script is bounded by the kill rather than the vm timeout.
  */
 
-import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { runInWorker, createForkingScriptRunner } from '../../src/bruno/sandbox-host';
@@ -17,13 +16,14 @@ import type { SandboxJob } from '../../src/bruno/sandbox-worker';
 const repoRoot = path.resolve(__dirname, '../..');
 const workerPath = path.join(repoRoot, 'dist', 'bruno', 'sandbox-worker.js');
 
-beforeAll(() => {
-  // Always rebuild rather than reusing whatever dist/ happens to hold. Skipping
-  // the build when the file merely exists let a stale artifact keep this suite
-  // green after the build script stopped emitting the worker at all — the exact
-  // breakage this test exists to catch.
-  execSync('npm run build', { cwd: repoRoot, stdio: 'ignore' });
-}, 120_000);
+// dist/ is built by tests/global-setup.ts, once, before any worker starts. This
+// suite used to rebuild in its own `beforeAll`, which raced the sibling
+// mcp-stdio suite's build: `npm run build` is `--clean`, so one suite's
+// `rm -rf dist` could delete the artifact the other was about to spawn
+// (finding Q18). The guarantee that mattered here is preserved — globalSetup
+// always rebuilds and never skips on an artifact that merely exists, which is
+// what stops a stale dist/ from keeping the assertion below green after the
+// build script has stopped emitting the worker.
 
 it('the build emits the worker where the production resolver looks for it', () => {
   // resolveWorkerPath() points at dist/bruno/sandbox-worker.js. If the build
