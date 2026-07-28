@@ -14,6 +14,10 @@ import {
   type YamlInfo,
   type MultipartFormPart,
   type TlsSettings,
+  type YamlParam,
+  type YamlAssertion,
+  type YamlVar,
+  type YamlVars,
 } from './types.js';
 
 function safeParse(content: string, label: string): Record<string, unknown> {
@@ -118,13 +122,78 @@ function parseAuth(raw: unknown): YamlAuth | undefined {
 }
 
 function parseHttpSection(raw: Record<string, unknown>): YamlHttp {
-  return {
+  const http: YamlHttp = {
     method: String(raw.method ?? '').toUpperCase(),
     url: String(raw.url ?? ''),
     headers: parseHeaders(raw.headers),
     body: parseBody(raw.body),
     auth: parseAuth(raw.auth),
   };
+
+  // The generator already writes params back out; not reading them here is what
+  // dropped every query and path parameter on a round-trip (D11).
+  const params = parseParams(raw.params);
+  if (params.length > 0) http.params = params;
+
+  return http;
+}
+
+function parseParams(raw: unknown): YamlParam[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((p): p is Record<string, unknown> => !!p && typeof p === 'object')
+    .filter((p) => typeof p.name === 'string')
+    .map((p) => {
+      const param: YamlParam = {
+        name: String(p.name),
+        value: p.value === undefined || p.value === null ? '' : String(p.value),
+      };
+      if (p.type === 'path' || p.type === 'query') param.type = p.type;
+      if (p.disabled === true) param.disabled = true;
+      return param;
+    });
+}
+
+function parseAssertions(raw: unknown): YamlAssertion[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((a): a is Record<string, unknown> => !!a && typeof a === 'object')
+    .filter((a) => typeof a.name === 'string')
+    .map((a) => {
+      const assertion: YamlAssertion = {
+        name: String(a.name),
+        value: a.value === undefined || a.value === null ? '' : String(a.value),
+      };
+      if (a.disabled === true) assertion.disabled = true;
+      return assertion;
+    });
+}
+
+function parseYamlVarList(raw: unknown): YamlVar[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((v): v is Record<string, unknown> => !!v && typeof v === 'object')
+    .filter((v) => typeof v.name === 'string')
+    .map((v) => {
+      const entry: YamlVar = {
+        name: String(v.name),
+        value: v.value === undefined || v.value === null ? '' : String(v.value),
+      };
+      if (v.disabled === true) entry.disabled = true;
+      if (v.local === true) entry.local = true;
+      return entry;
+    });
+}
+
+function parseYamlVars(raw: unknown): YamlVars | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const obj = raw as Record<string, unknown>;
+  const vars: YamlVars = {};
+  const pre = parseYamlVarList(obj.preRequest);
+  const post = parseYamlVarList(obj.postResponse);
+  if (pre.length > 0) vars.preRequest = pre;
+  if (post.length > 0) vars.postResponse = post;
+  return vars.preRequest || vars.postResponse ? vars : undefined;
 }
 
 function parseRuntime(raw: unknown): YamlRuntime | undefined {
@@ -197,6 +266,14 @@ export function parseYamlRequest(content: string): YamlRequest {
   if (typeof doc.docs === 'string') {
     result.docs = doc.docs;
   }
+
+  // Assertions and vars were not modelled at all, so they vanished on any
+  // read-modify-write of a .yml request (D11).
+  const assertions = parseAssertions(doc.assert);
+  if (assertions.length > 0) result.assert = assertions;
+
+  const vars = parseYamlVars(doc.vars);
+  if (vars) result.vars = vars;
 
   return result;
 }
