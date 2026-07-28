@@ -26,8 +26,15 @@ jobs:
     - name: Install dependencies
       run: npm ci
 
-    - name: Build project
-      run: npm run build
+    # NOTE: there is deliberately no `npm run build` step here (finding Q21).
+    # The integration jest project's globalSetup (tests/global-setup.ts) builds
+    # unconditionally, so every step below that needs dist/ gets a freshly built
+    # one, and an explicit step here only added a third build to this leg.
+    # Verified with dist/ deleted: typecheck, lint and the full unit lane all
+    # pass with dist/ still absent, and the integration lane emits both entries
+    # (dist/index.js and dist/bruno/sandbox-worker.js) on its own.
+    # Production build health is still gated twice — by that globalSetup build,
+    # which surfaces build output on failure, and by the dedicated `build` job.
 
     # Blocking: `npm run build` is tsup/esbuild, which strips types without
     # checking them, so nothing else in this workflow would catch a type error.
@@ -235,22 +242,48 @@ jobs:
           # tests/** hides the PR's own new tests from the gate: the test files
           # land in neither bucket, changed-test relevance evaluates to NO, and
           # any PR whose changed lines aren't measurable by diff-cover then fails
-          # with "no relevant tests in PR". Tests are already kept out of the
-          # coverage-target set by test-patterns below, and non-test files under
-          # tests/ (yml fixtures) are dropped because they don't match src_pattern.
-          #
-          # `**/*.helper.ts` is the project convention for a `.ts` file under
-          # tests/ that is shared support code rather than a suite (jest's
-          # testMatch only runs `*.test.ts`). Without this the gate saw such a
-          # helper as changed *source* — the ts-* defaults that test-patterns
-          # merges onto use `src_pattern: **/*.ts`, so ANY .ts path qualifies —
-          # and demanded a `{name}.test.ts` plus coverage for it, producing a
-          # neutral verdict on pure noise. Narrow by filename suffix, the same
-          # shape as **/*.d.ts above; never by the tests/** directory.
-          extra-exclude-patterns: '.github/**, dist/**, coverage/**, **/*.d.ts, src/index.ts, **/*.helper.ts'
+          # with "no relevant tests in PR". Tests stay out of the coverage-target
+          # set via test-patterns below, which now scopes every JS/TS src_pattern
+          # to `src/` — so a non-suite file under tests/ is structurally "neither
+          # source nor test" and needs no exclusion of its own.
+          extra-exclude-patterns: '.github/**, dist/**, coverage/**, **/*.d.ts, src/index.ts'
           ai-enabled: 'true'
           ai-model: 'openai/gpt-4.1-mini'
+          # `test-patterns` MERGES onto the action's 21-language defaults
+          # (config.py: `{**_DEFAULT_TEST_PATTERNS, **parsed}`) — it does NOT
+          # replace them, and `_matches_source_pattern` returns True if ANY entry
+          # matches. So adding a narrow key cannot narrow anything: the previous
+          # value here added a `ts-unit` key while the built-in `ts-test`/`ts-spec`/
+          # `ts-dir` kept `src_pattern: **/*.ts`, leaving EVERY .ts file in the repo
+          # classified as coverage-owing source (finding Q20). It was doubly inert,
+          # because fnmatch has no special meaning for `/`: `src/**/*.ts` compiles to
+          # `src/.*.*/.*\.ts`, which requires two slashes and so never even matched
+          # `src/index.ts`. The correct single-star form is `src/*.ts`, where the
+          # `.*` spans separators and matches src/ at any depth.
+          #
+          # The fix is therefore to OVERRIDE the built-in keys by name, keeping each
+          # one's original test_template and changing only src_pattern. Verified
+          # against every tracked file: source 28 -> 27 (losing only
+          # tests/global-setup.ts, which was never source), all 27 remaining under
+          # src/, and all 66 test files still classified as tests — so changed-test
+          # relevance is unaffected.
+          #
+          # Only the JS/TS families are overridden; the other 17 languages keep
+          # their `**/*` defaults, which are inert in a TypeScript-only package. If
+          # this repo ever gains source in another language, override those keys
+          # here the same way rather than adding a new one.
           test-patterns: |
             {
-              "ts-unit": {"src_pattern": "src/**/*.ts", "test_template": "tests/**/{name}.test.ts"}
+              "ts-test":  {"src_pattern": "src/*.ts",  "test_template": "**/{name}.test.ts"},
+              "ts-spec":  {"src_pattern": "src/*.ts",  "test_template": "**/{name}.spec.ts"},
+              "ts-dir":   {"src_pattern": "src/*.ts",  "test_template": "**/__tests__/{name}.ts"},
+              "tsx-test": {"src_pattern": "src/*.tsx", "test_template": "**/{name}.test.tsx"},
+              "tsx-spec": {"src_pattern": "src/*.tsx", "test_template": "**/{name}.spec.tsx"},
+              "tsx-dir":  {"src_pattern": "src/*.tsx", "test_template": "**/__tests__/{name}.tsx"},
+              "js-test":  {"src_pattern": "src/*.js",  "test_template": "**/{name}.test.js"},
+              "js-spec":  {"src_pattern": "src/*.js",  "test_template": "**/{name}.spec.js"},
+              "js-dir":   {"src_pattern": "src/*.js",  "test_template": "**/__tests__/{name}.js"},
+              "jsx-test": {"src_pattern": "src/*.jsx", "test_template": "**/{name}.test.jsx"},
+              "jsx-spec": {"src_pattern": "src/*.jsx", "test_template": "**/{name}.spec.jsx"},
+              "jsx-dir":  {"src_pattern": "src/*.jsx", "test_template": "**/__tests__/{name}.jsx"}
             }
