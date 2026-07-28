@@ -10,6 +10,10 @@ const config: Config = {
   roots: ['<rootDir>/src', '<rootDir>/tests'],
   // Explicit, so adding a root never widens what counts as a test.
   testMatch: ['<rootDir>/tests/**/*.test.ts'],
+  // Widening `roots` alone is not enough: without this, coverage still reports
+  // only the files some test happened to import, so an untested file is absent
+  // from the report rather than shown at 0% (finding Q3).
+  collectCoverageFrom: ['src/**/*.ts'],
   coveragePathIgnorePatterns: [
     // Type-only declarations carry no runtime code to cover.
     '\\.d\\.ts$',
