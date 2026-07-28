@@ -1,0 +1,170 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`MCP tool surface contract (Q14) matches the recorded surface exactly (titles, descriptions, schemas): mcp-tool-surface 1`] = `
+{
+  "add_test_script": {
+    "description": "Add pre-request, post-response, or tests scripts to a Bruno request. Canonical scriptType values are pre-request/post-response/tests; the aliases before-request (→ pre-request) and after-response (→ post-response) are also accepted. Appends to any existing script of that type by default — pass scriptMode:"replace" to overwrite it, or use remove_script to clear it. Assertions must be wrapped in test("name", function() { ... }) to be reported.",
+    "schema": {
+      "bruFilePath": "string",
+      "script": "string",
+      "scriptMode": "enum(append|replace)? = "append"",
+      "scriptType": "enum(pre-request|post-response|tests|before-request|after-response)",
+    },
+    "title": "Add Test Script",
+  },
+  "create_collection": {
+    "description": "Create a new Bruno API testing collection with configuration",
+    "schema": {
+      "baseUrl": "string?",
+      "description": "string?",
+      "format": "enum(yaml|bru)? = "yaml"",
+      "ignore": "string[]?",
+      "name": "string",
+      "outputPath": "string",
+    },
+    "title": "Create Bruno Collection",
+  },
+  "create_crud_requests": {
+    "description": "Generate a complete set of CRUD operations for an entity",
+    "schema": {
+      "baseUrl": "string",
+      "collectionPath": "string",
+      "entityName": "string",
+      "folder": "string?",
+    },
+    "title": "Create CRUD Requests",
+  },
+  "create_environment": {
+    "description": "Create environment configuration files for Bruno collection",
+    "schema": {
+      "collectionPath": "string",
+      "name": "string",
+      "variables": "record<union(string | number | boolean)>",
+    },
+    "title": "Create Bruno Environment",
+  },
+  "create_request": {
+    "description": "Generate request files for API testing (supports .bru and .yml formats). Supports multipart/form-data with file uploads and per-part contentType (body.type "form-data" with formData entries of type "file"), and inline scripts (pre-request/post-response/tests) so no separate add_test_script call is needed.",
+    "schema": {
+      "auth": "{ config: record<string>; type: enum(none|bearer|basic|oauth2|api-key|digest) }?",
+      "body": "{ content: string?; formData: { contentType: string?; name: string; type: enum(text|file)?; value: union(string | string[]) }[]?; type: enum(none|json|text|xml|form-data|form-urlencoded|binary) }?",
+      "collectionPath": "string",
+      "folder": "string?",
+      "headers": "record<string>?",
+      "method": "enum(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)",
+      "name": "string",
+      "query": "record<union(string | number | boolean)>?",
+      "scripts": "{ after-response: string?; before-request: string?; post-response: string?; pre-request: string?; tests: string? }?",
+      "sequence": "number?",
+      "url": "string",
+    },
+    "title": "Create Bruno Request",
+  },
+  "create_test_suite": {
+    "description": "Generate comprehensive test collections with multiple related requests",
+    "schema": {
+      "collectionPath": "string",
+      "dependencies": "{ from: string; to: string }[]?",
+      "requests": "{ auth: { config: record<string>; type: enum(none|bearer|basic|oauth2|api-key) }?; body: { content: string?; type: enum(none|json|text|xml|form-data|form-urlencoded) }?; folder: string?; headers: record<string>?; method: enum(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS); name: string; url: string }[]",
+      "suiteName": "string",
+    },
+    "title": "Create Test Suite",
+  },
+  "delete_request": {
+    "description": "Permanently delete a Bruno request file from a collection. Use this to remove a request created by mistake; the file is unlinked from disk and cannot be recovered through this server. Only .yml/.bru files inside a detected Bruno collection can be deleted. To clear just a script and keep the request, use remove_script instead.",
+    "schema": {
+      "confirm": "literal(true)",
+      "filePath": "string",
+    },
+    "title": "Delete Request",
+  },
+  "get_collection_stats": {
+    "description": "Get statistics about a Bruno collection — request counts by method, folders, environments, and per-request details including file paths. environmentDetails lists each environment with the NAMES of the variables it declares (values are withheld), so you can see what an environment already defines before merging into it with set_environment_variable. Use filePath values as requestPath in run_collection.",
+    "schema": {
+      "collectionPath": "string",
+    },
+    "title": "Get Collection Statistics",
+  },
+  "list_collections": {
+    "description": "List the Bruno collections REGISTERED IN workspace.yml, with their names and paths. This is a registry listing, not a filesystem scan: a collection that exists on disk but is not registered will NOT appear, and registered entries that no longer exist are returned with "exists": false. If you already know a collection's absolute path, pass it directly to the other tools — it does not need to appear here. Use the returned path as collectionPath in other tools (get_collection_stats, list_requests, run_collection).",
+    "schema": {
+      "workspacePath": "string?",
+    },
+    "title": "List Collections",
+  },
+  "list_requests": {
+    "description": "List all request files (.yml/.bru) in a Bruno collection. Returns absolute file paths that can be used as requestPath in run_collection.",
+    "schema": {
+      "collectionPath": "string",
+    },
+    "title": "List Requests",
+  },
+  "modify_request": {
+    "description": "Update an existing Bruno request file with partial-merge semantics. Only provided fields are updated; all other fields are preserved. Supports multipart/form-data with file uploads and per-part contentType. Inline scripts REPLACE the existing script of the same type by default (idempotent — repeated calls do not accumulate duplicate blocks); pass scriptMode:"append" to concatenate instead. Use remove_script to clear a script entirely.",
+    "schema": {
+      "auth": "{ config: record<string>; type: enum(none|bearer|basic|oauth2|api-key|digest) }?",
+      "body": "{ content: string?; formData: { contentType: string?; name: string; type: enum(text|file)?; value: union(string | string[]) }[]?; type: enum(none|json|text|xml|form-data|form-urlencoded|binary) }?",
+      "filePath": "string",
+      "headers": "record<string>?",
+      "method": "enum(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)?",
+      "name": "string?",
+      "query": "record<union(string | number | boolean)>?",
+      "scriptMode": "enum(replace|append)? = "replace"",
+      "scripts": "{ after-response: string?; before-request: string?; post-response: string?; pre-request: string?; tests: string? }?",
+      "url": "string?",
+    },
+    "title": "Modify Request",
+  },
+  "remove_environment_variable": {
+    "description": "Remove a single variable from an existing Bruno environment. MERGES into the environment — all other variables are preserved.",
+    "schema": {
+      "collectionPath": "string",
+      "environment": "string",
+      "name": "string",
+    },
+    "title": "Remove Environment Variable",
+  },
+  "remove_script": {
+    "description": "Delete a pre-request, post-response, or tests script from a Bruno request, leaving the rest of the request intact. Use this to undo or clean up a script written by create_request/modify_request/add_test_script — including duplicate blocks accumulated by appending. Canonical scriptType values are pre-request/post-response/tests; the aliases before-request and after-response are accepted. Removing all scripts also drops the now-empty script container.",
+    "schema": {
+      "bruFilePath": "string",
+      "scriptType": "enum(pre-request|post-response|tests|before-request|after-response)",
+    },
+    "title": "Remove Script",
+  },
+  "run_collection": {
+    "description": "Execute requests in a Bruno collection and run test scripts. Omit requestPath to run ALL requests. Provide requestPath as a .yml/.bru file to run one request, or as a subdirectory to run all requests in that folder. Each result includes the response body (response_body, response_content_type, response_body_truncated) by default — disable with includeResponseBody=false or cap the size with maxResponseBodyBytes. Outbound requests are SSRF-filtered: targets resolving to private, loopback, link-local or otherwise reserved addresses are refused unless the server operator has allowlisted them, and a refusal is reported per-request as an "SSRF blocked" error with status 0.",
+    "schema": {
+      "collectionPath": "string",
+      "collectionRoot": "string?",
+      "environment": "string?",
+      "includeResponseBody": "boolean? = true",
+      "maxResponseBodyBytes": "number? = 10240",
+      "parallel": "boolean? = false",
+      "requestPath": "string?",
+    },
+    "title": "Run Collection",
+  },
+  "set_environment_variable": {
+    "description": "Set (add or update) a single variable in an existing Bruno environment. MERGES into the environment — all other variables are preserved.",
+    "schema": {
+      "collectionPath": "string",
+      "enabled": "boolean?",
+      "environment": "string",
+      "name": "string",
+      "secret": "boolean?",
+      "value": "union(string | number | boolean)",
+    },
+    "title": "Set Environment Variable",
+  },
+  "update_environment": {
+    "description": "Partially update an existing Bruno environment by MERGING the provided variables into the existing ones. Pre-existing variables not listed are preserved (unlike create_environment, which replaces the whole file).",
+    "schema": {
+      "collectionPath": "string",
+      "name": "string",
+      "variables": "record<union(string | number | boolean)>",
+    },
+    "title": "Update Bruno Environment",
+  },
+}
+`;
