@@ -4,6 +4,8 @@
  */
 
 import { promises as fs } from 'fs';
+import { writeFileAtomic } from './atomic-write.js';
+import { withPathLock } from './path-mutex.js';
 import { join } from 'path';
 import {
   BrunoCollection,
@@ -44,7 +46,7 @@ export class CollectionManager {
         };
 
         const configPath = join(collectionPath, 'bruno.json');
-        await fs.writeFile(configPath, JSON.stringify(brunoConfig, null, 2));
+        await writeFileAtomic(configPath, JSON.stringify(brunoConfig, null, 2));
       } else {
         // Create opencollection.yml (YAML format — default)
         const yamlCollection: YamlCollection = {
@@ -56,7 +58,7 @@ export class CollectionManager {
 
         const yamlContent = generateYamlCollection(yamlCollection);
         const configPath = join(collectionPath, 'opencollection.yml');
-        await fs.writeFile(configPath, yamlContent);
+        await writeFileAtomic(configPath, yamlContent);
       }
 
       // Create environments directory
@@ -131,6 +133,15 @@ export class CollectionManager {
     collectionPath: string,
     updates: Partial<BrunoCollection>
   ): Promise<FileOperationResult> {
+    // The config is loaded, merged with `updates`, and written back. Hold the
+    // lock across the pair so a concurrent update is not silently discarded (D8).
+    return withPathLock(collectionPath, () => this.updateCollectionLocked(collectionPath, updates));
+  }
+
+  private async updateCollectionLocked(
+    collectionPath: string,
+    updates: Partial<BrunoCollection>
+  ): Promise<FileOperationResult> {
     try {
       const existingConfig = await this.loadCollection(collectionPath);
       const updatedConfig = { ...existingConfig, ...updates };
@@ -145,12 +156,12 @@ export class CollectionManager {
         };
         const yamlContent = generateYamlCollection(yamlCollection);
         const configPath = join(collectionPath, 'opencollection.yml');
-        await fs.writeFile(configPath, yamlContent);
+        await writeFileAtomic(configPath, yamlContent);
         return { success: true, path: configPath };
       }
 
       const configPath = join(collectionPath, 'bruno.json');
-      await fs.writeFile(configPath, JSON.stringify(updatedConfig, null, 2));
+      await writeFileAtomic(configPath, JSON.stringify(updatedConfig, null, 2));
 
       return {
         success: true,
@@ -320,7 +331,7 @@ Thumbs.db
 *.swo
 `;
 
-    await fs.writeFile(gitignorePath, gitignoreContent);
+    await writeFileAtomic(gitignorePath, gitignoreContent);
   }
 
   /**
@@ -362,7 +373,7 @@ bruno-cli run --env production
 Created on: ${new Date().toISOString()}
 `;
 
-    await fs.writeFile(readmePath, readmeContent);
+    await writeFileAtomic(readmePath, readmeContent);
   }
 
   private static readonly EXCLUDED_YML = new Set(['opencollection.yml', 'folder.yml']);

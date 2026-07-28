@@ -4,6 +4,8 @@
  */
 
 import { promises as fs } from 'fs';
+import { writeFileAtomic } from './atomic-write.js';
+import { withPathLock } from './path-mutex.js';
 import { join, dirname, isAbsolute } from 'path';
 import { validatePath } from './path-validator.js';
 import {
@@ -65,7 +67,7 @@ export class RequestBuilder {
         const filePath = this.getRequestFilePath(input, '.yml');
         await this.ensureDirectory(dirname(filePath));
         const yamlContent = generateYamlRequest(yamlRequest);
-        await fs.writeFile(filePath, yamlContent);
+        await writeFileAtomic(filePath, yamlContent);
         if (input.scripts) {
           await this.applyInlineScripts(filePath, detection.format, input.scripts);
         }
@@ -76,7 +78,7 @@ export class RequestBuilder {
         const filePath = this.getRequestFilePath(input, '.bru');
         await this.ensureDirectory(dirname(filePath));
         const bruContent = generateBruRequest(bruFile);
-        await fs.writeFile(filePath, bruContent);
+        await writeFileAtomic(filePath, bruContent);
         if (input.scripts) {
           await this.applyInlineScripts(filePath, detection.format, input.scripts);
         }
@@ -166,6 +168,12 @@ export class RequestBuilder {
    * Update an existing request
    */
   async updateRequest(filePath: string, updates: Partial<CreateRequestInput>): Promise<FileOperationResult> {
+    // The file is read, merged with `updates`, and written back. Hold the lock
+    // across the pair so a concurrent update is not silently discarded (D8).
+    return withPathLock(filePath, () => this.updateRequestLocked(filePath, updates));
+  }
+
+  private async updateRequestLocked(filePath: string, updates: Partial<CreateRequestInput>): Promise<FileOperationResult> {
     try {
       if (filePath.endsWith('.yml')) {
         const content = await fs.readFile(filePath, 'utf-8');
@@ -197,7 +205,7 @@ export class RequestBuilder {
         }
 
         const updatedContent = generateYamlRequest(yamlReq);
-        await fs.writeFile(filePath, updatedContent);
+        await writeFileAtomic(filePath, updatedContent);
       } else if (filePath.endsWith('.bru')) {
         // Load existing BRU request
         const existingBru = await this.loadRequest(filePath);
@@ -207,7 +215,7 @@ export class RequestBuilder {
 
         // Generate and write updated content
         const bruContent = generateBruRequest(updatedBru);
-        await fs.writeFile(filePath, bruContent);
+        await writeFileAtomic(filePath, bruContent);
       }
 
       if (updates.scripts) {
@@ -778,7 +786,7 @@ export class RequestBuilder {
       content = writer.injectScript(content, scriptType, codes.join('\n'), mode);
     }
 
-    await fs.writeFile(filePath, content);
+    await writeFileAtomic(filePath, content);
   }
 
   /**

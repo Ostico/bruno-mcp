@@ -4,6 +4,8 @@
  */
 
 import { promises as fs } from 'fs';
+import { writeFileAtomic } from './atomic-write.js';
+import { withPathLock } from './path-mutex.js';
 import { join } from 'path';
 import {
   BrunoEnvironment,
@@ -18,6 +20,17 @@ import { parse as parseYaml } from 'yaml';
 import { detectFormat } from './format-detector.js';
 import { generateYamlEnvironment } from './yaml-generator.js';
 import { parseBruEnvironment, parseBruEnvironmentRaw, generateBruEnvironmentFull } from './bru-parser.js';
+
+/**
+ * Lock key identifying one environment.
+ *
+ * Deliberately extension-free: an environment is a single exclusion domain
+ * whether it is stored as .yml or .bru, and this is computable without touching
+ * the filesystem, so a caller can take the lock before any format detection.
+ */
+function environmentLockKey(collectionPath: string, environmentName: string): string {
+  return join(collectionPath, 'environments', environmentName);
+}
 
 export class EnvironmentManager {
 
@@ -46,13 +59,13 @@ export class EnvironmentManager {
         };
         const yamlContent = generateYamlEnvironment(envFile);
         const envFilePath = join(envDir, `${input.name}.yml`);
-        await fs.writeFile(envFilePath, yamlContent);
+        await writeFileAtomic(envFilePath, yamlContent);
         return { success: true, path: envFilePath };
       } else {
         // Existing BRU behavior
         const envFilePath = join(envDir, `${input.name}.bru`);
         const envContent = this.generateEnvironmentFile(input.name, input.variables);
-        await fs.writeFile(envFilePath, envContent);
+        await writeFileAtomic(envFilePath, envContent);
         return { success: true, path: envFilePath };
       }
 
@@ -147,6 +160,23 @@ export class EnvironmentManager {
     environmentName: string,
     variables: EnvVariable[]
   ): Promise<FileOperationResult> {
+    return withPathLock(environmentLockKey(collectionPath, environmentName), () =>
+      this.writeEnvironmentVariables(collectionPath, environmentName, variables),
+    );
+  }
+
+  /**
+   * Write the variables without taking the per-environment lock.
+   *
+   * The read-modify-write helpers below already hold that lock across their own
+   * read, so they must not re-enter it — the lock is not re-entrant and would
+   * deadlock. Every other caller goes through updateEnvironmentVariables.
+   */
+  private async writeEnvironmentVariables(
+    collectionPath: string,
+    environmentName: string,
+    variables: EnvVariable[]
+  ): Promise<FileOperationResult> {
     try {
       const detection = await detectFormat(collectionPath);
       const envDir = join(collectionPath, 'environments');
@@ -163,9 +193,9 @@ export class EnvironmentManager {
 
       if (detection.format === 'yaml') {
         const envFile: EnvFile = { name: environmentName, variables };
-        await fs.writeFile(envFilePath, generateYamlEnvironment(envFile));
+        await writeFileAtomic(envFilePath, generateYamlEnvironment(envFile));
       } else {
-        await fs.writeFile(envFilePath, generateBruEnvironmentFull(variables));
+        await writeFileAtomic(envFilePath, generateBruEnvironmentFull(variables));
       }
 
       return { success: true, path: envFilePath };
@@ -201,7 +231,7 @@ export class EnvironmentManager {
         byName.set(key, entry);
       }
 
-      return await this.updateEnvironmentVariables(
+      return await this.writeEnvironmentVariables(
         collectionPath,
         environmentName,
         [...byName.values()],
@@ -219,6 +249,17 @@ export class EnvironmentManager {
    * Update an existing environment
    */
   async updateEnvironment(
+    collectionPath: string,
+    environmentName: string,
+    variables: Record<string, string | number | boolean>
+  ): Promise<FileOperationResult> {
+    // Hold the lock across the read and the write so a concurrent edit is not lost (D8).
+    return withPathLock(environmentLockKey(collectionPath, environmentName), () =>
+      this.updateEnvironmentLocked(collectionPath, environmentName, variables),
+    );
+  }
+
+  private async updateEnvironmentLocked(
     collectionPath: string,
     environmentName: string,
     variables: Record<string, string | number | boolean>
@@ -243,10 +284,10 @@ export class EnvironmentManager {
           name: environmentName,
           variables: Object.entries(variables).map(([name, value]): EnvVariable => ({ name, value })),
         };
-        await fs.writeFile(envFilePath, generateYamlEnvironment(envFile));
+        await writeFileAtomic(envFilePath, generateYamlEnvironment(envFile));
       } else {
         const envContent = this.generateEnvironmentFile(environmentName, variables);
-        await fs.writeFile(envFilePath, envContent);
+        await writeFileAtomic(envFilePath, envContent);
       }
 
       return {
@@ -382,6 +423,19 @@ export class EnvironmentManager {
     value: string | number | boolean,
     enabled?: boolean
   ): Promise<FileOperationResult> {
+    // Hold the lock across the read and the write so a concurrent edit is not lost (D8).
+    return withPathLock(environmentLockKey(collectionPath, environmentName), () =>
+      this.setEnvironmentVariableLocked(collectionPath, environmentName, key, value, enabled),
+    );
+  }
+
+  private async setEnvironmentVariableLocked(
+    collectionPath: string,
+    environmentName: string,
+    key: string,
+    value: string | number | boolean,
+    enabled?: boolean
+  ): Promise<FileOperationResult> {
     try {
       const variables = await this.loadEnvironmentRaw(collectionPath, environmentName);
       const idx = variables.findIndex(v => v.name === key);
@@ -401,7 +455,7 @@ export class EnvironmentManager {
         variables.push(entry);
       }
 
-      return await this.updateEnvironmentVariables(collectionPath, environmentName, variables);
+      return await this.writeEnvironmentVariables(collectionPath, environmentName, variables);
 
     } catch (error) {
       return {
@@ -420,11 +474,22 @@ export class EnvironmentManager {
     environmentName: string,
     key: string
   ): Promise<FileOperationResult> {
+    // Hold the lock across the read and the write so a concurrent edit is not lost (D8).
+    return withPathLock(environmentLockKey(collectionPath, environmentName), () =>
+      this.removeEnvironmentVariableLocked(collectionPath, environmentName, key),
+    );
+  }
+
+  private async removeEnvironmentVariableLocked(
+    collectionPath: string,
+    environmentName: string,
+    key: string
+  ): Promise<FileOperationResult> {
     try {
       const variables = await this.loadEnvironmentRaw(collectionPath, environmentName);
       const filtered = variables.filter(v => v.name !== key);
 
-      return await this.updateEnvironmentVariables(collectionPath, environmentName, filtered);
+      return await this.writeEnvironmentVariables(collectionPath, environmentName, filtered);
 
     } catch (error) {
       return {
