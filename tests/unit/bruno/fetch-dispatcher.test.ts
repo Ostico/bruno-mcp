@@ -10,10 +10,12 @@ jest.mock('undici', () => {
   const Agent = jest.fn().mockImplementation((opts: any) => ({
     _type: 'Agent',
     _opts: opts,
+    destroy: jest.fn().mockResolvedValue(undefined),
   }));
   const ProxyAgent = jest.fn().mockImplementation((opts: any) => ({
     _type: 'ProxyAgent',
     _opts: opts,
+    destroy: jest.fn().mockResolvedValue(undefined),
   }));
   const fetch = jest.fn();
   return { Agent, ProxyAgent, fetch };
@@ -264,5 +266,179 @@ describe('buildDispatcher — collection TLS/proxy denied by default (S10/S11/S1
   it('denies a collection proxy when no target host is known', async () => {
     const result = await buildDispatcher({ proxy: 'http://p.test' });
     expect(result).toBeUndefined();
+  });
+});
+
+// ===========================================================================
+// S20/S21 — DNS-rebinding defence: the dispatcher pins the addresses that
+// validateUrl already approved, so the connection cannot re-resolve onto a
+// different one.
+// ===========================================================================
+
+type LookupEntry = { address: string; family: number };
+type PinnedLookup = (
+  hostname: string,
+  options: { family?: number; all?: boolean } | undefined,
+  callback: (err: NodeJS.ErrnoException | null, address?: string | LookupEntry[], family?: number) => void,
+) => void;
+
+/** Grab the `connect.lookup` undici was constructed with. */
+async function capturedLookup(): Promise<PinnedLookup | undefined> {
+  const undici = await import('undici');
+  const call = (undici.Agent as unknown as jest.Mock).mock.calls[0];
+  return call?.[0]?.connect?.lookup as PinnedLookup | undefined;
+}
+
+/** Invoke a lookup and capture its callback arguments synchronously. */
+function callLookup(
+  lookup: PinnedLookup,
+  options: { family?: number; all?: boolean } | undefined,
+): { err: NodeJS.ErrnoException | null; address?: string | LookupEntry[]; family?: number } {
+  let captured!: { err: NodeJS.ErrnoException | null; address?: string | LookupEntry[]; family?: number };
+  lookup('rebind.test', options, (err, address, family) => {
+    captured = { err, address, family };
+  });
+  return captured;
+}
+
+describe('buildDispatcher — validated-address pinning (S20/S21)', () => {
+  const TARGET_HOST = 'rebind.test';
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    // No operator opt-in: pinning must work for ordinary, untrusted hosts.
+    delete process.env.BRUNO_INSECURE_TLS_HOSTS;
+    delete process.env.BRUNO_PROXY_HOSTS;
+    resetDispatcherTrustCache();
+  });
+
+  afterEach(() => {
+    resetDispatcherTrustCache();
+  });
+
+  it('builds a dispatcher purely to pin, with no TLS or proxy settings', async () => {
+    const result = await buildDispatcher({}, TARGET_HOST, ['93.184.216.34']);
+
+    expect(result).toBeDefined();
+    expect((result!.dispatcher as any)._type).toBe('Agent');
+    expect(typeof (await capturedLookup())).toBe('function');
+  });
+
+  it('still returns undefined when there is nothing to pin and no TLS or proxy', async () => {
+    expect(await buildDispatcher({}, TARGET_HOST)).toBeUndefined();
+    expect(await buildDispatcher({}, TARGET_HOST, [])).toBeUndefined();
+  });
+
+  it('answers the all-mode lookup with every pinned address, never DNS', async () => {
+    await buildDispatcher({}, TARGET_HOST, ['93.184.216.34', '104.18.32.7']);
+    const lookup = (await capturedLookup())!;
+
+    const { err, address } = callLookup(lookup, { all: true });
+
+    expect(err).toBeNull();
+    expect(address).toEqual([
+      { address: '93.184.216.34', family: 4 },
+      { address: '104.18.32.7', family: 4 },
+    ]);
+  });
+
+  it('answers the single-address lookup with the first pinned address', async () => {
+    await buildDispatcher({}, TARGET_HOST, ['93.184.216.34', '104.18.32.7']);
+    const lookup = (await capturedLookup())!;
+
+    const { err, address, family } = callLookup(lookup, undefined);
+
+    expect(err).toBeNull();
+    expect(address).toBe('93.184.216.34');
+    expect(family).toBe(4);
+  });
+
+  it('reports family 6 for a pinned IPv6 address', async () => {
+    await buildDispatcher({}, TARGET_HOST, ['2606:2800:220:1:248:1893:25c8:1946']);
+    const lookup = (await capturedLookup())!;
+
+    const { err, address, family } = callLookup(lookup, { family: 6 });
+
+    expect(err).toBeNull();
+    expect(address).toBe('2606:2800:220:1:248:1893:25c8:1946');
+    expect(family).toBe(6);
+  });
+
+  it('honours a requested address family when both are pinned', async () => {
+    await buildDispatcher({}, TARGET_HOST, ['93.184.216.34', '2606:2800::1']);
+    const lookup = (await capturedLookup())!;
+
+    expect(callLookup(lookup, { family: 4, all: true }).address).toEqual([
+      { address: '93.184.216.34', family: 4 },
+    ]);
+    expect(callLookup(lookup, { family: 6, all: true }).address).toEqual([
+      { address: '2606:2800::1', family: 6 },
+    ]);
+  });
+
+  it('fails closed rather than resolving when no pinned address matches the family', async () => {
+    await buildDispatcher({}, TARGET_HOST, ['93.184.216.34']);
+    const lookup = (await capturedLookup())!;
+
+    const { err, address } = callLookup(lookup, { family: 6 });
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err!.code).toBe('ENOTFOUND');
+    expect(address).toBeUndefined();
+  });
+
+  it('pins alongside operator-permitted TLS overrides', async () => {
+    process.env.BRUNO_INSECURE_TLS_HOSTS = TARGET_HOST;
+    resetDispatcherTrustCache();
+
+    await buildDispatcher({ tls: { rejectUnauthorized: false } }, TARGET_HOST, ['93.184.216.34']);
+
+    const undici = await import('undici');
+    const connect = (undici.Agent as unknown as jest.Mock).mock.calls[0][0].connect;
+    expect(connect.rejectUnauthorized).toBe(false);
+    expect(typeof connect.lookup).toBe('function');
+  });
+
+  it('does not pin through a proxy, which resolves the target itself', async () => {
+    process.env.BRUNO_PROXY_HOSTS = TARGET_HOST;
+    resetDispatcherTrustCache();
+
+    const result = await buildDispatcher(
+      { proxy: 'http://proxy.test:8080' },
+      TARGET_HOST,
+      ['93.184.216.34'],
+    );
+
+    expect((result!.dispatcher as any)._type).toBe('ProxyAgent');
+    const undici = await import('undici');
+    expect(undici.Agent).not.toHaveBeenCalled();
+    expect((result!.dispatcher as any)._opts.requestTls).toBeUndefined();
+  });
+
+  it('releases the agent sockets on close', async () => {
+    const result = await buildDispatcher({}, TARGET_HOST, ['93.184.216.34']);
+    const destroy = (result!.dispatcher as any).destroy;
+
+    await result!.close();
+
+    expect(destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases the proxy agent sockets on close', async () => {
+    process.env.BRUNO_PROXY_HOSTS = TARGET_HOST;
+    resetDispatcherTrustCache();
+    const result = await buildDispatcher({ proxy: 'http://proxy.test:8080' }, TARGET_HOST);
+    const destroy = (result!.dispatcher as any).destroy;
+
+    await result!.close();
+
+    expect(destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let a teardown failure surface to the caller', async () => {
+    const result = await buildDispatcher({}, TARGET_HOST, ['93.184.216.34']);
+    (result!.dispatcher as any).destroy = jest.fn().mockRejectedValue(new Error('socket teardown'));
+
+    await expect(result!.close()).resolves.toBeUndefined();
   });
 });

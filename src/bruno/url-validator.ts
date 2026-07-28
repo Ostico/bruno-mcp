@@ -22,10 +22,12 @@
  * Wildcard entries (anything containing '*') are rejected with a warning —
  * an allowlist must name specific hosts, IPs, or CIDRs.
  *
- * Residual risk: DNS rebinding (TOCTOU). Validation resolves the hostname,
- * but the subsequent fetch() re-resolves independently and could connect to a
- * different address. Full mitigation requires pinning the validated IP at
- * connect time; tracked as a follow-up.
+ * DNS rebinding (TOCTOU): a successful validation returns the exact addresses
+ * it approved in `addresses`. The caller must pin those at connect time (see
+ * buildDispatcher in fetch-dispatcher.ts) so the connection cannot land on a
+ * different address than the one that passed the denylist. Without pinning,
+ * fetch() re-resolves independently and an attacker-controlled short-TTL record
+ * can answer with a public IP for the check and an internal one for the request.
  */
 
 import { lookup } from 'node:dns/promises';
@@ -109,6 +111,17 @@ export interface UrlValidationResult {
    * saying nothing.
    */
   allowlistOverridable?: boolean;
+  /**
+   * The concrete addresses this validation approved, present only on success.
+   * Pin these at connect time to close the DNS-rebinding window between the
+   * check and the request (findings S20/S21).
+   *
+   * Absent when there is nothing to pin: a host matched by the operator's
+   * BRUNO_SSRF_ALLOWLIST is never resolved here (the operator has vouched for
+   * the name, not for a particular address), so the connection resolves it
+   * normally.
+   */
+  addresses?: string[];
 }
 
 /**
@@ -231,7 +244,9 @@ export async function validateUrl(url: string): Promise<UrlValidationResult> {
     }
   }
 
-  return { valid: true };
+  // Hand back exactly the addresses that were checked, so the connection is
+  // pinned to them instead of re-resolving the hostname (DNS rebinding).
+  return { valid: true, addresses: ips };
 }
 
 // ---------------------------------------------------------------------------
