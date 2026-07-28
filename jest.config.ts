@@ -71,6 +71,25 @@ const config: Config = {
       ...coverage,
       displayName: 'integration',
       testMatch: ['<rootDir>/tests/integration/**/*.test.ts'],
+      // Builds dist/ once, before any worker starts, replacing the per-suite
+      // `beforeAll` builds that raced each other through `tsup --clean`
+      // (finding Q18 — tests/global-setup.ts documents the race).
+      //
+      // Runs exactly once per jest invocation whichever level it is declared
+      // at: @jest/core's runGlobalHook gathers the root hook and every
+      // project's hook into a Set of module paths, so a single path is a
+      // single call no matter how many projects or workers are involved.
+      //
+      // It sits on this project rather than at the root because a root
+      // globalSetup runs for every invocation, including `npm run test:unit`
+      // and single-unit-file runs — measured at ~2.15s -> ~3.3s locally for a
+      // lane whose whole point is being the fast one, and which never reads
+      // dist/. Jest defines the project-scoped form as triggering only when at
+      // least one test from that project runs, which is exactly the condition
+      // that needs the artifact. Verified, not assumed: `jest --selectProjects
+      // unit` performs 0 builds, `--selectProjects integration`, `jest
+      // tests/integration` and a full `jest` each perform exactly 1.
+      globalSetup: '<rootDir>/tests/global-setup.ts',
     },
   ],
 };

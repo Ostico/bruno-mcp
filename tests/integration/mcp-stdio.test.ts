@@ -10,8 +10,7 @@
  * failure of the actual wire protocol is visible.
  */
 
-import { execSync } from 'node:child_process';
-import { cpSync, existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -21,18 +20,15 @@ import { McpError } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
 const repoRoot = path.resolve(__dirname, '../..');
-const distDir = path.join(repoRoot, 'dist');
 
-// The server is spawned from a private copy of dist/, not from dist/ itself.
-// `npm run build` runs with --clean, and a sibling integration file
-// (sandbox-fork.test.ts) rebuilds in its own beforeAll. Jest runs test files in
-// parallel workers, so that sibling's `rm -rf dist` can land in the middle of
-// this file's spawns. Snapshotting decouples the two. It stays inside the repo
-// so Node still resolves the server's runtime dependencies from
-// <repoRoot>/node_modules and still sees "type": "module" from the root
-// package.json.
-const serverDir = path.join(__dirname, '.mcp-stdio-dist');
-const serverEntry = path.join(serverDir, 'index.js');
+// Spawned straight out of dist/, which tests/global-setup.ts builds once before
+// any worker starts. This file used to build in its own `beforeAll` and then
+// snapshot dist/ into a private directory, with a retry loop, because the
+// sibling sandbox-fork suite rebuilt concurrently and `npm run build` is
+// --clean: its `rm -rf dist` could land between this file's build and its
+// spawns (finding Q18). With a single hoisted build nothing deletes dist/ while
+// a suite is running, so the copy and the retries are gone.
+const serverEntry = path.join(repoRoot, 'dist', 'index.js');
 
 /**
  * Every tool the server is expected to register, by wire name.
@@ -71,32 +67,6 @@ interface Session {
 
 const sessions: Session[] = [];
 let tmpRoot: string;
-
-/**
- * Build, then take a private copy of the output.
- *
- * Always rebuilds. sandbox-fork.test.ts learned the hard way that skipping the
- * build when the artifact merely exists lets a stale dist/ keep a suite green
- * after the build stopped emitting what it asserts on.
- *
- * Retried because the concurrent sibling build can delete dist/ between this
- * build finishing and the copy starting.
- */
-function buildAndSnapshot(): void {
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      execSync('npm run build', { cwd: repoRoot, stdio: 'ignore' });
-      rmSync(serverDir, { recursive: true, force: true });
-      cpSync(distDir, serverDir, { recursive: true });
-      if (statSync(serverEntry).size > 0) return;
-      lastError = new Error(`build produced an empty ${serverEntry}`);
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  throw lastError;
-}
 
 /**
  * Child environment: the parent's, minus any BRUNO_* the developer running the
@@ -196,13 +166,11 @@ async function waitForStderr(session: Session, needle: string, timeoutMs = 5000)
 }
 
 beforeAll(() => {
-  buildAndSnapshot();
   tmpRoot = mkdtempSync(path.join(tmpdir(), 'bruno-mcp-stdio-'));
-}, 300_000);
+});
 
 afterAll(async () => {
   await stopAllServers();
-  rmSync(serverDir, { recursive: true, force: true });
   if (tmpRoot) rmSync(tmpRoot, { recursive: true, force: true });
 }, 30_000);
 
