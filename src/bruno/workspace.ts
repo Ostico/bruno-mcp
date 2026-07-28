@@ -55,7 +55,10 @@ export class WorkspaceResolver {
 
     return data.collections
       .filter((c: unknown): c is { name: string; path: string } =>
-        typeof c === 'object' && c !== null && typeof (c as any).name === 'string' && typeof (c as any).path === 'string'
+        typeof c === 'object' &&
+        c !== null &&
+        typeof (c as { name?: unknown }).name === 'string' &&
+        typeof (c as { path?: unknown }).path === 'string'
       )
       .map((c: { name: string; path: string }) => ({
         name: c.name,

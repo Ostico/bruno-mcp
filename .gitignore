@@ -2,6 +2,9 @@
 !.gitignore
 !.github
 !.github/**
+# The `.*` rule above would otherwise make an ESLint config impossible to
+# commit, which is why `npm run lint` had no config to find (finding Q5).
+!.eslintrc.json
 # Dependencies
 node_modules/
 npm-debug.log*

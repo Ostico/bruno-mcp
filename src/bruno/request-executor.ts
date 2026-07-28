@@ -15,7 +15,6 @@ import type {
   BruFile,
   YamlRequest,
   YamlAuth,
-  YamlSettings,
   MockRequestData,
   CollectionRunResult,
   RequestExecutionResult,
@@ -769,7 +768,7 @@ async function executeSingleRequest(
 
   const fetchFn = dispatcherResult ? dispatcherResult.fetch : fetch;
   if (dispatcherResult) {
-    (fetchOpts as any).dispatcher = dispatcherResult.dispatcher;
+    (fetchOpts as { dispatcher?: unknown }).dispatcher = dispatcherResult.dispatcher;
   }
 
   const startTime = Date.now();

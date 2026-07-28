@@ -26,8 +26,6 @@ import {
   CreateCollectionInput,
   CreateEnvironmentInput,
   CreateRequestInput,
-  AddTestScriptInput,
-  CreateTestSuiteInput,
   HttpMethod,
   AuthType,
   BodyType
