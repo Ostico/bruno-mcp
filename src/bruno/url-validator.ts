@@ -29,6 +29,74 @@
  */
 
 import { lookup } from 'node:dns/promises';
+import type { LookupAddress } from 'node:dns';
+
+/**
+ * Default ceiling on the SSRF pre-flight DNS lookup (finding S19).
+ *
+ * `lookup()` from node:dns/promises accepts neither a timeout nor an
+ * AbortSignal, and this resolution runs BEFORE the request's own
+ * AbortSignal.timeout is armed. Left unbounded, a hostname whose resolver never
+ * answers hangs the whole request for as long as the OS resolver waits — time
+ * that is invisible to settings.timeout and to the reported duration_ms.
+ */
+export const DEFAULT_DNS_TIMEOUT_MS = 5000;
+
+/** Thrown by lookupWithTimeout when the DNS lookup outruns its budget. */
+class DnsTimeoutError extends Error {
+  constructor(
+    public readonly hostname: string,
+    public readonly timeoutMs: number,
+  ) {
+    super(`DNS lookup for ${hostname} exceeded ${timeoutMs}ms`);
+    this.name = 'DnsTimeoutError';
+  }
+}
+
+/**
+ * Resolve the DNS lookup budget, letting the operator raise it for slow
+ * resolvers via BRUNO_DNS_TIMEOUT_MS. Read per call (a single env read is
+ * cheap and keeps tests free of cache-reset bookkeeping). Any non-positive or
+ * non-finite value falls back to the default rather than disabling the bound.
+ */
+function resolveDnsTimeoutMs(): number {
+  const raw = process.env.BRUNO_DNS_TIMEOUT_MS;
+  if (raw === undefined || raw === '') {
+    return DEFAULT_DNS_TIMEOUT_MS;
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    return DEFAULT_DNS_TIMEOUT_MS;
+  }
+  return n;
+}
+
+/**
+ * lookup() bounded by a timeout. Since lookup() cannot itself be cancelled, the
+ * bound is a race against an unref'd timer; the losing lookup is left to settle
+ * on its own, and its eventual result/rejection is swallowed so it cannot
+ * surface as an unhandled rejection after the race has moved on.
+ */
+async function lookupWithTimeout(hostname: string): Promise<LookupAddress[]> {
+  const timeoutMs = resolveDnsTimeoutMs();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new DnsTimeoutError(hostname, timeoutMs)), timeoutMs);
+    // Do not keep the process alive solely to wait out this timer.
+    timer.unref?.();
+  });
+  const lookupPromise = lookup(hostname, { all: true });
+  // If the lookup settles after the timeout already won the race, its result is
+  // ignored — guard against an unhandled rejection from that orphaned promise.
+  lookupPromise.catch(() => {});
+  try {
+    return await Promise.race([lookupPromise, timeout]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
 
 export interface UrlValidationResult {
   valid: boolean;
@@ -116,9 +184,15 @@ export async function validateUrl(url: string): Promise<UrlValidationResult> {
     ips = [hostname];
   } else {
     try {
-      const records = await lookup(hostname, { all: true });
+      const records = await lookupWithTimeout(hostname);
       ips = records.map((r) => r.address);
-    } catch {
+    } catch (err) {
+      if (err instanceof DnsTimeoutError) {
+        return {
+          valid: false,
+          reason: `DNS resolution timed out after ${err.timeoutMs}ms for hostname: ${hostname}`,
+        };
+      }
       return { valid: false, reason: `DNS resolution failed for hostname: ${hostname}` };
     }
     if (ips.length === 0) {

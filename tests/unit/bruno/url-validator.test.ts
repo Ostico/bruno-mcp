@@ -1,4 +1,9 @@
-import { validateUrl, parseAllowlist, resetAllowlistCache } from '../../../src/bruno/url-validator.js';
+import {
+  validateUrl,
+  parseAllowlist,
+  resetAllowlistCache,
+  DEFAULT_DNS_TIMEOUT_MS,
+} from '../../../src/bruno/url-validator.js';
 
 // DNS resolution is mocked so hostname-based tests are deterministic and never
 // touch the network. Public test domains resolve to a public IP; unknown hosts
@@ -711,5 +716,71 @@ describe('parseAllowlist', () => {
     const a = parseAllowlist('10.0.0.0/8/8');
     expect(a.cidr4).toHaveLength(0);
     expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('DNS lookup timeout (finding S19)', () => {
+  const priorEnv = process.env.BRUNO_DNS_TIMEOUT_MS;
+
+  afterEach(() => {
+    if (priorEnv === undefined) {
+      delete process.env.BRUNO_DNS_TIMEOUT_MS;
+    } else {
+      process.env.BRUNO_DNS_TIMEOUT_MS = priorEnv;
+    }
+    mockLookup.mockReset();
+  });
+
+  // A lookup that resolves only after `ms`, standing in for a resolver that
+  // answers slowly (or never within the budget).
+  const slowLookup = (ms: number, addresses: string[] = ['93.184.216.34']) =>
+    mockLookup.mockImplementation(
+      () =>
+        new Promise(resolve =>
+          setTimeout(() => resolve(addresses.map(address => ({ address, family: 4 }))), ms),
+        ),
+    );
+
+  it('exposes a positive default DNS budget', () => {
+    expect(DEFAULT_DNS_TIMEOUT_MS).toBeGreaterThan(0);
+  });
+
+  it('fails closed with a timeout reason when the lookup outruns the budget', async () => {
+    process.env.BRUNO_DNS_TIMEOUT_MS = '50';
+    slowLookup(1000); // 1s >> 50ms budget
+    const result = await validateUrl('http://slow-resolver.example.com/');
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe(
+      'DNS resolution timed out after 50ms for hostname: slow-resolver.example.com',
+    );
+  });
+
+  it('honours a raised BRUNO_DNS_TIMEOUT_MS so a lookup within budget still succeeds', async () => {
+    process.env.BRUNO_DNS_TIMEOUT_MS = '400';
+    slowLookup(80); // 80ms < 400ms budget -> resolves normally
+    const result = await validateUrl('http://ok.example.com/');
+    expect(result.valid).toBe(true);
+  });
+
+  it.each([
+    ['not-a-number', 'non-numeric'],
+    ['', 'empty'],
+    ['0', 'zero'],
+    ['-5', 'negative'],
+  ])('falls back to the default budget for %s (%s) rather than a premature timeout', async raw => {
+    process.env.BRUNO_DNS_TIMEOUT_MS = raw;
+    // 60ms lookup is well under the 5000ms default, so it must succeed — proving
+    // the invalid value did NOT disable or shorten the bound.
+    slowLookup(60);
+    const result = await validateUrl('http://fallback.example.com/');
+    expect(result.valid).toBe(true);
+  });
+
+  it('still reports a plain DNS failure (non-timeout) distinctly', async () => {
+    process.env.BRUNO_DNS_TIMEOUT_MS = '500';
+    mockLookup.mockRejectedValueOnce(new Error('ENOTFOUND'));
+    const result = await validateUrl('http://broken.example.com/');
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe('DNS resolution failed for hostname: broken.example.com');
   });
 });
