@@ -37,24 +37,105 @@ jobs:
     - name: Run linting
       run: npm run lint
 
+    # ── Test lanes (finding Q4) ───────────────────────────────────────
+    # Unit and integration are separate jest projects and run as separate,
+    # individually attributable steps. BOTH must run: dropping the
+    # integration lane from CI would hollow out the suite exactly the way an
+    # unenforced coverage gate hollows out the coverage check.
+    #
     # Blocking: a failing test suite must fail the build.
-    - name: Run tests
-      run: npm test
+    - name: Run unit tests
+      run: npm run test:unit
+
+    # Blocking. Real sockets, real child processes, real filesystem writes.
+    - name: Run integration tests
+      run: npm run test:integration
 
     # ── Coverage artifact (consumed by the test-guard job) ────────────
     # Generated once, on the 24.x leg only, to avoid a duplicate upload.
+    #
+    # Runs the FULL suite (both jest projects) — a single-lane run would
+    # produce a partial report and understate coverage in test-guard.
+    #
+    # NO `continue-on-error` here (finding Q8). It used to be set, which meant
+    # a coverage run that crashed left the job green while test-guard was fed a
+    # missing or stale artifact: the gate measured nothing and nobody noticed.
+    # Same precedent as the lint step, whose `continue-on-error` was removed.
     - name: Generate coverage report
+      id: coverage
       if: matrix.node-version == '24.x'
       run: npx jest --coverage --coverageReporters=clover --coverageReporters=text-summary
-      continue-on-error: true
 
+    # `always()`: upload whatever coverage exists even when a step above
+    # failed, so a genuine coverage regression can still be inspected in the
+    # artifact instead of vanishing. `if-no-files-found: warn` keeps this step
+    # from failing on its own — the explicit assertion below owns that verdict
+    # and produces a far clearer message.
     - name: Upload coverage artifact
-      if: matrix.node-version == '24.x'
+      if: always() && matrix.node-version == '24.x'
       uses: actions/upload-artifact@v7
       with:
         name: coverage-report
         path: coverage/clover.xml
         retention-days: 7
+        if-no-files-found: warn
+
+    # Explicit gate (findings Q8/Q9). Deleting `continue-on-error` alone is not
+    # enough: the naive version fails downstream on a *missing artifact*, which
+    # in the logs is indistinguishable from a real coverage regression. This
+    # step makes the two outcomes say different things, out loud.
+    - name: Assert coverage artifact is usable
+      if: always() && matrix.node-version == '24.x'
+      shell: bash
+      run: |
+        set -uo pipefail
+        FILE=coverage/clover.xml
+
+        fail() {
+          echo "::error title=$1::$2"
+          echo ""
+          echo "=============================================================="
+          echo "  $1"
+          echo "=============================================================="
+          echo "$2"
+          echo ""
+          echo "This is NOT a 'coverage below threshold' failure."
+          echo "Nothing was measured at all. The 'Test adequacy gate' job"
+          echo "consumes coverage/clover.xml as the 'coverage-report'"
+          echo "artifact; without a readable file it cannot evaluate any"
+          echo "changed file, and a green run would mean the gate checked"
+          echo "nothing."
+          echo "=============================================================="
+          exit 1
+        }
+
+        if [ "${{ steps.coverage.outcome }}" != "success" ]; then
+          fail "Coverage generation failed" \
+            "The 'Generate coverage report' step exited with outcome '${{ steps.coverage.outcome }}'. Read that step's log for the real cause (jest crash, failing test, OOM). The coverage artifact is unusable as a side effect."
+        fi
+
+        if [ ! -f "$FILE" ]; then
+          fail "Coverage artifact missing" \
+            "Expected $FILE after a successful coverage run, but no such file exists. The coverage reporter did not write it (wrong --coverageReporters, wrong coverageDirectory, or the run was skipped)."
+        fi
+
+        if [ ! -s "$FILE" ]; then
+          fail "Coverage artifact empty" \
+            "$FILE exists but is 0 bytes. The reporter created the file and then wrote nothing to it."
+        fi
+
+        if ! grep -q '<coverage' "$FILE"; then
+          fail "Coverage artifact unreadable" \
+            "$FILE is non-empty ($(wc -c < "$FILE" | tr -d ' ') bytes) but contains no <coverage> element, so it is not a clover report that test-guard can parse."
+        fi
+
+        FILES_MEASURED=$(grep -c '<file ' "$FILE" || true)
+        if [ "${FILES_MEASURED:-0}" -eq 0 ]; then
+          fail "Coverage artifact measures nothing" \
+            "$FILE parses as clover but contains zero <file> entries — every source file was excluded, so the gate would trivially pass on an empty measurement set."
+        fi
+
+        echo "Coverage artifact OK: $FILE ($(wc -c < "$FILE" | tr -d ' ') bytes, ${FILES_MEASURED} files measured)."
 
   build:
     runs-on: ubuntu-latest
@@ -116,6 +197,33 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: coverage-report
+
+      # Consumer-side half of findings Q8/Q9. The producer already asserts the
+      # artifact is usable, but this job is the one that renders a verdict on
+      # the PR — so it must never be able to report "gate passed" off a file
+      # that never arrived. Fails loudly and says which of the two it is.
+      - name: Assert downloaded coverage artifact is usable
+        shell: bash
+        run: |
+          set -uo pipefail
+          FILE=clover.xml
+          if [ ! -s "$FILE" ] || ! grep -q '<coverage' "$FILE"; then
+            echo "::error title=Coverage artifact missing or unreadable::The 'coverage-report' artifact did not yield a parseable $FILE, so test-guard has nothing to measure."
+            echo ""
+            echo "=============================================================="
+            echo "  Coverage artifact missing or unreadable"
+            echo "=============================================================="
+            echo "This is NOT a 'coverage below threshold' failure — no"
+            echo "coverage was measured at all. Check the 'Generate coverage"
+            echo "report' and 'Assert coverage artifact is usable' steps in"
+            echo "the 24.x leg of the test job; the artifact is produced"
+            echo "there."
+            echo "=============================================================="
+            ls -la
+            exit 1
+          fi
+          echo "Downloaded coverage artifact OK: $FILE ($(wc -c < "$FILE" | tr -d ' ') bytes, $(grep -c '<file ' "$FILE") files measured)."
+          echo "Any failure after this point is a real coverage/test-adequacy verdict, not a plumbing problem."
 
       - name: Test Guard
         uses: ostico/test-guard@v1
