@@ -87,7 +87,12 @@ async function findYmlFilesRecursive(dirPath: string, results: string[]): Promis
   }
 }
 
-function bruFileToYamlRequest(bru: BruFile): YamlRequest {
+/**
+ * Translate a parsed .bru file into the YamlRequest the executor works in.
+ * Exported for tests, matching bruAuthToYamlAuth alongside it; the executor is
+ * still the only production caller.
+ */
+export function bruFileToYamlRequest(bru: BruFile): YamlRequest {
   const scripts: YamlRequest['runtime'] = { scripts: [] };
   if (bru.script?.['pre-request']?.exec) {
     scripts.scripts.push({ type: 'before-request', code: bru.script['pre-request'].exec.join('\n') });
@@ -99,9 +104,21 @@ function bruFileToYamlRequest(bru: BruFile): YamlRequest {
     scripts.scripts.push({ type: 'after-response', code: bru.tests.exec.join('\n') });
   }
 
-  const headers = bru.headers
-    ? Object.entries(bru.headers).map(([name, value]) => ({ name, value }))
-    : undefined;
+  // Prefer headersList: it is the parser's order-preserving record of every
+  // authored header, duplicates and disabled flags included. `bru.headers` is
+  // the flat Record kept for lookups, so building from it collapsed repeated
+  // names before the model even existed (finding D4) and dropped the disabled
+  // flag that buildFetchOptions needs to honour (D13). Fall back to the Record
+  // only for a BruFile that carries no headersList.
+  const headers = bru.headersList
+    ? bru.headersList.map((h) => ({
+        name: h.name,
+        value: h.value,
+        ...(h.enabled === false ? { disabled: true } : {}),
+      }))
+    : bru.headers
+      ? Object.entries(bru.headers).map(([name, value]) => ({ name, value }))
+      : undefined;
 
   let body: YamlRequest['http']['body'];
   if (bru.body?.formData && bru.body.formData.length > 0) {
@@ -358,6 +375,46 @@ export function stripCredentialHeaders(
   return out;
 }
 
+/**
+ * Add one authored header to the outgoing set, combining rather than replacing
+ * when the name has already been seen (finding D4).
+ *
+ * A collection may author the same header twice — two Accept values, two Cookie
+ * pairs, an X-Forwarded-For chain. The previous `headers[h.name] = value` kept
+ * only the last, so every earlier value was silently dropped before the request
+ * was ever sent.
+ *
+ * Combining (rather than carrying a list further down) is what the transport
+ * actually does: undici's fetch emits ONE field-line for a repeated request
+ * header no matter how it is handed over — an array of pairs and
+ * Headers.append both arrive combined. RFC 9110 §5.3 permits exactly that, and
+ * RFC 6265 §5.4 makes Cookie the exception that joins with "; ". Building the
+ * combined value here therefore produces the same bytes on the wire while
+ * keeping the rest of the pipeline — auth application, the pre-request script
+ * API, and stripCredentialHeaders — on the simple Record it already expects.
+ *
+ * Names are matched case-insensitively (RFC 9110 §5.1) but emitted with the
+ * first occurrence's casing. Routing through undici's Headers would have been
+ * shorter and was rejected because it lowercases every name, changing what a
+ * case-sensitive server receives.
+ */
+function appendHeader(
+  headers: Record<string, string>,
+  headerKeys: Map<string, string>,
+  name: string,
+  value: string,
+): void {
+  const lower = name.toLowerCase();
+  const existingKey = headerKeys.get(lower);
+  if (existingKey === undefined) {
+    headerKeys.set(lower, name);
+    headers[name] = value;
+    return;
+  }
+  const separator = lower === 'cookie' ? '; ' : ', ';
+  headers[existingKey] = `${headers[existingKey]}${separator}${value}`;
+}
+
 export async function buildFetchOptions(
   yaml: YamlRequest,
   vars: Map<string, string>,
@@ -383,6 +440,10 @@ export async function buildFetchOptions(
   let url = substitute(yaml.http.url, vars);
 
   const headers: Record<string, string> = {};
+  // Maps a lowercased header name to the key actually used in `headers`, so a
+  // repeat under different casing lands on the first occurrence's casing
+  // instead of creating a second entry.
+  const headerKeys = new Map<string, string>();
   if (yaml.http.headers) {
     for (const h of yaml.http.headers) {
       // A header explicitly disabled in the collection must not be sent (D13).
@@ -390,7 +451,7 @@ export async function buildFetchOptions(
       // reported as unresolved either.
       if (h.disabled === true) continue;
       trackUnresolved(h.value);
-      headers[h.name] = substitute(h.value, vars);
+      appendHeader(headers, headerKeys, h.name, substitute(h.value, vars));
     }
   }
 
