@@ -14,6 +14,8 @@ import {
   YamlRequest,
   YamlHeader,
   YamlAuth,
+  BruParam,
+  YamlParam,
   CreateRequestInput,
   FileOperationResult,
   BrunoError,
@@ -43,6 +45,43 @@ function toMultipartData(parts: MultipartFormPart[]): MultipartFormPart[] {
     if (part.contentType) normalized.contentType = part.contentType;
     return normalized;
   });
+}
+
+/**
+ * Turn the tool's `query` record into .bru parameter entries.
+ *
+ * The two formats spell the switched-off flag with opposite polarity, so the
+ * .bru side sets `enabled: true` where the .yml side simply omits `disabled`.
+ */
+function queryToBruParams(query: NonNullable<CreateRequestInput['query']>): BruParam[] {
+  return Object.entries(query).map(([name, value]) => ({
+    name,
+    value: String(value),
+    enabled: true,
+    type: 'query' as const,
+  }));
+}
+
+/** Turn the tool's `query` record into .yml parameter entries. */
+function queryToYamlParams(query: NonNullable<CreateRequestInput['query']>): YamlParam[] {
+  return Object.entries(query).map(([name, value]) => ({
+    name,
+    value: String(value),
+    type: 'query' as const,
+  }));
+}
+
+/**
+ * Replace the query parameters while leaving path parameters alone.
+ *
+ * `query` is replaced wholesale, the way `headers` already is on this path. Path
+ * parameters address a different part of the URL and are never named by the
+ * `query` input, so wiping them would be collateral damage from an unrelated
+ * edit.
+ */
+function replaceQueryParams<T extends { type?: string }>(existing: T[] | undefined, fresh: T[]): T[] {
+  const paths = (existing ?? []).filter((param) => param.type === 'path');
+  return [...paths, ...fresh];
 }
 import { generateYamlRequest } from './yaml-generator.js';
 import { parseBruRequest, generateBruRequest } from './bru-parser.js';
@@ -202,6 +241,12 @@ export class RequestBuilder {
           const authObj: Record<string, unknown> = { type: updates.auth.type };
           if (updates.auth.config) Object.assign(authObj, updates.auth.config);
           yamlReq.http.auth = authObj as YamlAuth;
+        }
+        if (updates.query) {
+          yamlReq.http.params = replaceQueryParams(
+            yamlReq.http.params,
+            queryToYamlParams(updates.query),
+          );
         }
 
         const updatedContent = generateYamlRequest(yamlReq);
@@ -417,9 +462,14 @@ export class RequestBuilder {
       bruFile.headers = input.headers;
     }
 
-    // Add query parameters if provided
+    // Add query parameters if provided.
+    //
+    // These must go on `params`: that is the field the .bru writer serializes
+    // (as a `params:query` block) and the field the executor applies. An earlier
+    // version stored them on a `query` field that nothing ever wrote out, so a
+    // request created with query params landed on disk without them.
     if (input.query && Object.keys(input.query).length > 0) {
-      bruFile.query = input.query;
+      bruFile.params = queryToBruParams(input.query);
     }
 
     // Add body if provided
@@ -516,9 +566,7 @@ export class RequestBuilder {
 
     // Add query params
     if (input.query && Object.keys(input.query).length > 0) {
-      yamlRequest.http.params = Object.entries(input.query).map(
-        ([name, value]) => ({ name, value: String(value), type: 'query' as const }),
-      );
+      yamlRequest.http.params = queryToYamlParams(input.query);
     }
 
     // Add auth
@@ -629,6 +677,10 @@ export class RequestBuilder {
 
     if (updates.headers) {
       updated.headers = { ...updated.headers, ...updates.headers };
+    }
+
+    if (updates.query) {
+      updated.params = replaceQueryParams(updated.params, queryToBruParams(updates.query));
     }
 
     if (updates.body) {
