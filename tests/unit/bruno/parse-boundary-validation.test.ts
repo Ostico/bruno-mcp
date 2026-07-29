@@ -1,5 +1,5 @@
 /**
- * The parse boundary must not assert its way past unvalidated file data (Q17a).
+ * The parse boundary must not assert its way past unvalidated file data.
  *
  * HttpMethod, BodyType and AuthType are closed unions, but both parsers reached
  * them with a bare `as`: bru-parser did
@@ -38,7 +38,7 @@ const bru = (block: string): string => `meta {
 ${block}
 `;
 
-describe('yaml parse boundary rejects out-of-union values (Q17a)', () => {
+describe('yaml parse boundary rejects out-of-union values', () => {
   it('rejects a method that is not an HTTP method', () => {
     expect(() => parseYamlRequest(yaml('  method: BOGUS\n  url: https://api.test/'))).toThrow(
       BrunoError,
@@ -93,13 +93,13 @@ describe('yaml parse boundary rejects out-of-union values (Q17a)', () => {
   });
 });
 
-describe('bru parse boundary rejects out-of-union values (Q17a)', () => {
+describe('bru parse boundary rejects out-of-union values', () => {
   // Deliberately NOT validated against BodyType/AuthType. A .bru file uses
   // Bruno's own vocabulary — multipartForm, formUrlEncoded, sparql, inherit —
   // which is a different set from those unions, so rejecting anything outside
   // them would refuse valid Bruno collections. Validating here was tried and
   // broke six suites on real fixtures. The underlying mismodelling (the field
-  // is declared BodyType and holds Bruno tokens) is tracked as D16.
+  // is declared BodyType and holds Bruno tokens) is left unfixed here.
   it.each(['multipartForm', 'formUrlEncoded', 'sparql', 'json', 'none'])(
     'accepts Bruno body vocabulary %s unchanged',
     (body) => {

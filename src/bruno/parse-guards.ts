@@ -1,5 +1,5 @@
 /**
- * Checked conversions from file data into the closed unions (finding Q17a).
+ * Checked conversions from file data into the closed unions.
  *
  * HttpMethod, BodyType and AuthType are unions, but the parsers used to reach
  * them with a bare `as`. A type assertion is a claim, not a check: whatever
@@ -15,7 +15,9 @@
  * .bru file carries Bruno's own vocabulary (`multipartForm`, `formUrlEncoded`,
  * `sparql`, `inherit`), which is a different set from BodyType/AuthType.
  * Validating those against these unions was tried and rejected six suites'
- * worth of real fixtures. That mismodelling is tracked as D16.
+ * worth of real fixtures. That mismodelling is left alone here: correcting it
+ * means retyping BruHttpRequest.body/auth to Bruno's own vocabulary and
+ * reworking the generator and round-trip with it.
  *
  * Where a guard does apply, an unknown value is rejected rather than coerced: a
  * wrong request that looks successful is harder to diagnose than a refusal

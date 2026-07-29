@@ -353,9 +353,9 @@ settings:
     it('applies defaults for missing optional fields', () => {
       const result = parseYamlRequest(DEFAULTS_REQUEST_YAML);
       expect(result.info.name).toBe('');
-      // A missing method now defaults to GET rather than the empty string
-      // (Q17a). '' was never an HttpMethod, and the .bru parser already
-      // defaulted to GET for the same missing field — this aligns the two.
+      // A missing method now defaults to GET rather than the empty string.
+      // '' was never an HttpMethod, and the .bru parser already defaulted to
+      // GET for the same missing field — this aligns the two.
       expect(result.http.method).toBe('GET');
       expect(result.http.url).toBe('');
       expect(result.http.headers).toEqual([{ name: '', value: '' }]);

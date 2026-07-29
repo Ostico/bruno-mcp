@@ -68,7 +68,7 @@ export function parseBruRequest(content: string): BruFile {
     if (!isNaN(seq)) meta.seq = seq;
   }
 
-  // Checked, not asserted: the block name is whatever the file contained (Q17a).
+  // Checked, not asserted: the block name is whatever the file contained.
   const method = toHttpMethod(json.http?.method);
   const http: BruHttpRequest = {
     method,
@@ -77,7 +77,8 @@ export function parseBruRequest(content: string): BruFile {
     // Bruno's own vocabulary (`multipartForm`, `formUrlEncoded`, `sparql`,
     // `inherit`), which is a different set from these unions. The `as` below is
     // therefore a known-false claim, left in place because correcting it means
-    // retyping BruHttpRequest and reworking the generator — tracked as D16.
+    // retyping BruHttpRequest and reworking the generator and round-trip with
+    // it — a larger change than this parse guard, and not attempted here.
     body: (json.http?.body ?? 'none') as BodyType,
     auth: (json.http?.auth ?? 'none') as AuthType,
   };

@@ -117,7 +117,7 @@ function parseBody(raw: unknown): YamlBody | undefined {
 
   return {
     // Validated even though YamlBody.type is declared string: this is the value
-    // that later becomes a BodyType, and checking it here names the field (Q17a).
+    // that later becomes a BodyType, and checking it here names the field.
     type: toBodyType(obj.type),
     data,
   };
@@ -136,7 +136,7 @@ function parseAuth(raw: unknown): YamlAuth | undefined {
 function parseHttpSection(raw: Record<string, unknown>): YamlHttp {
   const http: YamlHttp = {
     // Checked, not asserted; an absent method is GET, matching the .bru parser
-    // rather than the empty string this used to produce (Q17a).
+    // rather than the empty string this used to produce.
     method: toHttpMethod(raw.method),
     url: String(raw.url ?? ''),
     headers: parseHeaders(raw.headers),
