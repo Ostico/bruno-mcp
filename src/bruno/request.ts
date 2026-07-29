@@ -30,6 +30,7 @@ import {
   BruFileError,
   HttpMethod,
   AuthType,
+  BruAuthMode,
   BodyType
 } from './types.js';
 import { MultipartFormPart } from './types.js';
@@ -90,6 +91,30 @@ function queryToYamlParams(query: NonNullable<CreateRequestInput['query']>): Yam
 function replaceQueryParams<T extends { type?: string }>(existing: T[] | undefined, fresh: T[]): T[] {
   const paths = (existing ?? []).filter((param) => param.type === 'path');
   return [...paths, ...fresh];
+}
+
+/**
+ * The auth mode token as Bruno spells it in the method block.
+ *
+ * Only api-key differs: the block is `auth:apikey`, so the mode has to be
+ * `apikey` too or the two do not agree and Bruno applies no auth at all. The
+ * tool surface keeps the hyphenated name, which is only ours.
+ */
+function toBruAuthMode(type: AuthType | undefined): BruAuthMode {
+  if (!type) return 'none';
+  return type === 'api-key' ? 'apikey' : type;
+}
+
+/**
+ * Bruno's api-key placement, from either spelling.
+ *
+ * Bruno's vocabulary is `header` / `queryparams`; this server used to say
+ * `header` / `query`. Callers may pass either, and the legacy one is translated
+ * rather than written through.
+ */
+function toBruApiKeyPlacement(config: Record<string, string>): 'header' | 'queryparams' {
+  const raw = config.placement ?? config.in;
+  return raw === 'queryparams' || raw === 'query' ? 'queryparams' : 'header';
 }
 
 /** The mirror of replaceQueryParams: swap the path entries, keep the query ones. */
@@ -562,13 +587,16 @@ export class RequestBuilder {
       meta: {
         name: input.name,
         type: 'http',
-        seq: input.sequence
+        // Absent has to mean an absent KEY, not a key holding undefined:
+        // upstream's serializer writes `${key}: ${meta[key]}` for everything
+        // present, so leaving it here emits the literal text "seq: undefined".
+        ...(input.sequence !== undefined ? { seq: input.sequence } : {})
       },
       http: {
         method: input.method,
         url: input.url,
         body: input.body?.type || 'none',
-        auth: input.auth?.type || 'none'
+        auth: toBruAuthMode(input.auth?.type)
       }
     };
 
@@ -648,7 +676,7 @@ export class RequestBuilder {
           bruFile.auth.apikey = {
             key: input.auth.config.key || 'X-API-Key',
             value: input.auth.config.value || '{{apiKey}}',
-            in: (input.auth.config.in as 'header' | 'query') || 'header'
+            placement: toBruApiKeyPlacement(input.auth.config)
           };
           break;
       }
@@ -854,7 +882,7 @@ export class RequestBuilder {
     }
 
     if (updates.auth) {
-      updated.http.auth = updates.auth.type;
+      updated.http.auth = toBruAuthMode(updates.auth.type);
       updated.auth = {
         type: updates.auth.type
       };
@@ -879,7 +907,7 @@ export class RequestBuilder {
           updated.auth.apikey = {
             key: config.key || 'X-API-Key',
             value: config.value || '{{apiKey}}',
-            in: (config.in as 'header' | 'query') || 'header'
+            placement: toBruApiKeyPlacement(config)
           };
           break;
       }

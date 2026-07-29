@@ -7,6 +7,15 @@ export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 
 
 export type AuthType = 'none' | 'bearer' | 'basic' | 'oauth2' | 'api-key' | 'digest';
 
+/**
+ * An auth mode as it appears in a `.bru` file on disk.
+ *
+ * Bruno spells the api-key mode `apikey`, matching its `auth:apikey` block, so a
+ * parsed or generated file carries that token while the tool surface keeps the
+ * hyphenated `api-key`. Both have to be readable; only `apikey` is written.
+ */
+export type BruAuthMode = AuthType | 'apikey';
+
 // 'multipart-form' is the block name used by the .bru wire format (see the
 // `body:multipart-form {` block emitted by the generator); 'form-data' is the
 // equivalent name used on the MCP-facing side. Both reach BodyType at runtime,
@@ -62,12 +71,12 @@ export interface BruHttpRequest {
   method: HttpMethod;
   url: string;
   body: BodyType;
-  auth: AuthType;
+  auth: BruAuthMode;
 }
 
 // Authentication configurations
 export interface BruAuth {
-  type: AuthType;
+  type: BruAuthMode;
   bearer?: {
     token: string;
   };
@@ -90,7 +99,15 @@ export interface BruAuth {
   apikey?: {
     key: string;
     value: string;
-    in: 'header' | 'query';
+    /**
+     * Bruno's field and vocabulary — the only spelling that survives a file.
+     *
+     * This server used to write `in: header|query` instead. That was never
+     * readable: upstream's parser maps the block's known keys and discards the
+     * rest, so `in` came back missing and the placement silently defaulted.
+     * The legacy name is still accepted as tool INPUT and translated here.
+     */
+    placement?: 'header' | 'queryparams';
   };
   digest?: {
     username: string;
