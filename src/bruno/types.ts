@@ -11,11 +11,22 @@ export type AuthType = 'none' | 'bearer' | 'basic' | 'oauth2' | 'api-key' | 'dig
 // `body:multipart-form {` block emitted by the generator); 'form-data' is the
 // equivalent name used on the MCP-facing side. Both reach BodyType at runtime,
 // so both belong in the union.
+//
+// Every member here is a kebab-case block name. Bruno spells the type in
+// camelCase inside the `http` block (`body: formUrlEncoded`, `body:
+// multipartForm`) while naming the body block in kebab-case
+// (`body:form-urlencoded {`), so parseBruRequest normalizes the camelCase
+// spelling to the member below before it reaches this type. Without that
+// normalization the declared type was a false claim: raw values like
+// 'formUrlEncoded' flowed through a field annotated BodyType, which is what
+// concealed the form-urlencoded and graphql bodies being dropped on the way to
+// the wire.
 export type BodyType =
   | 'none'
   | 'json'
   | 'text'
   | 'xml'
+  | 'sparql'
   | 'graphql'
   | 'form-data'
   | 'multipart-form'
@@ -409,9 +420,28 @@ export interface YamlHeader {
   disabled?: boolean;
 }
 
+export interface FormUrlEncodedPart {
+  name: string;
+  value: string;
+  /** A pair the author switched off. It must round-trip and must not be sent. */
+  enabled?: boolean;
+}
+
 export interface YamlBody {
   type: string;
-  data?: string | MultipartFormPart[];
+  /**
+   * Discriminated by `type`, the way multipart already is: a string for the
+   * textual bodies, pairs for 'form-urlencoded', an envelope for 'graphql'.
+   *
+   * Structured bodies stay parsed all the way to buildFetchOptions instead of
+   * being serialized here. Serializing early and substituting afterwards is a
+   * correctness trap: a string body has `{{var}}` substituted into it at send
+   * time, so a variable whose value contains `&` or `=` would splice extra
+   * fields into an already-encoded form body, and one containing `"` would
+   * break an already-stringified JSON envelope. Encoding after substitution is
+   * the only order that cannot forge structure.
+   */
+  data?: string | MultipartFormPart[] | FormUrlEncodedPart[] | BruGraphql;
 }
 
 export type YamlAuth =
