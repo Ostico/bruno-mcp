@@ -77,8 +77,22 @@ interface SandboxJob {
   timeout: number;              // already resolved; the worker applies no default
   request?: MockRequestData;    // present when kind === 'pre-request'
   response?: MockResponseData;  // present when kind === 'test'
+  variables?: Record<string, unknown>;   // env/collection vars the script may read
+  assertions?: SandboxAssertion[];       // declared assert entries; kind === 'test'
 }
 ```
+
+`variables` and `assertions` are plain JSON-serialisable data in both directions:
+the worker treats `variables` as values to seed into the sandbox's read store,
+never as anything to execute, and `assertions` carry a left-hand expression plus
+raw operand text. A `script` may be empty when `assertions` is not — a request
+that declares assertions and no post-response script is still a job, and gating
+the fork on the script alone is what once left such assertions unevaluated.
+
+Disabled assertions never cross. Both authoring formats spell the switched-off
+flag with opposite polarity, so the polarity is resolved before the job is built
+and only enabled entries are sent — nothing on the worker side can evaluate or
+report a check the author turned off.
 
 ### Worker → parent: `SandboxJobResult`
 

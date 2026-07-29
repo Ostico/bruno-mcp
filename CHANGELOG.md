@@ -38,6 +38,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`assert` blocks are now evaluated.** They were parsed by both formats and
+  written back faithfully, and never checked. A run reported **zero assertions and
+  looked green** while every declared check was ignored — the worst shape a test
+  failure can take, because nothing signals that nothing was verified. The
+  sandbox's own warning text already described the symptom.
+
+  Each assertion is evaluated in the same isolated context as the post-response
+  script, where `res`, `req` and `bru` already exist, and reports one result of its
+  own. Semantics follow Bruno's assertion runtime rather than a fresh
+  interpretation of what the fields ought to mean:
+
+  - The `value` field parses as `<operator> <operand>` across 30 operators, 13 of
+    them unary. An unrecognised first token means the operator is `eq` and the
+    whole string is the operand, which is what makes a bare `200` work.
+  - `isTruthy` and `isFalsy` compare strictly against `true` and `false`. The
+    names suggest truthiness; upstream does not implement it that way, and matching
+    upstream matters more than matching the name.
+  - `isJson` asks whether the value already **is** an object or array. A JSON
+    *string* is deliberately not json.
+  - The operand is coerced before comparison: `true`/`false`/`null`/`undefined`
+    become those values, a quoted operand becomes its raw inner text, a numeric
+    operand becomes a number — except past `Number.MAX_SAFE_INTEGER`, where the
+    string is kept because the number would be altered — and anything else is
+    evaluated as a template literal, so a bare word is a string rather than an
+    error.
+
+  Assertions the author switched off are neither evaluated nor reported. The two
+  formats spell that flag with opposite polarity (`enabled` vs `disabled`), and
+  here the cost of getting it wrong is higher than for parameters: it would run
+  precisely the checks that were turned off and report their failures as the
+  request's.
+
+  A malformed assertion fails only itself. Each one is evaluated independently, so
+  a bad expression cannot abort the remaining assertions or the post-response
+  script.
+
+  Most importantly, the sandbox is now invoked when a request declares assertions
+  **but has no post-response script**. It was previously entered only when a script
+  existed, so that case could not have worked however correct the evaluation was.
+
+- The sandbox's `expect()` now supports the matchers ordinary chai usage expects:
+  numeric comparisons under every common spelling (`above`/`gt`/`greaterThan` and
+  the other three), `oneOf`, `match`, `startWith`, `endWith`, `within`, `json`, and
+  the negations of each. Previously a post-response script written with
+  `expect(x).to.match(/re/)` or `.to.be.within(1, 5)` failed as an unsupported
+  matcher, even though the assertion was perfectly ordinary.
+
+  Two details are deliberate. A comparison against a non-number throws rather than
+  answering false, because JavaScript answers false for every ordering against a
+  non-number and under negation that would read as a pass. And `match` uses
+  `String.search` rather than `RegExp.test`, since a caller-supplied `/re/g`
+  carries `lastIndex` between calls and the same assertion would otherwise pass and
+  then fail.
+
+  The guard that throws on an unrecognised matcher is unchanged: it is what keeps a
+  typo from becoming a silent pass.
+
 - `settings.encodeUrl` is now honoured, and URL encoding matches Bruno.
 
   The setting was parsed and preserved by both formats and read by nothing, while
@@ -136,12 +193,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Known gaps
 
-These features are still parsed, persisted and round-tripped without being
-applied at execution time. None is newly broken; they are recorded here so they
-are not mistaken for working:
+One feature is still parsed, persisted and round-tripped without being applied at
+execution time. It is not newly broken; it is recorded here so it is not mistaken
+for working:
 
-- **`assert` blocks are never evaluated**, in either format. A run reports zero
-  assertions rather than checking the ones the collection declares.
 - **`vars:pre-request` and `vars:post-response` are never applied.**
 
 Auth is not in this category — unapplied types warn explicitly, and

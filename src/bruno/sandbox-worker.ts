@@ -1,7 +1,21 @@
 import vm from 'node:vm';
-import { TestResult, MockResponseData, MockRequestData, ScriptResult, PreRequestScriptResult, RequestMutations } from './types.js';
+import { TestResult, MockResponseData, MockRequestData, ScriptResult, PreRequestScriptResult, RequestMutations, SandboxAssertion } from './types.js';
+import { describeSandboxError, isTimeoutMessage } from './sandbox-errors.js';
+import {
+  detectDoubleParse,
+  detectUnreportedAssertions,
+} from './sandbox-diagnostics.js';
+import {
+  SANDBOX_ASSERT_LIB,
+  buildAssertPlansScript,
+  planAssertion,
+  runAssertionsInContext,
+} from './sandbox-assert.js';
 
 export type { TestResult, ScriptResult, PreRequestScriptResult } from './types.js';
+// Re-exported so importers that reach for these through the sandbox keep their
+// import path; the implementations live beside the sandbox rather than in it.
+export { detectDoubleParse, detectUnreportedAssertions } from './sandbox-diagnostics.js';
 
 export const DEFAULT_TIMEOUT = 5000;
 
@@ -45,6 +59,14 @@ var expect = (function() {
     if (Array.isArray(val)) return 'Array(' + val.length + ')';
     if (typeof val === 'object') return JSON.stringify(val);
     return String(val);
+  }
+
+  // stringify() reduces an array to its length, which is useless when the array
+  // IS the expectation — a failing .oneOf has to name the candidates it rejected.
+  function stringifyList(list) {
+    var parts = [];
+    for (var i = 0; i < list.length; i++) { parts.push(stringify(list[i])); }
+    return '[' + parts.join(', ') + ']';
   }
 
   function Assertion(val) {
@@ -119,17 +141,86 @@ var expect = (function() {
   beProto.a = function(type) { typeCheck(this._val, type); };
   beProto.an = function(type) { typeCheck(this._val, type); };
 
-  // --- .below(n) / .above(n) ---
-  beProto.below = function(n) {
-    if (typeof this._val !== 'number' || this._val >= n) {
-      throw new AssertionError('expected ' + stringify(this._val) + ' to be below ' + n);
-    }
+  // --- numeric comparisons: four checks, many spellings ---
+  // Bruno's assert runtime emits greaterThan/greaterThanOrEqual/lessThan/
+  // lessThanOrEqual; hand-written scripts reach for chai's above/below/at.least/
+  // at.most or the short gt/gte/lt/lte. Aliasing every spelling onto one
+  // implementation is what stops the spellings drifting apart.
+  var numericChecks = {
+    above: { holds: function(v, n) { return v > n; }, label: 'above', aliases: ['gt', 'greaterThan'] },
+    below: { holds: function(v, n) { return v < n; }, label: 'below', aliases: ['lt', 'lessThan'] },
+    least: { holds: function(v, n) { return v >= n; }, label: 'at least', aliases: ['gte', 'greaterThanOrEqual'] },
+    most: { holds: function(v, n) { return v <= n; }, label: 'at most', aliases: ['lte', 'lessThanOrEqual'] }
   };
-  beProto.above = function(n) {
-    if (typeof this._val !== 'number' || this._val <= n) {
-      throw new AssertionError('expected ' + stringify(this._val) + ' to be above ' + n);
+  // A non-number cannot be ordered, and JS answers false for every comparison
+  // against one — including under negation, where false would read as a pass.
+  function requireNumbers(vals, description) {
+    for (var i = 0; i < vals.length; i++) {
+      if (typeof vals[i] !== 'number') { throw new AssertionError(description + ', but ' + stringify(vals[i]) + ' is not a number'); }
     }
-  };
+  }
+  function numericAssert(key, val, n, negated) {
+    var check = numericChecks[key];
+    var description = 'expected ' + stringify(val) +
+      (negated ? ' to not be ' : ' to be ') + check.label + ' ' + stringify(n);
+    requireNumbers([val, n], description);
+    var holds = check.holds(val, n);
+    if (negated ? holds : !holds) { throw new AssertionError(description); }
+  }
+
+  // --- .oneOf(list) ---
+  function oneOfAssert(val, list, negated) {
+    if (!Array.isArray(list)) { throw new AssertionError('oneOf expects an array of candidates, but got ' + stringify(list)); }
+    var found = false;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] === val) { found = true; break; }
+    }
+    if (negated ? found : !found) {
+      throw new AssertionError('expected ' + stringify(val) +
+        (negated ? ' to not be one of ' : ' to be one of ') + stringifyList(list));
+    }
+  }
+
+  // --- .within(min, max), inclusive of both bounds ---
+  function withinAssert(val, min, max, negated) {
+    var description = 'expected ' + stringify(val) +
+      (negated ? ' to not be within ' : ' to be within ') + stringify(min) + '..' + stringify(max);
+    requireNumbers([val, min, max], description);
+    var holds = val >= min && val <= max;
+    if (negated ? holds : !holds) { throw new AssertionError(description); }
+  }
+
+  // --- .match(regexp) ---
+  // The target is coerced rather than required to be a string, matching chai:
+  // Bruno's matches operator feeds in the raw left-hand side, often a status code
+  // that scripts test against /^2/. .search, not .test, because a caller-supplied
+  // /re/g carries lastIndex between calls, so one assertion would pass then fail.
+  function matchAssert(val, re, negated) {
+    if (!(re instanceof RegExp)) { throw new AssertionError('match expects a regular expression, but got ' + stringify(re)); }
+    var holds = String(val).search(re) !== -1;
+    if (negated ? holds : !holds) {
+      throw new AssertionError('expected ' + stringify(val) +
+        (negated ? ' to not match ' : ' to match ') + String(re));
+    }
+  }
+
+  // --- .startWith(str) / .endWith(str) ---
+  function affixAssert(val, affix, atEnd, negated) {
+    var verb = atEnd ? 'end with' : 'start with';
+    // Affixes are only defined on strings, and answering "no affix" for a
+    // non-string would let the negated form report a pass.
+    if (typeof val !== 'string' || typeof affix !== 'string') {
+      throw new AssertionError('expected ' + stringify(val) + ' to ' + verb + ' ' + stringify(affix) +
+        ', but both must be strings (got ' + typeOf(val) + ' and ' + typeOf(affix) + ')');
+    }
+    var holds = atEnd
+      ? val.slice(val.length - affix.length) === affix
+      : val.slice(0, affix.length) === affix;
+    if (negated ? holds : !holds) {
+      throw new AssertionError('expected ' + stringify(val) +
+        (negated ? ' to not ' : ' to ') + verb + ' ' + stringify(affix));
+    }
+  }
 
   // --- property-style matchers: .true/.false/.null/.undefined/.ok/.empty ---
   // These are read as properties rather than called as methods, so they have to
@@ -141,13 +232,23 @@ var expect = (function() {
     if (v !== null && typeof v === 'object') return Object.keys(v).length === 0;
     return false;
   }
+  // .to.be.json does NOT parse a string. Bruno's own isJson assertion checks the
+  // value is already a plain object or an array — what res.getBody() yields for a
+  // JSON response — so a JSON *string* is deliberately not json here. Mirrors
+  // Bruno rather than the name's intuitive reading. Object.prototype.toString
+  // rather than a constructor check because this vm realm has its own Object.
+  function isJsonVal(v) {
+    return typeof v === 'object' && v !== null &&
+      (Array.isArray(v) || Object.prototype.toString.call(v) === '[object Object]');
+  }
   var propertyMatchers = {
     'true': function(v) { return v === true; },
     'false': function(v) { return v === false; },
     'null': function(v) { return v === null; },
     'undefined': function(v) { return v === undefined; },
     'ok': function(v) { return !!v; },
-    'empty': isEmptyVal
+    'empty': isEmptyVal,
+    'json': isJsonVal
   };
   function definePropertyMatchers(target, getVal, negated) {
     Object.keys(propertyMatchers).forEach(function(name) {
@@ -165,6 +266,44 @@ var expect = (function() {
         }
       });
     });
+  }
+
+  // Matchers reachable through .to.be / .to.not.be. Defined from one place for
+  // both polarities so a matcher can never exist in the affirmative chain while
+  // its negation falls through to the unknown-matcher guard.
+  function defineBeMethods(target, getVal, negated) {
+    Object.keys(numericChecks).forEach(function(key) {
+      var spellings = [key].concat(numericChecks[key].aliases);
+      spellings.forEach(function(name) {
+        target[name] = function(n) { numericAssert(key, getVal(), n, negated); };
+      });
+    });
+    target.oneOf = function(list) { oneOfAssert(getVal(), list, negated); };
+    target.within = function(min, max) { withinAssert(getVal(), min, max, negated); };
+    // chai's "at" carries no assertion of its own; it exists so .to.be.at.least(2)
+    // reads as English. Guarded like every other chain object so a typo after it
+    // still throws rather than reading as undefined.
+    Object.defineProperty(target, 'at', {
+      enumerable: true,
+      get: function() {
+        var at = Object.create(null);
+        at.least = target.least;
+        at.most = target.most;
+        return guardChain(at, negated ? 'to.not.be.at' : 'to.be.at');
+      }
+    });
+  }
+
+  // String-shape matchers, which chai exposes on .to directly rather than under
+  // .to.be. Both chai-string spellings are registered: Bruno's assert runtime
+  // emits startWith/endWith, scripts written against chai-string's docs use
+  // startsWith/endsWith.
+  function defineStringMatchers(target, getVal, negated) {
+    target.match = function(re) { matchAssert(getVal(), re, negated); };
+    target.startWith = function(s) { affixAssert(getVal(), s, false, negated); };
+    target.startsWith = target.startWith;
+    target.endWith = function(s) { affixAssert(getVal(), s, true, negated); };
+    target.endsWith = target.endWith;
   }
 
   // Any accessor we do not implement must fail loudly. Returning undefined for an
@@ -195,14 +334,14 @@ var expect = (function() {
       chain.equal = function(e) { toProto.equal.call(self, e); };
       chain.contain = function(i) { toProto.contain.call(self, i); };
       chain.include = function(i) { toProto.include.call(self, i); };
+      defineStringMatchers(chain, function() { return self._val; }, false);
       // .to.be
       Object.defineProperty(chain, 'be', {
         get: function() {
           var be = Object.create(null);
           be.a = function(t) { beProto.a.call(self, t); };
           be.an = function(t) { beProto.an.call(self, t); };
-          be.below = function(n) { beProto.below.call(self, n); };
-          be.above = function(n) { beProto.above.call(self, n); };
+          defineBeMethods(be, function() { return self._val; }, false);
           definePropertyMatchers(be, function() { return self._val; }, false);
           return guardChain(be, 'to.be');
         }
@@ -258,6 +397,7 @@ var expect = (function() {
           }
           not.include = function(item) { notContainCheck(self._val, item); };
           not.contain = function(item) { notContainCheck(self._val, item); };
+          defineStringMatchers(not, function() { return self._val; }, true);
           // .to.not.have
           Object.defineProperty(not, 'have', {
             get: function() {
@@ -282,6 +422,7 @@ var expect = (function() {
                 }
               };
               notBe.an = notBe.a;
+              defineBeMethods(notBe, function() { return self._val; }, true);
               definePropertyMatchers(notBe, function() { return self._val; }, true);
               return guardChain(notBe, 'to.not.be');
             }
@@ -343,6 +484,18 @@ res.getHeader = function(name) {
 };
 res.getBody = function() { return __resData.body; };
 res.getResponseTime = function() { return __resData.responseTime; };
+
+// Bruno's response object carries the same five values as plain properties as
+// well as getters, and a declared assert block reaches for the properties:
+// "res.status: eq 200", not "res.getStatus(): eq 200". Without these, every
+// property-style left-hand side reads undefined and the assertion is judged
+// against nothing. Scripts written against Bruno's docs (res.body.field) get
+// them too.
+res.status = __resData.status;
+res.statusText = __resData.statusText;
+res.headers = __resData.headers;
+res.body = __resData.body;
+res.responseTime = __resData.responseTime;
 
 var __pending = 0;
 
@@ -429,151 +582,6 @@ req.setHeader = function(name, value) {
 };
 req.setBody = function(body) { __reqMutations.body = body; };
 `;
-}
-
-/**
- * Blank out comments and string/template literals so brace-depth scanning is
- * not confused by braces or the word "expect" appearing inside them.
- * Characters are replaced with spaces to keep offsets stable.
- */
-function blankCommentsAndStrings(src: string): string {
-  const out = src.split('');
-  let i = 0;
-  const n = src.length;
-
-  while (i < n) {
-    const c = src[i];
-    const next = src[i + 1];
-
-    if (c === '/' && next === '/') {
-      while (i < n && src[i] !== '\n') out[i++] = ' ';
-      continue;
-    }
-    if (c === '/' && next === '*') {
-      out[i++] = ' ';
-      out[i++] = ' ';
-      while (i < n) {
-        if (src[i] === '*' && src[i + 1] === '/') {
-          out[i++] = ' ';
-          out[i++] = ' ';
-          break;
-        }
-        if (src[i] !== '\n') out[i] = ' ';
-        i++;
-      }
-      continue;
-    }
-    if (c === '"' || c === "'" || c === '`') {
-      const quote = c;
-      out[i++] = ' ';
-      while (i < n && src[i] !== quote) {
-        if (src[i] === '\\') {
-          out[i++] = ' ';
-          if (i < n && src[i] !== '\n') out[i++] = ' ';
-          continue;
-        }
-        if (src[i] !== '\n') out[i] = ' ';
-        i++;
-      }
-      if (i < n) out[i++] = ' ';
-      continue;
-    }
-    i++;
-  }
-
-  return out.join('');
-}
-
-/**
- * Count `expect(...)` calls that sit at brace depth 0 — i.e. outside any
- * test(description, callback) body. Only test() callbacks push into __results,
- * so a top-level assertion that passes is silently dropped from the report.
- */
-function countTopLevelAssertions(script: string): number {
-  const src = blankCommentsAndStrings(script);
-  let depth = 0;
-  let count = 0;
-
-  for (let i = 0; i < src.length; i++) {
-    const c = src[i];
-    if (c === '{' || c === '(' || c === '[') {
-      depth++;
-      continue;
-    }
-    if (c === '}' || c === ')' || c === ']') {
-      if (depth > 0) depth--;
-      continue;
-    }
-    if (depth !== 0) continue;
-
-    // Match the identifier `expect` followed by an opening paren
-    if (c === 'e' && src.startsWith('expect', i)) {
-      const before = i === 0 ? '' : src[i - 1];
-      if (before !== '' && /[A-Za-z0-9_$.]/.test(before)) continue;
-      let j = i + 'expect'.length;
-      while (j < src.length && /\s/.test(src[j])) j++;
-      if (src[j] === '(') {
-        count++;
-        // Step to just before the paren so it is still depth-counted below
-        i = j - 1;
-      }
-    }
-  }
-
-  return count;
-}
-
-/**
- * Build non-fatal warnings about assertions the report cannot show.
- *
- * @param script       The user script source
- * @param resultCount  How many test() blocks registered a result
- */
-export function detectUnreportedAssertions(
-  script: string,
-  resultCount: number,
-): string[] {
-  const bare = countTopLevelAssertions(script);
-  if (bare === 0) return [];
-
-  const plural = bare === 1 ? '' : 's';
-  const scope =
-    resultCount === 0
-      ? 'This run therefore reports zero assertions even though the request itself succeeded.'
-      : `Only the ${resultCount} test() block${resultCount === 1 ? '' : 's'} in this script are reported.`;
-
-  return [
-    `${bare} assertion${plural} ran outside a test() block and ${bare === 1 ? 'was' : 'were'} not recorded. ` +
-      `${scope} Wrap assertions so they appear in results: ` +
-      'test("descriptive name", function() { expect(res.getStatus()).to.equal(200); });',
-  ];
-}
-
-/**
- * Turn the SyntaxError from JSON.parse(res.getBody()) into an actionable hint.
- *
- * res.getBody() already returns parsed JSON (see ResponseWrapper), so parsing
- * it again stringifies the object to "[object Object]" first. The raw error
- * names neither getBody nor the double parse, so the cause is not guessable
- * from the message alone.
- *
- * @param message  The thrown error's message
- */
-export function detectDoubleParse(message: string): string[] {
-  const doubleParsed =
-    // Node 20+
-    message.includes('"[object Object]" is not valid JSON') ||
-    // Node 18
-    message.includes('Unexpected token o in JSON at position 1');
-
-  if (!doubleParsed) return [];
-
-  return [
-    'res.getBody() already returns parsed JSON when the response Content-Type is JSON, ' +
-      'so JSON.parse(res.getBody()) parses the string "[object Object]" and throws. ' +
-      'Access fields directly: res.getBody().field. If the endpoint can also return non-JSON, use: ' +
-      'const b = res.getBody(); const j = typeof b === "string" ? JSON.parse(b) : b;',
-  ];
 }
 
 /**
@@ -723,39 +731,6 @@ function extractBruVars(
 }
 
 /**
- * Turn a thrown value into a message without letting it run code on the host.
- *
- * A sandbox script can throw an object whose toString, Symbol.toPrimitive or
- * constructor getter throws, which would otherwise take out the error handler
- * that is trying to report it. Every access is guarded.
- *
- * Note the residual limit: a *spinning* getter still runs unbounded here,
- * because by this point the value is already on the host stack and no vm
- * timeout covers it. Only in-context capture could close that, which would
- * change the reported error format; it is tracked separately.
- */
-function describeSandboxError(error: unknown): { label: string; message: string } {
-  let label = 'Error';
-  try {
-    const name = (error as Error)?.constructor?.name;
-    if (typeof name === 'string' && name.length > 0) {
-      label = name;
-    }
-  } catch {
-    // keep the default label
-  }
-
-  try {
-    if (error instanceof Error) {
-      return { label, message: error.message };
-    }
-    return { label, message: String(error) };
-  } catch {
-    return { label, message: 'unknown sandbox error' };
-  }
-}
-
-/**
  * A unit of sandbox work, shaped so it survives a JSON / structured-clone round
  * trip. This is what will cross the process boundary to the forked worker in the
  * child-process migration (PR-b); the shape is frozen in
@@ -776,6 +751,12 @@ export interface SandboxJob {
    * data; the worker never treats it as anything but values to read back.
    */
   variables?: Record<string, unknown>;
+  /**
+   * Declared assertions to evaluate, present when kind is 'test'. Already
+   * filtered to the enabled ones by the caller: a disabled assertion never
+   * crosses, so nothing on this side can evaluate or report one.
+   */
+  assertions?: readonly SandboxAssertion[];
 }
 
 /** The worker's reply, discriminated by the same kind the job carried. */
@@ -848,9 +829,7 @@ export function runPreRequestJob(
     } catch (error: unknown) {
       const { label, message } = describeSandboxError(error);
 
-      const isTimeout =
-        message.includes('Script execution timed out') ||
-        message.includes('execution timed out');
+      const isTimeout = isTimeoutMessage(message);
 
       return {
         variables: context ? extractBruVars(context, timeout) : {},
@@ -917,8 +896,14 @@ export function runTestJob(
   response: MockResponseData,
   timeout: number,
   variables?: Record<string, unknown>,
+  assertions?: readonly SandboxAssertion[],
 ): ScriptResult {
-    if (!script || script.trim().length === 0) {
+    const plans = (assertions ?? []).map(planAssertion);
+    const hasScript = Boolean(script) && script.trim().length > 0;
+    // Declared assertions are work of their own: a request with assertions and no
+    // script must still reach the sandbox, or its checks are never evaluated and
+    // the run reports zero assertions while looking green.
+    if (!hasScript && plans.length === 0) {
       return { results: [], variables: {} };
     }
 
@@ -943,12 +928,13 @@ export function runTestJob(
           '\n' +
           buildSandboxSetupScript(response) +
           '\n' +
-          buildSeedVarsScript(variables),
+          buildSeedVarsScript(variables) +
+          '\n' +
+          SANDBOX_ASSERT_LIB +
+          '\n' +
+          buildAssertPlansScript(plans),
         { filename: 'bruno-sandbox-prelude.js' },
       );
-      const vmScript = new vm.Script(script, {
-        filename: 'bruno-test-script.js',
-      });
 
       // Create context with code generation disabled (blocks eval/Function).
       //
@@ -967,15 +953,29 @@ export function runTestJob(
 
       const started = Date.now();
       preludeScript.runInContext(context, { timeout });
-      const remaining = Math.max(1, timeout - (Date.now() - started));
-      vmScript.runInContext(context, { timeout: remaining });
+      const budget = (): number => Math.max(1, timeout - (Date.now() - started));
+
+      // Assertions first, and the script compiled only afterwards: a script that
+      // does not parse throws at compile time, and compiling it up front would
+      // mean a single typo in a script silently discarded every declared
+      // assertion the request had. The cost is that an assertion cannot observe a
+      // variable the post-response script sets — the reverse of Bruno's order,
+      // which runs the script first.
+      runAssertionsInContext(context, plans, budget);
+
+      if (hasScript) {
+        new vm.Script(script, { filename: 'bruno-test-script.js' }).runInContext(
+          context,
+          { timeout: budget() },
+        );
+      }
 
       // Extract results from sandbox — the only thing we read back.
       // __results holds only objects this file's own test() built, so unlike
       // the variable store it carries no script-supplied accessors.
       const rawResults =
         (vm.runInContext('__results', context, {
-          timeout: Math.max(1, timeout - (Date.now() - started)),
+          timeout: budget(),
         }) as SandboxTestResult[]) || [];
       const results: TestResult[] = rawResults.map(raw =>
         raw.status === 'pending'
@@ -994,8 +994,12 @@ export function runTestJob(
         .map(r => r.error)
         .filter(Boolean)
         .join('\n');
+      // The warning is about the SCRIPT's own test() blocks, so the declared
+      // assertions are subtracted back out: they lead the array, one entry each,
+      // and counting them would tell the author their script reported more
+      // blocks than it wrote.
       const warnings = [
-        ...detectUnreportedAssertions(script, results.length),
+        ...detectUnreportedAssertions(script, results.length - plans.length),
         ...detectDoubleParse(failureMessages),
       ];
       return {
@@ -1006,9 +1010,7 @@ export function runTestJob(
     } catch (error: unknown) {
       const { label, message } = describeSandboxError(error);
 
-      const isTimeout =
-        message.includes('Script execution timed out') ||
-        message.includes('execution timed out');
+      const isTimeout = isTimeoutMessage(message);
 
       const warnings = detectDoubleParse(message);
 
@@ -1069,6 +1071,7 @@ export function runJob(job: SandboxJob): SandboxJobResult {
       job.response as MockResponseData,
       job.timeout,
       job.variables,
+      job.assertions,
     ),
   };
 }

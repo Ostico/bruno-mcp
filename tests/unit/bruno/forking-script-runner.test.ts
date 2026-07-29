@@ -74,6 +74,33 @@ describe('createForkingScriptRunner', () => {
     expect(seenJob?.timeout).toBe(DEFAULT_TIMEOUT);
   });
 
+  it('forks for declared assertions even with no test script', async () => {
+    const reply: SandboxJobResult = {
+      kind: 'test',
+      result: { results: [{ description: 'res.status eq 200', status: 'pass' }], variables: {} },
+    };
+    const runner = jest.fn(async () => reply);
+    const r = createForkingScriptRunner('/built/worker.js', runner as never);
+
+    const assertions = [{ name: 'res.status', value: 'eq 200' }];
+    const out = await r.runScript('', response, { assertions });
+
+    expect(out).toEqual(reply.result);
+    expect(runner).toHaveBeenCalledTimes(1);
+    expect(runner.mock.calls[0][0]).toMatchObject({ kind: 'test', script: '', assertions });
+  });
+
+  it('still short-circuits when the assertion list is empty', async () => {
+    const runner = jest.fn();
+    const r = createForkingScriptRunner('/unused', runner as never);
+
+    await expect(r.runScript('  ', response, { assertions: [] })).resolves.toEqual({
+      results: [],
+      variables: {},
+    });
+    expect(runner).not.toHaveBeenCalled();
+  });
+
   it('delegates a non-empty test script to the worker transport', async () => {
     const reply: SandboxJobResult = {
       kind: 'test',
