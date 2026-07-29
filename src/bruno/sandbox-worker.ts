@@ -122,7 +122,11 @@ var expect = (function() {
   // --- .lengthOf(n) ---
   haveProto.lengthOf = function(n) {
     var actual = this._val;
-    var len = actual && actual.length !== undefined ? actual.length : undefined;
+    // actual != null, not a truthiness test: "" is falsy but does have a length,
+    // and treating it as lengthless made a "length 0" assertion on an empty
+    // string fail.
+    var len =
+      actual != null && typeof actual.length === 'number' ? actual.length : undefined;
     if (len === undefined || len !== n) {
       throw new AssertionError(
         'expected ' + stringify(actual) + ' to have length ' + n +
@@ -232,6 +236,26 @@ var expect = (function() {
     if (v !== null && typeof v === 'object') return Object.keys(v).length === 0;
     return false;
   }
+  // Emptiness is undefined for a value with no length, size or own keys, so chai
+  // THROWS for one instead of answering false, and a throw survives negation.
+  // That distinction is the whole assertion here: answering false would make
+  // .to.not.be.empty PASS on null, undefined or a number — reporting a missing
+  // field as having content, on the one matcher whose purpose is the opposite.
+  // Runs before the polarity branch for the same reason requireNumbers does.
+  function requireEmptyable(v) {
+    if (typeof v === 'string' || Array.isArray(v) || (v !== null && typeof v === 'object')) {
+      return;
+    }
+    if (typeof v === 'function') {
+      throw new AssertionError('.empty was passed a function');
+    }
+    throw new AssertionError('.empty was passed non-string primitive ' + stringify(v));
+  }
+  // Preconditions that must throw in BOTH polarities. Keyed by matcher name; a
+  // matcher with no entry is total over its input and needs none.
+  var propertyPreconditions = {
+    'empty': requireEmptyable
+  };
   // .to.be.json does NOT parse a string. Bruno's own isJson assertion checks the
   // value is already a plain object or an array — what res.getBody() yields for a
   // JSON response — so a JSON *string* is deliberately not json here. Mirrors
@@ -256,6 +280,7 @@ var expect = (function() {
         enumerable: true,
         get: function() {
           var v = getVal();
+          if (propertyPreconditions[name]) { propertyPreconditions[name](v); }
           var holds = propertyMatchers[name](v);
           if (negated ? holds : !holds) {
             throw new AssertionError(
@@ -408,7 +433,12 @@ var expect = (function() {
                   throw new AssertionError('expected ' + stringify(obj) + ' to not have property "' + name + '"');
                 }
               };
-              return notHave;
+              // Guarded like every sibling chain object. It was the one that
+              // was not, so an unknown matcher after to.not.have read undefined
+              // and passed silently — no declared operator reaches it, but a
+              // hand-written script can, and the guard's whole promise is that
+              // an unknown matcher fails loudly rather than reporting green.
+              return guardChain(notHave, 'to.not.have');
             }
           });
           // .to.not.be
@@ -471,6 +501,22 @@ function buildSandboxSetupScript(responseData: MockResponseData): string {
 
   return `
 var __results = [];
+
+// Serialised INSIDE the context, for the same reason the variable store is:
+// __results is a plain global, so sandboxed code can replace it with objects
+// carrying getters. Handing those to the host means the getters run on the host
+// stack after runInContext has returned — where the V8 interrupt no longer
+// applies, so a spinning getter hangs the host regardless of the timeout.
+// Stringifying here runs them under the timeout instead, and the host only ever
+// receives inert JSON. An unserialisable accumulator degrades to [] rather than
+// taking the run down.
+function __resultsJson() {
+  try {
+    return JSON.stringify(__results);
+  } catch (e) {
+    return '[]';
+  }
+}
 var __resData = JSON.parse(${JSON.stringify(resJson)});
 
 var res = Object.create(null);
@@ -855,23 +901,36 @@ const PENDING_NEVER_SETTLED =
  * registered a pending slot but never settled to a failure.
  *
  * Called from the catch path to preserve results already recorded before a
- * top-level throw: the outer catch used to return a single
- * synthetic failure, discarding every test() result the script had produced
- * before it threw. The success path reads __results with the same shape inline;
- * the two share PENDING_NEVER_SETTLED so the never-settled mapping cannot drift.
+ * top-level throw: the outer catch used to return a single synthetic failure,
+ * discarding every test() result the script had produced before it threw. The
+ * success path reads __results with the same shape inline; the two share
+ * PENDING_NEVER_SETTLED so the never-settled mapping cannot drift.
+ *
+ * Its reach narrowed when the post-response script gained its own error
+ * boundary: a script that throws is now recorded inline and never reaches the
+ * outer catch, so what is left here is a throw from the prelude (where
+ * __results does not exist yet, and this yields []) and a rethrown timeout
+ * (which the caller deliberately does not recover from). Kept because the read
+ * must stay defensive either way, and because it is the only path that can
+ * still salvage results if anything else between the prelude and the readback
+ * ever throws.
  *
  * The read is defensive: if the context never got far enough to define
  * __results (a compile error, or a throw inside the prelude), or the script
- * corrupted the accumulator, it yields []. __results holds only objects this
- * file's own test() built, so — unlike the variable store — it carries no
- * script-supplied accessors.
+ * corrupted the accumulator, it yields [].
+ *
+ * Read as JSON serialised in-context, exactly like the variable store, and for
+ * the same reason: __results is a plain global that sandboxed code can replace,
+ * so it can absolutely carry script-supplied accessors. Reading the array itself
+ * would run those getters on the host stack with the timeout already disarmed.
  */
 function readRecordedResults(context: vm.Context, budget: number): TestResult[] {
   try {
-    const rawResults =
-      (vm.runInContext('__results', context, {
+    const rawResults = (JSON.parse(
+      vm.runInContext('__resultsJson()', context, {
         timeout: Math.max(1, budget),
-      }) as SandboxTestResult[]) || [];
+      }) as string,
+    ) as SandboxTestResult[]) || [];
     return rawResults.map(raw =>
       raw.status === 'pending'
         ? {
@@ -898,7 +957,11 @@ export function runTestJob(
   variables?: Record<string, unknown>,
   assertions?: readonly SandboxAssertion[],
 ): ScriptResult {
-    const plans = (assertions ?? []).map(planAssertion);
+    // Variables are passed in so an operand's {{var}} resolves the way Bruno's
+    // assert runtime resolves it, against the same merged map the URL uses.
+    const plans = (assertions ?? []).map(assertion =>
+      planAssertion(assertion, variables),
+    );
     const hasScript = Boolean(script) && script.trim().length > 0;
     // Declared assertions are work of their own: a request with assertions and no
     // script must still reach the sandbox, or its checks are never evaluated and
@@ -955,28 +1018,50 @@ export function runTestJob(
       preludeScript.runInContext(context, { timeout });
       const budget = (): number => Math.max(1, timeout - (Date.now() - started));
 
-      // Assertions first, and the script compiled only afterwards: a script that
-      // does not parse throws at compile time, and compiling it up front would
-      // mean a single typo in a script silently discarded every declared
-      // assertion the request had. The cost is that an assertion cannot observe a
-      // variable the post-response script sets — the reverse of Bruno's order,
-      // which runs the script first.
-      runAssertionsInContext(context, plans, budget);
-
+      // Script first, then assertions — Bruno's order (bruno-cli's
+      // run-single-request finishes the post-response script before it calls
+      // runAssertions). It matters observably: an assertion on a variable the
+      // script sets, `bru.getVar("token"): isDefined`, passes in Bruno and would
+      // fail here if the assertions ran first.
+      //
+      // The script gets its own try so the order costs nothing in isolation: a
+      // script that does not even parse throws at compile time, and letting that
+      // reach the outer catch would discard every declared assertion the request
+      // had. Upstream behaves the same way — it records a script-error entry and
+      // runs the assertions regardless.
+      //
+      // A timeout is the exception and is rethrown: it force-terminates the
+      // context, so there is nothing left to evaluate assertions in.
+      let scriptError: { label: string; message: string } | undefined;
       if (hasScript) {
-        new vm.Script(script, { filename: 'bruno-test-script.js' }).runInContext(
-          context,
-          { timeout: budget() },
-        );
+        try {
+          new vm.Script(script, { filename: 'bruno-test-script.js' }).runInContext(
+            context,
+            { timeout: budget() },
+          );
+        } catch (error: unknown) {
+          const described = describeSandboxError(error);
+          // Corroborated against the clock: a script can throw the interrupt's
+          // exact wording, and rethrowing on the text alone would let it discard
+          // the declared assertions it is supposed to run alongside.
+          if (isTimeoutMessage(described.message) && budget() <= 1) {
+            throw error;
+          }
+          scriptError = described;
+        }
       }
 
-      // Extract results from sandbox — the only thing we read back.
-      // __results holds only objects this file's own test() built, so unlike
-      // the variable store it carries no script-supplied accessors.
-      const rawResults =
-        (vm.runInContext('__results', context, {
+      runAssertionsInContext(context, plans, budget);
+
+      // Extract results from sandbox — the only thing we read back. Serialised
+      // in-context like the variable store: __results is a writable global, so
+      // sandboxed code can leave getters on it, and reading the array directly
+      // would run them host-side once the timeout no longer applies.
+      const rawResults = (JSON.parse(
+        vm.runInContext('__resultsJson()', context, {
           timeout: budget(),
-        }) as SandboxTestResult[]) || [];
+        }) as string,
+      ) as SandboxTestResult[]) || [];
       const results: TestResult[] = rawResults.map(raw =>
         raw.status === 'pending'
           ? {
@@ -986,6 +1071,16 @@ export function runTestJob(
             }
           : (raw as TestResult),
       );
+      // A script that threw still reports, after whatever it and the assertions
+      // recorded. Same entry the outer catch would have produced — the only
+      // difference is that getting here means the assertions ran too.
+      if (scriptError) {
+        results.push({
+          description: 'Script error',
+          status: 'fail',
+          error: `${scriptError.label}: ${scriptError.message}`,
+        });
+      }
       // A double parse inside a test() block is caught by test() itself, so it
       // never reaches the outer catch — scan the recorded failures too. Only
       // failures carry an error, so filtering on it is the same as filtering
@@ -995,11 +1090,19 @@ export function runTestJob(
         .filter(Boolean)
         .join('\n');
       // The warning is about the SCRIPT's own test() blocks, so the declared
-      // assertions are subtracted back out: they lead the array, one entry each,
-      // and counting them would tell the author their script reported more
-      // blocks than it wrote.
+      // assertions are subtracted back out — one entry each — or the author is
+      // told their script reported more blocks than it wrote. Clamped at zero:
+      // __results is a writable global, so a script that reassigns it can leave
+      // fewer entries than there were plans, and a negative count would reach
+      // the warning text as "Only the -1 test() blocks ... are reported".
+      const scriptResultCount = Math.max(0, results.length - plans.length);
+      // Suppressed when the script threw: a bare assertion that throws IS
+      // reported, as the script error above, and telling the author it "ran
+      // outside a test() block and was not recorded" on top of that is noise.
+      // Before assertions ran after the script, a throwing script left through
+      // the outer catch and never reached this scan at all.
       const warnings = [
-        ...detectUnreportedAssertions(script, results.length - plans.length),
+        ...(scriptError ? [] : detectUnreportedAssertions(script, scriptResultCount)),
         ...detectDoubleParse(failureMessages),
       ];
       return {

@@ -45,11 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sandbox's own warning text already described the symptom.
 
   Each assertion is evaluated in the same isolated context as the post-response
-  script, where `res`, `req` and `bru` already exist, and reports one result of its
-  own. Semantics follow Bruno's assertion runtime rather than a fresh
-  interpretation of what the fields ought to mean:
+  script, where `res` and `bru` already exist, and reports one result of its own.
+  Semantics follow Bruno's assertion runtime rather than a fresh interpretation of
+  what the fields ought to mean:
 
-  - The `value` field parses as `<operator> <operand>` across 30 operators, 13 of
+  - The `value` field parses as `<operator> <operand>` across 28 operators, 12 of
     them unary. An unrecognised first token means the operator is `eq` and the
     whole string is the operand, which is what makes a bare `200` work.
   - `isTruthy` and `isFalsy` compare strictly against `true` and `false`. The
@@ -60,9 +60,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The operand is coerced before comparison: `true`/`false`/`null`/`undefined`
     become those values, a quoted operand becomes its raw inner text, a numeric
     operand becomes a number — except past `Number.MAX_SAFE_INTEGER`, where the
-    string is kept because the number would be altered — and anything else is
-    evaluated as a template literal, so a bare word is a string rather than an
-    error.
+    string is kept because the number would be altered — and anything else stays
+    the text it already is, so a bare word is a string rather than an error.
+    Upstream reaches that last case by evaluating the operand as a template
+    literal; the sandbox has code generation disabled, so it returns the text
+    directly instead. The two agree for every operand without a `${...}`
+    placeholder.
+  - `empty` throws for a value with no notion of emptiness (`null`, `undefined`, a
+    number, a boolean) rather than answering "not empty", because the throw is
+    what makes `isNotEmpty` fail on a missing field instead of passing.
+  - `between` splits its bounds on commas only. `between [200, 299]` is a failure,
+    not a range: upstream strips brackets for `in`/`notIn` alone, so the bounds
+    arrive as `[200` and `299]` and fail there too. Extra bounds are ignored
+    rather than rejected, because upstream takes the first two and drops the rest.
+  - A `{{var}}` operand is resolved against the same merged variable map the URL
+    is built from, so `eq {{expectedStatus}}` compares against the value. The
+    operand alone is interpolated, and only after the operator has been parsed
+    off: resolving the whole `value` first would let a variable's own text be read
+    as the operator, so a bare `{{v}}` holding `eq 200` stays an equality check
+    against the *string* `eq 200`, as upstream has it. An unresolved placeholder
+    is left as written, which is what makes a missing variable visible.
+
+  The post-response script runs **before** the assertions, as in Bruno, so an
+  assertion can observe a variable the script set. The script gets its own error
+  boundary, so a script that does not even parse no longer discards every declared
+  assertion — upstream records a script-error entry and runs the assertions too.
+
+  One consequence worth stating for anyone auditing an untrusted collection: a
+  request with an `assert` block and no `script:` block now executes JS from the
+  file where before it executed none. The trust boundary is unchanged — an
+  assertion's left-hand side is arbitrary JS at exactly the post-response script's
+  privilege — but "no `script:` blocks, so nothing runs" is no longer true.
+
+  Three hardening fixes came out of reviewing that surface:
+
+  - A left-hand side is compiled on its own before it is spliced, so it must
+    genuinely be one expression. The wrapper's parentheses were never a boundary:
+    an expression ending in `);` closed the call, and a trailing comment or a
+    rebalancing function expression absorbed the tail. This also fixes a plain
+    authoring case that used to fail — `res.status // why`.
+  - `__results` is serialised to JSON inside the sandbox and parsed outside, like
+    the variable store already was. It is a writable global, so sandboxed code
+    could leave getters on it that then ran on the host stack after the vm call
+    returned, with the timeout no longer applying.
+  - A timeout is corroborated against the clock rather than recognised from its
+    message text, which a collection can reproduce. Trusting the text let one
+    assertion discard every result already recorded and everything still to run.
 
   Assertions the author switched off are neither evaluated nor reported. The two
   formats spell that flag with opposite polarity (`enabled` vs `disabled`), and
@@ -198,6 +241,20 @@ execution time. It is not newly broken; it is recorded here so it is not mistake
 for working:
 
 - **`vars:pre-request` and `vars:post-response` are never applied.**
+
+Two limitations of declared assertions specifically, both recorded rather than
+left to be discovered:
+
+- **A bare variable name as the left-hand side is a `ReferenceError`, not
+  `undefined`.** Bruno spreads env/collection/runtime variables into the
+  expression scope, so `someVar: isUndefined` passes there; here it fails. Only
+  the `{{var}}` form and `bru.getVar("name")` resolve. Seeding arbitrary variable
+  names as context globals would risk shadowing `res`, `bru` and `expect`, so the
+  fix belongs in a per-expression scope rather than the shared context.
+- **No tool can author an `assert` block.** `create_request` and `modify_request`
+  expose no `assert` field, so evaluation reaches only collections written by
+  hand or by Bruno itself. An agent building a collection through this server
+  still has to use `test()` blocks in a post-response script.
 
 Auth is not in this category — unapplied types warn explicitly, and
 `auth: inherit` reports that collection-level inheritance is unsupported.

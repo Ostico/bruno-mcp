@@ -243,9 +243,10 @@ describe('RequestExecutor — declared assertions', () => {
   it('reports assertions and the post-response script together', async () => {
     const request = await runOne('Assert And Script.yml', YAML_ASSERT_AND_SCRIPT);
 
+    // Bruno's order: the post-response script finishes, then assertions run.
     expect(request.tests.map(t => t.description)).toEqual([
-      'res.status eq 200',
       'script also ran',
+      'res.status eq 200',
     ]);
     expect(request.tests.every(t => t.status === 'pass')).toBe(true);
   });
@@ -333,11 +334,13 @@ runtime:
 `,
     );
 
+    // Script first, then the assertions in declaration order — the malformed one
+    // fails in place without displacing or discarding its neighbours.
     expect(request.tests.map(t => [t.description, t.status])).toEqual([
+      ['script still ran', 'pass'],
       ['res.status eq 200', 'pass'],
       ['res.status === eq 200', 'fail'],
       ['res.body.id eq 7', 'pass'],
-      ['script still ran', 'pass'],
     ]);
   });
 });

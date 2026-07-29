@@ -392,28 +392,44 @@ export function parseAssertionOperator(value: string): ParsedAssertion {
 /**
  * Remove the optional `/.../` delimiters from a `matches` operand.
  *
- * Bruno accepts both `^ab+c$` and `/^ab+c$/`. Unlike Bruno, a lone `"/"` is
- * left alone: it starts and ends with a slash, so stripping both ends would
- * produce the empty pattern, and an empty pattern matches everything — an
- * assertion that can no longer fail. Returning it unchanged keeps it a regex
- * that means what it says.
+ * Bruno accepts both `^ab+c$` and `/^ab+c$/`, stripping whenever the operand
+ * starts and ends with a slash. A lone `"/"` satisfies both on the same
+ * character, so it strips to the empty pattern — which matches everything and
+ * yields an assertion that cannot fail. That is what Bruno does, and a runner
+ * that quietly turned it into a literal-slash match would report a different
+ * result than the collection does under Bruno.
  */
 export function stripRegexDelimiters(operand: string): string {
-  const delimited = operand.length > 1 && operand.startsWith('/') && operand.endsWith('/');
+  const delimited = operand.startsWith('/') && operand.endsWith('/');
   return delimited ? operand.slice(1, -1) : operand;
 }
 
 /**
- * Split an `in`/`notIn`/`between` operand into its elements.
+ * Split an `in`/`notIn` operand into its elements.
  *
- * Bruno accepts both `a, b` and `[a, b]`, splits on commas and trims each
- * element; the elements still need interpolating and evaluating, which is the
- * sandbox's job. Empty elements are kept, since Bruno maps over every split
- * result and an `a,,b` therefore carries three operands rather than two. As with
- * the regex delimiters, a lone `"["` is not treated as an empty list.
+ * Bruno accepts both `a, b` and `[a, b]` HERE ONLY: the bracket strip lives
+ * inside its `in`/`notIn` branch, so `between` does not get it (see
+ * splitOperandRange). Splits on commas and trims each element; the elements
+ * still need interpolating and evaluating, which is the sandbox's job. Empty
+ * elements are kept, since Bruno maps over every split result and an `a,,b`
+ * therefore carries three operands rather than two.
  */
 export function splitOperandList(operand: string): readonly string[] {
-  const bracketed = operand.length > 1 && operand.startsWith('[') && operand.endsWith(']');
+  const bracketed = operand.startsWith('[') && operand.endsWith(']');
   const inner = bracketed ? operand.slice(1, -1) : operand;
   return inner.split(',').map((element) => element.trim());
+}
+
+/**
+ * Split a `between` operand into its bounds.
+ *
+ * Commas only, no bracket strip — Bruno's bracket handling is scoped to the
+ * `in`/`notIn` branch, so `between [200, 299]` reaches it as the bounds `"[200"`
+ * and `"299]"`, both NaN, and FAILS there. Stripping the brackets here would
+ * turn a Bruno failure into a pass, which is the one outcome a collection runner
+ * must never invent. Extra bounds are dropped rather than rejected because
+ * upstream destructures the first two and ignores the rest.
+ */
+export function splitOperandRange(operand: string): readonly string[] {
+  return operand.split(',').map((element) => element.trim());
 }
