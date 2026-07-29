@@ -346,7 +346,11 @@ export function generateBruRequest(bruFile: BruFile): string {
     meta: {
       name: bruFile.meta.name,
       type: bruFile.meta.type ?? 'http',
-      seq: bruFile.meta.seq != null ? String(bruFile.meta.seq) : undefined,
+      // Spread, not `seq: undefined`. The serializer walks the KEYS of meta and
+      // writes `${key}: ${value}` for each, so a key holding undefined becomes
+      // the literal text "seq: undefined" — a value, and not a number. Absent
+      // has to mean absent.
+      ...(bruFile.meta.seq != null ? { seq: String(bruFile.meta.seq) } : {}),
     },
     http: {
       method: bruFile.http.method.toLowerCase(),

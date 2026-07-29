@@ -125,8 +125,23 @@ describe('bruAuthToYamlAuth (.bru auth reaches the executor)', () => {
   });
 
   it('flattens api-key with its placement', () => {
-    const auth: BruAuth = { type: 'api-key', apikey: { key: 'k', value: 'v', in: 'query' } };
+    // `placement` is the field a real file carries; the flattened `in` is our
+    // own internal spelling and stays as it was.
+    const auth: BruAuth = {
+      type: 'api-key',
+      apikey: { key: 'k', value: 'v', placement: 'queryparams' },
+    };
     expect(bruAuthToYamlAuth(auth)).toEqual({ type: 'api-key', key: 'k', value: 'v', in: 'query' });
+  });
+
+  it('flattens api-key when the file spells the mode Bruno’s way', () => {
+    // A request authored in Bruno arrives as `apikey`. Matching only the
+    // hyphenated name dropped the key and value and sent the request bare.
+    const auth: BruAuth = {
+      type: 'apikey',
+      apikey: { key: 'k', value: 'v', placement: 'header' },
+    };
+    expect(bruAuthToYamlAuth(auth)).toEqual({ type: 'api-key', key: 'k', value: 'v', in: 'header' });
   });
 
   it('carries oauth2 by type only so the executor can warn', () => {

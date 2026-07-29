@@ -461,8 +461,15 @@ describe('RequestBuilder', () => {
 
       expect(result.success).toBe(true);
       const generated = generateBruRequest.mock.calls.at(-1)[0];
-      expect(generated.auth.type).toBe('api-key');
-      expect(generated.auth.apikey).toEqual({ key: 'X-API-Key', value: 'value123', in: 'query' });
+      // The tool still accepts the legacy `in: query`; the FILE gets Bruno's
+      // spelling, `placement: queryparams`, which is the only one its parser
+      // keeps. The mode line goes out as `apikey` for the same reason.
+      expect(generated.http.auth).toBe('apikey');
+      expect(generated.auth.apikey).toEqual({
+        key: 'X-API-Key',
+        value: 'value123',
+        placement: 'queryparams',
+      });
     });
 
     it('should fall back to placeholders when auth config is missing on .bru modify', async () => {

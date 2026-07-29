@@ -239,12 +239,16 @@ export function bruAuthToYamlAuth(auth: BruFile['auth']): YamlAuth | undefined {
         username: auth.basic?.username ?? '',
         password: auth.basic?.password ?? '',
       };
+    // `apikey` is how Bruno itself spells the mode, so a file authored in Bruno
+    // arrives under that name. Matching only the hyphenated one dropped the key
+    // and value here and the request went out with no credential at all.
     case 'api-key':
+    case 'apikey':
       return {
         type: 'api-key',
         key: auth.apikey?.key ?? '',
         value: auth.apikey?.value ?? '',
-        in: auth.apikey?.in ?? 'header',
+        in: auth.apikey?.placement === 'queryparams' ? 'query' : 'header',
       };
     default:
       // oauth2, digest: carried by type only so buildFetchOptions can warn

@@ -62,6 +62,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The `.bru` files this server writes are now files Bruno can read.** Four
+  defects, all of them invisible to a parse-then-compare test because our own
+  parser is tolerant of our own malformed output. Each was found by reading the
+  bytes on disk and checking them against upstream's source.
+
+  - **`seq: undefined` was written into `meta`** whenever no sequence was given —
+    the common case. The guard was there (`seq: ... : undefined`) but upstream's
+    serializer walks the KEYS of `meta` and writes `${key}: ${value}` for each,
+    so a key holding `undefined` becomes that literal text. Worse, the truthy
+    string then suppressed Bruno's own `if (!meta.seq) meta.seq = 1` default. The
+    key is now omitted, and an absent seq reads back as `1` the way Bruno intends.
+  - **The method block said `auth: api-key`.** Bruno's token is `apikey`, matching
+    its `auth:apikey` block, so the block we correctly emitted was ignored and no
+    auth was applied. `api-key` remains the name on the tool surface, which is
+    only ours.
+  - **`placement` was never written.** We stored `in`, which upstream's serializer
+    does not read, so the field came out empty. It is now written with Bruno's
+    vocabulary (`header` / `queryparams`). The old `in` spelling is still accepted
+    as tool input and translated.
+  - **`placement` was never read**, and a request authored in Bruno reached the
+    executor as mode `apikey`, missed the `api-key`-only branch, and **lost its
+    key and value entirely** — the request went out with no credential while
+    warning "api-key auth has no key name" about a file that plainly had one.
+
+  Note there is no file-side back-compat to preserve for `in`: upstream's parser
+  keeps a block's known keys and discards the rest, so that field never survived
+  a read even for us. Files written with it were already resolving as `header`.
+
 - **`assert` blocks are now evaluated.** They were parsed by both formats and
   written back faithfully, and never checked. A run reported **zero assertions and
   looked green** while every declared check was ignored — the worst shape a test

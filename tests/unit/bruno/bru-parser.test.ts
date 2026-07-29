@@ -240,7 +240,15 @@ get {
       const reparsed = parseBruRequest(generated);
       expect(reparsed.http.body).toBe('none');
       expect(reparsed.http.auth).toBe('none');
-      expect(reparsed.meta.seq).toBeUndefined();
+      // An absent seq comes back as 1, which is Bruno's own default
+      // (bruToJson.js: `if (!meta.seq) meta.seq = 1`).
+      //
+      // This used to read undefined, and that was the bug rather than the
+      // contract: the generator emitted the literal text "seq: undefined",
+      // whose truthy string value stopped Bruno's default from firing and then
+      // failed our own parseInt. Omitting the key lets the default apply.
+      expect(generated).not.toContain('undefined');
+      expect(reparsed.meta.seq).toBe(1);
     });
 
     it('throws GENERATE_ERROR when the underlying generator fails', () => {
