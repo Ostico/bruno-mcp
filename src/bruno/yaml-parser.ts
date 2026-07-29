@@ -1,4 +1,5 @@
 import { parse as parseYaml } from 'yaml';
+import { toHttpMethod, toBodyType } from './parse-guards.js';
 import {
   BrunoError,
   type YamlRequest,
@@ -115,7 +116,9 @@ function parseBody(raw: unknown): YamlBody | undefined {
   }
 
   return {
-    type: String(obj.type ?? ''),
+    // Validated even though YamlBody.type is declared string: this is the value
+    // that later becomes a BodyType, and checking it here names the field (Q17a).
+    type: toBodyType(obj.type),
     data,
   };
 }
@@ -132,7 +135,9 @@ function parseAuth(raw: unknown): YamlAuth | undefined {
 
 function parseHttpSection(raw: Record<string, unknown>): YamlHttp {
   const http: YamlHttp = {
-    method: String(raw.method ?? '').toUpperCase(),
+    // Checked, not asserted; an absent method is GET, matching the .bru parser
+    // rather than the empty string this used to produce (Q17a).
+    method: toHttpMethod(raw.method),
     url: String(raw.url ?? ''),
     headers: parseHeaders(raw.headers),
     body: parseBody(raw.body),
