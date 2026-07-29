@@ -1,5 +1,5 @@
 /**
- * Shared machinery for the general round-trip fidelity guards (finding D10).
+ * Shared machinery for the general round-trip fidelity guards.
  *
  * A re-parse gate proves nothing. A writer that drops `docs`, reorders `seq` or
  * loses an oauth2 parameter still emits a file that parses cleanly, so "it

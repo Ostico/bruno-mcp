@@ -184,7 +184,7 @@ export function parseBruRequest(content: string): BruFile {
   }
 
   // Carry through the parts of the document the model used to drop, so editing
-  // one field does not delete the rest of the user's request (D5/D6).
+  // one field does not delete the rest of the user's request.
   const params = readParams(json.params);
   if (params.length > 0) bruFile.params = params;
 
@@ -211,7 +211,7 @@ function toLangVar(v: BruVar): Record<string, unknown> {
 }
 
 // ---------------------------------------------------------------------------
-// Round-trip preservation (findings D5 / D6)
+// Round-trip preservation
 //
 // `bruToJsonV2` and `jsonToBruV2` are not symmetric for oauth2 additional
 // parameters: the reader returns eight flat `oauth2_additional_parameters_*`
@@ -447,7 +447,7 @@ export function generateBruRequest(bruFile: BruFile): string {
   }
 
   // Write back the blocks the model now carries, so a read-modify-write keeps
-  // the parts of the request the caller never touched (D5/D6).
+  // the parts of the request the caller never touched.
   if (bruFile.params && bruFile.params.length > 0) {
     json.params = bruFile.params.map((p) => ({
       name: p.name,
@@ -579,7 +579,7 @@ export function parseBruEnvironmentRaw(content: string): EnvVariable[] {
 /**
  * Generate a .bru environment from a full variable list, preserving the
  * enabled/disabled state of each variable (disabled === true → enabled: false)
- * and its `secret` flag (finding D7 — writing it unconditionally false
+ * and its `secret` flag (writing it unconditionally false
  * downgraded every secret var to plaintext on any env edit).
  */
 export function generateBruEnvironmentFull(vars: EnvVariable[]): string {

@@ -210,7 +210,7 @@ describe('runInWorker robustness', () => {
   });
 });
 
-describe('toSendableJob (S19: bodies that cannot cross the IPC codec)', () => {
+describe('toSendableJob (bodies that cannot cross the IPC codec)', () => {
   const preRequestJob = (body: unknown): SandboxJob => ({
     kind: 'pre-request',
     script: 'noop',
@@ -283,7 +283,7 @@ describe('toSendableJob (S19: bodies that cannot cross the IPC codec)', () => {
   });
 });
 
-describe('runInWorker sanitizes the outbound body (S19)', () => {
+describe('runInWorker sanitizes the outbound body', () => {
   it('sends a FormData pre-request body to the child as a descriptor, not raw', async () => {
     const form = new FormData();
     form.append('avatar', 'bytes');

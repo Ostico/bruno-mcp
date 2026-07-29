@@ -1,6 +1,6 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
-exports[`MCP tool surface contract (Q14) matches the recorded surface exactly (titles, descriptions, schemas): mcp-tool-surface 1`] = `
+exports[`MCP tool surface contract matches the recorded surface exactly (titles, descriptions, schemas): mcp-tool-surface 1`] = `
 {
   "add_test_script": {
     "description": "Add pre-request, post-response, or tests scripts to a Bruno request. Canonical scriptType values are pre-request/post-response/tests; the aliases before-request (→ pre-request) and after-response (→ post-response) are also accepted. Appends to any existing script of that type by default — pass scriptMode:"replace" to overwrite it, or use remove_script to clear it. Assertions must be wrapped in test("name", function() { ... }) to be reported.",

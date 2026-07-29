@@ -1,7 +1,7 @@
 import { RequestBuilder, createRequestBuilder } from '../../../src/bruno/request';
 import { BrunoError, BruFileError } from '../../../src/bruno/types';
 
-// D9: writers now go through writeFileAtomic instead of a plain fs write. Route it
+// Writers now go through writeFileAtomic instead of a plain fs write. Route it
 // back to the same fs mock so these tests keep asserting on the content and path
 // written; the write mechanism itself is covered by the atomic-write suites.
 jest.mock('../../../src/bruno/atomic-write.js', () => ({
@@ -406,10 +406,10 @@ describe('RequestBuilder', () => {
       expect(generated.meta.seq).toBe(7);
     });
 
-    // D1: modify_request must not drop auth credentials. Before the fix,
+    // Modify_request must not drop auth credentials. Before the fix,
     // applyUpdates only copied auth.type and discarded updates.auth.config,
     // wiping the bearer/basic/api-key secret on every .bru modify.
-    it('should apply the bearer credential from config on .bru modify (D1)', async () => {
+    it('should apply the bearer credential from config on .bru modify', async () => {
       const { parseBruRequest } = require('../../../src/bruno/bru-parser.js');
       parseBruRequest.mockReturnValueOnce({
         meta: { name: 'Old', type: 'http' },
@@ -429,7 +429,7 @@ describe('RequestBuilder', () => {
       expect(generated.auth.bearer).toEqual({ token: 'token123' });
     });
 
-    it('should apply the basic credentials from config on .bru modify (D1)', async () => {
+    it('should apply the basic credentials from config on .bru modify', async () => {
       const { parseBruRequest } = require('../../../src/bruno/bru-parser.js');
       parseBruRequest.mockReturnValueOnce({
         meta: { name: 'Old', type: 'http' },
@@ -447,7 +447,7 @@ describe('RequestBuilder', () => {
       expect(generated.auth.basic).toEqual({ username: 'user123', password: 'pass123' });
     });
 
-    it('should apply the api-key credentials from config on .bru modify (D1)', async () => {
+    it('should apply the api-key credentials from config on .bru modify', async () => {
       const { parseBruRequest } = require('../../../src/bruno/bru-parser.js');
       parseBruRequest.mockReturnValueOnce({
         meta: { name: 'Old', type: 'http' },
@@ -465,7 +465,7 @@ describe('RequestBuilder', () => {
       expect(generated.auth.apikey).toEqual({ key: 'X-API-Key', value: 'value123', in: 'query' });
     });
 
-    it('should fall back to placeholders when auth config is missing on .bru modify (D1)', async () => {
+    it('should fall back to placeholders when auth config is missing on .bru modify', async () => {
       const { parseBruRequest } = require('../../../src/bruno/bru-parser.js');
       parseBruRequest.mockReturnValueOnce({
         meta: { name: 'Old', type: 'http' },
@@ -483,7 +483,7 @@ describe('RequestBuilder', () => {
       expect(generated.auth.bearer).toEqual({ token: '{{token}}' });
     });
 
-    it('should set only type for auth: none on .bru modify (D1)', async () => {
+    it('should set only type for auth: none on .bru modify', async () => {
       const { parseBruRequest } = require('../../../src/bruno/bru-parser.js');
       parseBruRequest.mockReturnValueOnce({
         meta: { name: 'Old', type: 'http' },

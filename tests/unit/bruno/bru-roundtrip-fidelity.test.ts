@@ -1,5 +1,5 @@
 /**
- * .bru round-trip fidelity (findings D5 / D6).
+ * .bru round-trip fidelity.
  *
  * Reading a request and writing it back must not silently drop parts of the
  * user's file. Editing one header through the MCP server used to delete the
@@ -134,7 +134,7 @@ describe('.bru round-trip preserves the whole document', () => {
   });
 });
 
-describe('.bru round-trip preserves query and path params (D5)', () => {
+describe('.bru round-trip preserves query and path params', () => {
   it('keeps both param types with their values', () => {
     const out = roundTrip(FULL_REQUEST);
 
@@ -153,7 +153,7 @@ describe('.bru round-trip preserves query and path params (D5)', () => {
   });
 });
 
-describe('.bru round-trip preserves assertions (D5)', () => {
+describe('.bru round-trip preserves assertions', () => {
   it('keeps assertions with their enabled state', () => {
     const parsed = parseBruRequest(FULL_REQUEST);
 
@@ -168,7 +168,7 @@ describe('.bru round-trip preserves assertions (D5)', () => {
   });
 });
 
-describe('.bru round-trip preserves request settings (D5)', () => {
+describe('.bru round-trip preserves request settings', () => {
   it('keeps the settings block', () => {
     const parsed = parseBruRequest(FULL_REQUEST);
 
@@ -177,7 +177,7 @@ describe('.bru round-trip preserves request settings (D5)', () => {
   });
 });
 
-describe('.bru round-trip preserves vars (D5)', () => {
+describe('.bru round-trip preserves vars', () => {
   it('keeps pre-request and post-response vars', () => {
     const parsed = parseBruRequest(FULL_REQUEST);
 
@@ -194,7 +194,7 @@ describe('.bru round-trip preserves vars (D5)', () => {
   });
 });
 
-describe('.bru round-trip preserves oauth2 additional parameters (D6)', () => {
+describe('.bru round-trip preserves oauth2 additional parameters', () => {
   // The grammar allows eight: auth_req takes headers and queryparams, while
   // access_token_req and refresh_token_req each also take body.
   const EXPECTED_BLOCKS = [

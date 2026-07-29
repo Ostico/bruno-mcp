@@ -20,7 +20,7 @@ const workerPath = path.join(repoRoot, 'dist', 'bruno', 'sandbox-worker.js');
 // suite used to rebuild in its own `beforeAll`, which raced the sibling
 // mcp-stdio suite's build: `npm run build` is `--clean`, so one suite's
 // `rm -rf dist` could delete the artifact the other was about to spawn
-// (finding Q18). The guarantee that mattered here is preserved — globalSetup
+//. The guarantee that mattered here is preserved — globalSetup
 // always rebuilds and never skips on an artifact that merely exists, which is
 // what stops a stale dist/ from keeping the assertion below green after the
 // build script has stopped emitting the worker.

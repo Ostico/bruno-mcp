@@ -1,5 +1,5 @@
 /**
- * MCP tool registrations: script tools (finding Q14).
+ * MCP tool registrations: script tools.
  *
  * Moved out of server.ts unchanged apart from `this.` becoming `ctx.`.
  */
@@ -102,7 +102,7 @@ export function registerAddTestScriptTool(ctx: ToolContext): void {
 
         // 8. Read, inject, write back under a per-file lock. The pair is what
         // needs guarding: two concurrent injections would both read the
-        // original and the second write would discard the first script (D8).
+        // original and the second write would discard the first script.
         // The read also serves as an existence check — ENOENT caught below.
         await withPathLock(args.bruFilePath, async () => {
           const content = await readFile(args.bruFilePath, 'utf-8');
@@ -171,7 +171,7 @@ export function registerRemoveScriptTool(ctx: ToolContext): void {
         const canonicalScriptType = normalizeScriptType(args.scriptType);
 
         // Read and write under one lock: unguarded, a concurrent injection
-        // landing between them would be erased by this write (D8).
+        // landing between them would be erased by this write.
         const removed = await withPathLock(args.bruFilePath, async () => {
           const content = await readFile(args.bruFilePath, 'utf-8');
           const writer = createWriter(resolved.format);

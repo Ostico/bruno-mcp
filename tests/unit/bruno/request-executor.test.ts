@@ -1549,7 +1549,7 @@ http:
       expect(mockFetch.mock.calls[1][0]).toBe('https://api.example.com/new');
     });
 
-    it('strips credential headers when a redirect crosses origin (S06/S07)', async () => {
+    it('strips credential headers when a redirect crosses origin', async () => {
       const AUTHED_REQUEST = `
 info:
   name: Authed Request
@@ -1624,7 +1624,7 @@ http:
       expect(hop2.Authorization).toBe('Bearer sekret');
     });
 
-    it('redacts secret query params from the URL returned to the caller (S22)', async () => {
+    it('redacts secret query params from the URL returned to the caller', async () => {
       const SECRET_URL_REQUEST = `
 info:
   name: Secret URL
@@ -1762,11 +1762,11 @@ settings:
       expect(mockFetch).toHaveBeenCalledTimes(3);
     });
 
-    // X1: redirect count off-by-one. maxRedirects means "hops we may follow",
+    // Redirect count off-by-one. maxRedirects means "hops we may follow",
     // not "hops taken so far". A final non-3xx response within the cap must
     // succeed; the error only fires when a redirect still needs following past
     // the cap.
-    it('X1: a non-3xx response with maxRedirects:0 succeeds (nothing to follow)', async () => {
+    it('A non-3xx response with maxRedirects:0 succeeds (nothing to follow)', async () => {
       const ZERO_MAX_REQUEST = `
 info:
   name: Zero Max
@@ -1792,7 +1792,7 @@ settings:
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
-    it('X1: a chain ending in a non-3xx exactly at maxRedirects succeeds (boundary)', async () => {
+    it('A chain ending in a non-3xx exactly at maxRedirects succeeds (boundary)', async () => {
       const BOUNDARY_REQUEST = `
 info:
   name: Boundary
@@ -1837,9 +1837,9 @@ settings:
       expect(mockFetch).toHaveBeenCalledTimes(3);
     });
 
-    // X2: RFC 9110 method rewrite. Following a 301/302/303 with a non-GET/HEAD
+    // RFC 9110 method rewrite. Following a 301/302/303 with a non-GET/HEAD
     // method switches to GET and drops the body on the redirected hop.
-    it('X2: a POST following a 302 is re-issued as GET with no body', async () => {
+    it('A POST following a 302 is re-issued as GET with no body', async () => {
       const POST_REDIRECT_REQUEST = `
 info:
   name: Post Redirect
@@ -1883,7 +1883,7 @@ http:
       expect(mockFetch.mock.calls[1][1].body).toBeUndefined();
     });
 
-    it('X2: a POST following a 307 preserves method and body', async () => {
+    it('A POST following a 307 preserves method and body', async () => {
       const POST_307_REQUEST = `
 info:
   name: Post 307
@@ -2705,7 +2705,7 @@ runtime:
       expect(fetchOptions.body).toBe(JSON.stringify({ hello: 'world', n: 42 }));
     });
 
-    it('records a pre-request script error on the result and halts the request before fetch (X15)', async () => {
+    it('records a pre-request script error on the result and halts the request before fetch', async () => {
       const REQUEST_WITH_FAILING_PRE = `
 info:
   name: Failing Pre Script
@@ -2730,7 +2730,7 @@ runtime:
 
       expect(result.results[0].error).toContain('pre boom');
       // A failing pre-request script halts the request: the HTTP call must not
-      // fire and the result is a failure, not a 200 (finding X15).
+      // fire and the result is a failure, not a 200.
       expect(result.results[0].status).toBe(0);
       expect(mockFetch).not.toHaveBeenCalled();
     });
@@ -2741,7 +2741,7 @@ runtime:
   // =========================================================================
 
   // =========================================================================
-  // D13 — a header the author switched off must not be sent
+  // A header the author switched off must not be sent
   // =========================================================================
 
   describe('disabled headers', () => {
@@ -2836,7 +2836,7 @@ settings:
     });
 
     // =======================================================================
-    // S20/S21 — a dispatcher is built for every hop so the connection is
+    // A dispatcher is built for every hop so the connection is
     // pinned to the addresses that hop's SSRF check approved.
     // =======================================================================
 

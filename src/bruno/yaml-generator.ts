@@ -24,7 +24,7 @@ import {
 /**
  * The model marks a switched-off multipart part with `enabled: false`, matching
  * the .bru side. A .yml document spells it `disabled: true`, so translate on the
- * way out — otherwise a round-trip would rename the key (D14).
+ * way out — otherwise a round-trip would rename the key.
  */
 function serialiseBody(body: YamlBody): YamlBody | Record<string, unknown> {
   if (!Array.isArray(body.data)) return body;
@@ -119,7 +119,7 @@ export function generateYamlRequest(request: YamlRequest): string {
     doc.settings = stripEmpty(request.settings);
   }
 
-  // assert — write back what the parser now preserves (D11)
+  // assert — write back what the parser now preserves
   if (request.assert && request.assert.length > 0) {
     doc.assert = request.assert.map((a) => ({
       name: a.name,
@@ -128,7 +128,7 @@ export function generateYamlRequest(request: YamlRequest): string {
     }));
   }
 
-  // vars (D11)
+  // vars
   if (request.vars?.preRequest?.length || request.vars?.postResponse?.length) {
     const vars: Record<string, unknown> = {};
     if (request.vars.preRequest && request.vars.preRequest.length > 0) {

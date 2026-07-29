@@ -134,7 +134,7 @@ export class CollectionManager {
     updates: Partial<BrunoCollection>
   ): Promise<FileOperationResult> {
     // The config is loaded, merged with `updates`, and written back. Hold the
-    // lock across the pair so a concurrent update is not silently discarded (D8).
+    // lock across the pair so a concurrent update is not silently discarded.
     return withPathLock(collectionPath, () => this.updateCollectionLocked(collectionPath, updates));
   }
 

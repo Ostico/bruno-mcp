@@ -2,7 +2,7 @@ import type { ResponseData, MockResponseData } from './types.js';
 
 /**
  * Single source of truth for "should this response body be parsed as JSON?"
- * (finding X6). Two divergent rules previously lived in this file — a loose
+ *. Two divergent rules previously lived in this file — a loose
  * `.includes('json')` in `BrunoResponse.getBody()` and a stricter
  * `application/json` / `+json` check in `wrapFetchResponse()` — which disagreed
  * for content types like `text/json`, so the same response could be typed as a
@@ -100,14 +100,14 @@ export class BrunoResponse {
  * cap, independent of the caller's display truncation. undici transparently
  * decompresses gzip/deflate/br, so a small "decompression bomb" or a multi-GB
  * body would otherwise be fully buffered by response.text() and OOM the process
- * (finding X3). The body stream is read incrementally and cancelled once this
+ *. The body stream is read incrementally and cancelled once this
  * many decompressed bytes have accumulated.
  */
 export const MAX_RESPONSE_BYTES = 50 * 1024 * 1024; // 50 MB
 
 /**
  * Build a TextDecoder that honors the response's declared Content-Type charset
- * (finding X4). Decoding a non-UTF-8 body (e.g. `text/html; charset=ISO-8859-1`
+ *. Decoding a non-UTF-8 body (e.g. `text/html; charset=ISO-8859-1`
  * or Shift_JIS) as UTF-8 mojibakes the text. Rules:
  *   - no `charset=` token  → default to UTF-8
  *   - known/valid label    → decode with that charset
@@ -189,7 +189,7 @@ export async function wrapFetchResponse(
     headers[key.toLowerCase()] = value;
   });
 
-  // X7: Headers.forEach comma-joins multiple Set-Cookie into one value, which
+  // Headers.forEach comma-joins multiple Set-Cookie into one value, which
   // is lossy (cookie values may contain commas). getSetCookie() preserves each.
   const setCookies =
     typeof response.headers.getSetCookie === 'function' ? response.headers.getSetCookie() : [];

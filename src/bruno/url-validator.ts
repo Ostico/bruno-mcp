@@ -34,7 +34,7 @@ import { lookup } from 'node:dns/promises';
 import type { LookupAddress } from 'node:dns';
 
 /**
- * Default ceiling on the SSRF pre-flight DNS lookup (finding S19).
+ * Default ceiling on the SSRF pre-flight DNS lookup.
  *
  * `lookup()` from node:dns/promises accepts neither a timeout nor an
  * AbortSignal, and this resolution runs BEFORE the request's own
@@ -114,7 +114,7 @@ export interface UrlValidationResult {
   /**
    * The concrete addresses this validation approved, present only on success.
    * Pin these at connect time to close the DNS-rebinding window between the
-   * check and the request (findings S20/S21).
+   * check and the request.
    *
    * Absent when there is nothing to pin: a host matched by the operator's
    * BRUNO_SSRF_ALLOWLIST is never resolved here (the operator has vouched for

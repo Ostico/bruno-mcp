@@ -1,5 +1,5 @@
 /**
- * Multipart file-part path confinement (finding S05).
+ * Multipart file-part path confinement.
  *
  * A multipart `file` part's path is collection-controlled. It used to be passed
  * straight to readFile(), so a collection could reference `/etc/passwd`,
@@ -21,7 +21,7 @@ import {
 } from '../../../src/bruno/request-executor';
 import type { YamlRequest } from '../../../src/bruno/types';
 
-describe('buildFetchOptions — multipart file-part confinement (S05)', () => {
+describe('buildFetchOptions — multipart file-part confinement', () => {
   let tmpDir: string;
   let collectionRoot: string;
   let insideFile: string; // inside the collection

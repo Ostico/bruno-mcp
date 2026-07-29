@@ -1,5 +1,5 @@
 /**
- * Per-path serialization for read-modify-write sequences (finding D8).
+ * Per-path serialization for read-modify-write sequences.
  *
  * Several tools read a file, transform its contents, and write the result back.
  * Two of those running concurrently against the same file both read the original,

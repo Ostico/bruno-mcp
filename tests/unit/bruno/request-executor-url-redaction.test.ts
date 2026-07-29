@@ -1,5 +1,5 @@
 /**
- * URL redaction before a URL crosses back to the caller (finding S22).
+ * URL redaction before a URL crosses back to the caller.
  *
  * The substituted URL is returned in result.url and embedded in error strings.
  * A query api-key or userinfo substituted from an env file would otherwise be

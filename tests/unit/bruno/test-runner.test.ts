@@ -98,7 +98,7 @@ describe('TestRunner', () => {
       expect(results[0].error!.toLowerCase()).not.toContain('timed out');
     });
 
-    it('preserves results recorded before a top-level throw (A4)', async () => {
+    it('preserves results recorded before a top-level throw', async () => {
       // A script that records real results and then throws at the top level
       // must not have those results discarded. Before this fix the outer catch
       // replaced the whole run with a single synthetic "Script error", so two
@@ -123,7 +123,7 @@ describe('TestRunner', () => {
       expect(scriptError?.error).toContain('boom after the tests ran');
     });
 
-    it('preserves a genuine failure recorded before a top-level throw (A4)', async () => {
+    it('preserves a genuine failure recorded before a top-level throw', async () => {
       // A real assertion failure recorded before the throw must survive as its
       // own failure rather than being collapsed into a generic script error —
       // otherwise the specific reason a test failed is lost.
@@ -141,7 +141,7 @@ describe('TestRunner', () => {
       expect(results.some(r => r.description === 'Script error')).toBe(true);
     });
 
-    it('recovers a pending async result before a throw as a failure (A4)', async () => {
+    it('recovers a pending async result before a throw as a failure', async () => {
       // An async test() that registered a pending slot and then a top-level
       // throw before it could settle must be recovered and mapped to a failure
       // (never-settled), the same as on the success path.
@@ -158,7 +158,7 @@ describe('TestRunner', () => {
       expect(results.some(r => r.description === 'Script error')).toBe(true);
     });
 
-    it('collapses to a single failure when a throw follows a nullified accumulator (A4)', async () => {
+    it('collapses to a single failure when a throw follows a nullified accumulator', async () => {
       // Recovery is defensive: a script that nullifies the results accumulator
       // and then throws leaves nothing to recover, so the run reports just the
       // single script error rather than crashing while trying to read it.

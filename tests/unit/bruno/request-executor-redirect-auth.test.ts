@@ -1,5 +1,5 @@
 /**
- * Credential stripping on cross-origin redirects (findings S06/S07).
+ * Credential stripping on cross-origin redirects.
  *
  * The manual redirect loop reused the same headers on every hop, so a target
  * that 302s to another origin received the caller's Authorization, api-key, or
@@ -37,7 +37,7 @@ describe('buildFetchOptions reports the header names that carry auth', () => {
     expect(authHeaderNames).toEqual(['Authorization']);
   });
 
-  it('reports the caller-named header for a header api-key (S07)', async () => {
+  it('reports the caller-named header for a header api-key', async () => {
     const { authHeaderNames } = await buildFetchOptions(
       req({ type: 'api-key', key: 'X-Api-Key', value: 's', in: 'header' }),
       noVars,
@@ -68,7 +68,7 @@ describe('stripCredentialHeaders', () => {
     expect(out).toEqual({ Accept: 'application/json' });
   });
 
-  it('also drops the request-specific auth header names (S07)', () => {
+  it('also drops the request-specific auth header names', () => {
     const out = stripCredentialHeaders(
       { 'X-Api-Key': 'secret', 'X-Trace': 'keep' },
       ['X-Api-Key'],

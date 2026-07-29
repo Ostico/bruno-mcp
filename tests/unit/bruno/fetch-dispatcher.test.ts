@@ -165,7 +165,7 @@ settings:
   });
 });
 
-describe('buildDispatcher — collection TLS/proxy denied by default (S10/S11/S12)', () => {
+describe('buildDispatcher — collection TLS/proxy denied by default', () => {
   // These run with BRUNO_INSECURE_TLS_HOSTS / BRUNO_PROXY_HOSTS unset, so a
   // collection's dangerous overrides must be ignored rather than honored.
   beforeEach(() => {
@@ -270,7 +270,7 @@ describe('buildDispatcher — collection TLS/proxy denied by default (S10/S11/S1
 });
 
 // ===========================================================================
-// S20/S21 — DNS-rebinding defence: the dispatcher pins the addresses that
+// DNS-rebinding defence: the dispatcher pins the addresses that
 // validateUrl already approved, so the connection cannot re-resolve onto a
 // different one.
 // ===========================================================================
@@ -301,7 +301,7 @@ function callLookup(
   return captured;
 }
 
-describe('buildDispatcher — validated-address pinning (S20/S21)', () => {
+describe('buildDispatcher — validated-address pinning', () => {
   const TARGET_HOST = 'rebind.test';
 
   beforeEach(() => {

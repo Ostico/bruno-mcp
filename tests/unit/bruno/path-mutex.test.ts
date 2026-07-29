@@ -1,5 +1,5 @@
 /**
- * Per-path serialization of read-modify-write sequences (finding D8).
+ * Per-path serialization of read-modify-write sequences.
  */
 
 import * as path from 'node:path';

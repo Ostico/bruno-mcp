@@ -1,5 +1,5 @@
 /**
- * Duplicate request headers must reach the wire (finding D4).
+ * Duplicate request headers must reach the wire.
  *
  * A collection may legitimately author the same header name twice — two Accept
  * values, two Cookie pairs, an X-Forwarded-For chain. Both halves of the path
@@ -52,7 +52,7 @@ async function sentHeaders(headers: YamlHeader[]): Promise<Record<string, string
   return options.headers as Record<string, string>;
 }
 
-describe('duplicate request headers survive to the wire (D4)', () => {
+describe('duplicate request headers survive to the wire', () => {
   it('combines two values for the same header instead of keeping only the last', async () => {
     const headers = await sentHeaders([
       { name: 'Accept', value: 'text/plain' },
@@ -94,7 +94,7 @@ describe('duplicate request headers survive to the wire (D4)', () => {
     expect(headers.Accept).toBe('application/json');
   });
 
-  it('skips a disabled duplicate rather than combining it (D13)', async () => {
+  it('skips a disabled duplicate rather than combining it', async () => {
     const headers = await sentHeaders([
       { name: 'Accept', value: 'text/plain' },
       { name: 'Accept', value: 'application/json', disabled: true },
@@ -130,7 +130,7 @@ describe('our combining matches what undici would put on the wire', () => {
   });
 });
 
-describe('credential stripping still holds over combined headers (S06/S07)', () => {
+describe('credential stripping still holds over combined headers', () => {
   it('strips a Cookie header built from several authored values', async () => {
     const headers = await sentHeaders([
       { name: 'Cookie', value: 'session=secret' },
@@ -166,7 +166,7 @@ describe('credential stripping still holds over combined headers (S06/S07)', () 
   });
 });
 
-describe('duplicates on a single-value header are warned about (D15)', () => {
+describe('duplicates on a single-value header are warned about', () => {
   // Combining is right for comma-list fields, but RFC 9110 §5.2/§5.3 only allow
   // it when the field is defined as a list — a sender must not repeat a
   // singleton field at all. Repeating Content-Type yields

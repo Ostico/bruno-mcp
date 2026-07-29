@@ -106,7 +106,7 @@ describe('sandbox-worker runJob dispatch', () => {
   });
 });
 
-describe('sandbox-worker external variable seeding (finding X10)', () => {
+describe('sandbox-worker external variable seeding', () => {
   it('lets a pre-request script read a seeded env/collection var via bru.getVar', () => {
     const res = runPreRequestJob(
       'bru.setVar("echo", bru.getVar("baseUrl"));',

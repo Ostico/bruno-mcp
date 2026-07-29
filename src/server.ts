@@ -14,7 +14,7 @@ import { createWorkspaceResolver } from './bruno/workspace.js';
 
 import type { ToolContext } from './tools/context.js';
 
-// Tool registrations, one module per domain (finding Q14).
+// Tool registrations, one module per domain.
 import { registerCreateCollectionTool, registerListCollectionsTool, registerGetCollectionStatsTool } from './tools/collection-tools.js';
 import { registerCreateEnvironmentTool, registerUpdateEnvironmentTool, registerSetEnvironmentVariableTool, registerRemoveEnvironmentVariableTool } from './tools/environment-tools.js';
 import { registerCreateRequestTool, registerModifyRequestTool, registerDeleteRequestTool, registerCreateTestSuiteTool, registerCreateCrudRequestsTool, registerListRequestsTool } from './tools/request-tools.js';

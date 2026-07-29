@@ -1,5 +1,5 @@
 /**
- * Dependency ordering for create_crud_requests (finding Q14).
+ * Dependency ordering for create_crud_requests.
  *
  * Extracted verbatim; it sat among the tool registrations but is a pure
  * algorithm that never touched instance state.

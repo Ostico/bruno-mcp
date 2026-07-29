@@ -1,5 +1,5 @@
 /**
- * Path checks shared by every tool (finding Q14).
+ * Path checks shared by every tool.
  *
  * Extracted verbatim from BrunoMcpServer; neither function ever touched
  * instance state, so they were only methods by habit.

@@ -220,10 +220,10 @@ describe('validateUrl', () => {
   });
 
   // -----------------------------------------------------------------------
-  // Additional reserved IPv4 ranges (S18) — cloud-metadata / CGNAT /
+  // Additional reserved IPv4 ranges — cloud-metadata / CGNAT /
   // broadcast / multicast / documentation / benchmarking / protocol
   // -----------------------------------------------------------------------
-  describe('blocks additional reserved IPv4 ranges (S18)', () => {
+  describe('blocks additional reserved IPv4 ranges', () => {
     it('blocks 100.100.100.200 (Alibaba/Oracle cloud metadata, in 100.64/10)', async () => {
       const result = await validateUrl('http://100.100.100.200/latest/meta-data/');
       expect(result.valid).toBe(false);
@@ -719,7 +719,7 @@ describe('parseAllowlist', () => {
   });
 });
 
-describe('DNS lookup timeout (finding S19)', () => {
+describe('DNS lookup timeout', () => {
   const priorEnv = process.env.BRUNO_DNS_TIMEOUT_MS;
 
   afterEach(() => {
@@ -786,7 +786,7 @@ describe('DNS lookup timeout (finding S19)', () => {
 });
 
 // ===========================================================================
-// S20/S21 — the validated addresses are handed back so the caller can pin them
+// The validated addresses are handed back so the caller can pin them
 // ===========================================================================
 
 describe('validateUrl — pinned addresses', () => {

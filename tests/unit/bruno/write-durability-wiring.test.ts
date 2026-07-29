@@ -1,5 +1,5 @@
 /**
- * The writers are wired to the durable, serialized primitives (findings D8/D9).
+ * The writers are wired to the durable, serialized primitives.
  *
  * The atomic-write and path-mutex suites prove the primitives in isolation. These
  * run the real EnvironmentManager against a real collection on disk, which is the
@@ -42,7 +42,7 @@ describe('environment writes are durable and serialized', () => {
 
   it('keeps both edits when two variables are set concurrently', async () => {
     // Unserialised, both calls read the same starting state and the second write
-    // discards the first variable — the lost update D8 describes.
+    // discards the first variable — a lost update.
     await Promise.all([
       manager.setEnvironmentVariable(collection, 'dev', 'alpha', 'a-value'),
       manager.setEnvironmentVariable(collection, 'dev', 'beta', 'b-value'),

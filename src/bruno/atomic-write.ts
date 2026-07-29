@@ -1,5 +1,5 @@
 /**
- * Atomic, durable file writes (findings D9 / S24).
+ * Atomic, durable file writes.
  *
  * A plain `writeFile` truncates the target and then streams into it, so a crash,
  * a full disk, or a killed process midway leaves a truncated or empty file where
@@ -11,7 +11,7 @@
  * crash) sees either the whole old file or the whole new one, never a partial
  * write.
  *
- * The temporary file placement is security-relevant (S24):
+ * The temporary file placement is security-relevant:
  *  - It lives in the *target's own directory*, not the system temp dir. A shared
  *    `/tmp` is world-readable, and bruno environment files carry secrets. It also
  *    keeps the rename on one filesystem — across a boundary `rename` fails with

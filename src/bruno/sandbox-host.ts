@@ -104,7 +104,7 @@ function releaseSlot(): void {
  * child.send() serializes with the default 'json' codec. A FormData or Blob
  * body has no JSON representation, so it arrives at the child as {} — a
  * pre-request script would then inspect an empty object instead of the
- * multipart/binary body it was handed (finding S19). Switching the codec to
+ * multipart/binary body it was handed. Switching the codec to
  * 'advanced' is not an option: structured clone throws on FormData rather than
  * degrading, and file contents / field values must not cross the boundary
  * regardless. So a non-serializable body is replaced with a truthful,
@@ -286,7 +286,7 @@ export interface ScriptRunner {
  * entry at dist/bruno/sandbox-worker.js — __dirname (shimmed by tsup --shims in
  * ESM, native in the CJS test compile) points at dist/. Deliberately not an env
  * var: a worker path taken from the environment in the file meant to remove
- * code execution would reintroduce it (finding S13).
+ * code execution would reintroduce it.
  */
 export function resolveWorkerPath(): string {
   return path.join(__dirname, 'bruno', 'sandbox-worker.js');

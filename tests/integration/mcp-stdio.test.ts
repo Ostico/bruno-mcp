@@ -26,7 +26,7 @@ const repoRoot = path.resolve(__dirname, '../..');
 // snapshot dist/ into a private directory, with a retry loop, because the
 // sibling sandbox-fork suite rebuilt concurrently and `npm run build` is
 // --clean: its `rm -rf dist` could land between this file's build and its
-// spawns (finding Q18). With a single hoisted build nothing deletes dist/ while
+// spawns. With a single hoisted build nothing deletes dist/ while
 // a suite is running, so the copy and the retries are gone.
 const serverEntry = path.join(repoRoot, 'dist', 'index.js');
 

@@ -1,5 +1,5 @@
 /**
- * .yml round-trip fidelity (finding D11).
+ * .yml round-trip fidelity.
  *
  * The `.yml` writer already emitted `params`, but the reader never parsed them,
  * so every query and path parameter died on a read-modify-write. Assertions and
@@ -84,7 +84,7 @@ describe('.yml round-trip preserves the whole document', () => {
   });
 });
 
-describe('.yml round-trip preserves params (D11)', () => {
+describe('.yml round-trip preserves params', () => {
   it('parses query and path params instead of dropping them', () => {
     const parsed = parseYamlRequest(FULL_REQUEST);
 
@@ -106,7 +106,7 @@ describe('.yml round-trip preserves params (D11)', () => {
   });
 });
 
-describe('.yml round-trip preserves assertions (D11)', () => {
+describe('.yml round-trip preserves assertions', () => {
   it('keeps assertions with their disabled state', () => {
     const parsed = parseYamlRequest(FULL_REQUEST);
 
@@ -121,7 +121,7 @@ describe('.yml round-trip preserves assertions (D11)', () => {
   });
 });
 
-describe('.yml round-trip preserves vars (D11)', () => {
+describe('.yml round-trip preserves vars', () => {
   it('keeps pre-request and post-response vars', () => {
     const parsed = parseYamlRequest(FULL_REQUEST);
 
