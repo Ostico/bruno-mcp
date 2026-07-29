@@ -316,10 +316,14 @@ body:graphql:vars {
   },
   {
     name: 'body:form-urlencoded with a disabled field',
+    // The MODE is camelCase while the BLOCK is kebab-case, the same split
+    // multipart has. This fixture used to say `form-urlencoded`, which is a
+    // spelling Bruno never writes — it matched our own output rather than a
+    // real file, and so could not see the generator downgrading the mode.
     src: `${META}
 post {
   url: https://api.example.test/login
-  body: form-urlencoded
+  body: formUrlEncoded
   auth: none
 }
 
@@ -668,7 +672,8 @@ describe('known defect: a disabled entry is relocated to the end of its block', 
     ['assert', 'none', 'assert {\n  a: eq 1\n  ~b: eq 2\n  c: eq 3\n}'],
     [
       'body:form-urlencoded',
-      'form-urlencoded',
+      // camelCase mode, kebab-case block — the same split as multipartForm below.
+      'formUrlEncoded',
       'body:form-urlencoded {\n  a: 1\n  ~b: 2\n  c: 3\n}',
     ],
     [

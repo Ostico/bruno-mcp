@@ -422,6 +422,13 @@ export function generateBruRequest(bruFile: BruFile): string {
     }
     json.body = { graphql };
   } else if (bruFile.body?.formUrlEncoded) {
+    // Bruno spells this type two ways: the BLOCK is kebab-case
+    // (`body:form-urlencoded {`) while the MODE in the method block is
+    // camelCase. Parsing normalizes the mode to kebab-case, so without
+    // restoring it here a rewrite left `body: form-urlencoded`, which Bruno
+    // does not recognise — the block still looked right and the body stopped
+    // being sent. Same restoration the multipart branch above does.
+    (json.http as Record<string, unknown>).body = 'formUrlEncoded';
     // @usebruno/lang splits body.formUrlEncoded on a truthy `enabled` flag,
     // prefixing disabled entries with `~`.
     json.body = {
