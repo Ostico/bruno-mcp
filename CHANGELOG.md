@@ -32,6 +32,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Query and path parameters are now actually sent. They were declared in both
+  request formats, populated by both parsers and written back faithfully by both
+  generators — and **nothing ever applied them to the outgoing request**. A
+  `params:query` entry never reached the query string, and a `params:path` entry
+  left `:id` in the URL verbatim.
+
+  This was reachable end to end through the MCP surface: `create_request` stores
+  its `query` input, the file on disk looks correct, a round-trip preserves it,
+  and `run_collection` sent the request without it.
+
+  Parameters are applied before the URL is validated, so the URL that is checked
+  is the one that is sent. Values are substituted first and encoded second — the
+  reverse order would let a variable containing `&` or `=` forge extra
+  parameters, and one containing `/` silently address a different resource. A
+  `:name` with no matching parameter is deliberately left standing: wrong but
+  visible, rather than quietly pointing elsewhere.
+
+  Note for the `.bru` path: the two formats spell the switched-off flag with
+  opposite polarity (`enabled` vs `disabled`), so forwarding without inverting
+  would have sent exactly the parameters the author turned off.
+
+### Known gaps
+
+Two features are still parsed, persisted and round-tripped without being applied
+at execution time. Neither is newly broken; both are recorded here so they are
+not mistaken for working:
+
+- **`assert` blocks are never evaluated**, in either format. A run reports zero
+  assertions rather than checking the ones the collection declares.
+- **`vars:pre-request` and `vars:post-response` are never applied.**
+
+Auth is not in this category — unapplied auth types warn explicitly, and
+`auth: inherit` reports that collection-level inheritance is unsupported. The
+`AuthType` union does, however, advertise `api-key`, `oauth2` and `digest` while
+only `bearer` and `basic` are implemented.
+
 - JSON, XML and SPARQL request bodies are no longer sent labelled as plain text.
   A `Content-Type` is now derived from the body type: `application/json`,
   `application/xml`, `application/sparql-query`.
