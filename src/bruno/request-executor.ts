@@ -11,6 +11,7 @@ import { validateUrl, ssrfRemediation } from './url-validator.js';
 import { VariableStore } from './variable-store.js';
 import { buildDispatcher, type DispatcherResult } from './fetch-dispatcher.js';
 import { describeNetworkError } from './network-error.js';
+import { applyParams } from './request-params.js';
 import {
   SINGLE_VALUE_HEADERS,
   appendHeader,
@@ -128,6 +129,16 @@ export function bruFileToYamlRequest(bru: BruFile): YamlRequest {
       ? Object.entries(bru.headers).map(([name, value]) => ({ name, value }))
       : undefined;
 
+  // The two formats spell the switched-off flag with opposite polarity: a
+  // BruParam carries `enabled`, a YamlParam carries `disabled`. Forwarding these
+  // without inverting would send exactly the parameters the author turned off.
+  const params = bru.params?.map((param) => ({
+    name: param.name,
+    value: param.value,
+    type: param.type,
+    ...(param.enabled === false ? { disabled: true } : {}),
+  }));
+
   let body: YamlRequest['http']['body'];
   if (bru.body?.formData && bru.body.formData.length > 0) {
     body = {
@@ -168,6 +179,7 @@ export function bruFileToYamlRequest(bru: BruFile): YamlRequest {
       method: bru.http.method,
       url: bru.http.url,
       headers,
+      params,
       body,
       auth: bruAuthToYamlAuth(bru.auth),
     },
@@ -418,6 +430,13 @@ export async function buildFetchOptions(
 
   trackUnresolved(yaml.http.url);
   let url = substitute(yaml.http.url, vars);
+
+  // Applied here, before validateUrl below, so the URL that is checked is the
+  // one actually sent — a parameter must never be able to slip past the check.
+  url = applyParams(url, yaml.http.params, (raw) => {
+    trackUnresolved(raw);
+    return substitute(raw, vars);
+  });
 
   const headers: Record<string, string> = {};
   // Maps a lowercased header name to the key actually used in `headers`, so a
