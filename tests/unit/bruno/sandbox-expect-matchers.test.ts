@@ -333,12 +333,61 @@ describe('sandbox expect() chai matchers', () => {
       ['after .to.not.be.at', 'expect(1).to.not.be.at.frobnicated;'],
       ['near-miss on a real matcher', 'expect(1).to.be.greaterThn(0);'],
       ['near-miss on a real property', 'expect({}).to.be.jsonn;'],
+      // to.not.have was the one chain object left unguarded, so an unknown
+      // matcher after it read undefined and reported a silent pass.
+      ['after .to.not.have', 'expect({}).to.not.have.frobnicated;'],
     ];
 
     it.each(unknown)('fails: %s', (_name, body) => {
       const r = runOne(body);
       expect(r.status).toBe('fail');
       expect(r.error).toMatch(/is not supported/);
+    });
+  });
+
+  // chai's .include on an OBJECT target is a subset check over the argument's own
+  // keys, not a membership test. Verified against chai 5.2.0 directly; Bruno
+  // declares ^4.3.7, and these branches are unchanged between the two majors.
+  //
+  // Not reachable from the declared `contains` operator — its operand is always
+  // a coerced primitive, which lands in the invalid-combination branch, so an
+  // object left-hand side still fails there exactly as it does upstream.
+  describe('.include / .contain on an object target is a subset check', () => {
+    it('passes when the argument is a subset', () => {
+      expect(runOne('expect({a:1,b:2}).to.include({a:1});').status).toBe('pass');
+    });
+
+    it('fails naming the property and both values when it is not', () => {
+      const r = runOne('expect({a:1,b:2}).to.include({a:9});');
+      expect(r.status).toBe('fail');
+      expect(r.error).toMatch(/to have property 'a' of 9, but got 1/);
+    });
+
+    it('fails the negated form when the argument IS a subset', () => {
+      const r = runOne('expect({a:1,b:2}).to.not.include({a:1});');
+      expect(r.status).toBe('fail');
+      expect(r.error).toMatch(/to not have property 'a' of 1/);
+    });
+
+    it('passes the negated form when it is not a subset', () => {
+      expect(runOne('expect({a:1,b:2}).to.not.include({a:9});').status).toBe('pass');
+    });
+
+    // chai refuses this combination rather than guessing, in both polarities.
+    it.each([
+      ['positive', 'expect({a:1}).to.include("foo");'],
+      ['negated', 'expect({a:1}).to.not.include("foo");'],
+    ])('rejects an object target with a primitive argument (%s)', (_label, body) => {
+      const r = runOne(body);
+      expect(r.status).toBe('fail');
+      expect(r.error).toMatch(/combination of arguments \(object and string\) is invalid/);
+    });
+
+    it('leaves the array and string forms alone', () => {
+      expect(runOne('expect([1,2]).to.include(2);').status).toBe('pass');
+      expect(runOne('expect("abc").to.include("b");').status).toBe('pass');
+      expect(runOne('expect([1,2]).to.include(9);').status).toBe('fail');
+      expect(runOne('expect(200).to.include("2");').status).toBe('fail');
     });
   });
 });
