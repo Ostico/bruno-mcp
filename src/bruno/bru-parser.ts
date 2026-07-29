@@ -12,7 +12,6 @@ import {
   type MultipartFormPart,
   type BrunoEnvironment,
   type EnvVariable,
-  type HttpMethod,
   type AuthType,
   type BodyType,
   type BruParam,
@@ -23,6 +22,7 @@ import {
   type BruOAuth2AdditionalParameters,
   type BruOAuth2ParamTarget,
 } from './types.js';
+import { toHttpMethod } from './parse-guards.js';
 
 const MAX_SCRIPT_SIZE = 50_000;
 
@@ -68,10 +68,17 @@ export function parseBruRequest(content: string): BruFile {
     if (!isNaN(seq)) meta.seq = seq;
   }
 
-  const method = (json.http?.method?.toUpperCase() ?? 'GET') as HttpMethod;
+  // Checked, not asserted: the block name is whatever the file contained.
+  const method = toHttpMethod(json.http?.method);
   const http: BruHttpRequest = {
     method,
     url: json.http?.url ?? '',
+    // NOT validated against BodyType/AuthType, deliberately: a .bru file uses
+    // Bruno's own vocabulary (`multipartForm`, `formUrlEncoded`, `sparql`,
+    // `inherit`), which is a different set from these unions. The `as` below is
+    // therefore a known-false claim, left in place because correcting it means
+    // retyping BruHttpRequest and reworking the generator and round-trip with
+    // it — a larger change than this parse guard, and not attempted here.
     body: (json.http?.body ?? 'none') as BodyType,
     auth: (json.http?.auth ?? 'none') as AuthType,
   };
