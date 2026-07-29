@@ -159,11 +159,6 @@ export interface BruHeader {
   enabled?: boolean;
 }
 
-// Query parameters
-export interface BruQuery {
-  [key: string]: string | number | boolean;
-}
-
 // Variable definitions
 export interface BruVars {
   [key: string]: string | number | boolean;
@@ -262,7 +257,6 @@ export interface BruFile {
    * source of truth on generate so a disabled header is never silently re-armed.
    */
   headersList?: BruHeader[];
-  query?: BruQuery;
   body?: BruBody;
   vars?: BruVars;
   script?: {

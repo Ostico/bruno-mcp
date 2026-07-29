@@ -184,6 +184,11 @@ export function bruFileToYamlRequest(bru: BruFile): YamlRequest {
       auth: bruAuthToYamlAuth(bru.auth),
     },
     runtime: scripts.scripts.length > 0 ? scripts : undefined,
+    // buildFetchOptions reads the timeout, redirect policy, TLS options and proxy
+    // off `settings`. Without forwarding it, every one of those was unreachable
+    // from a .bru request: the .bru format declares `timeout`, the parser read it
+    // and the writer preserved it, and it then had no effect whatsoever.
+    settings: bru.settings,
     docs: bru.docs,
   };
 }

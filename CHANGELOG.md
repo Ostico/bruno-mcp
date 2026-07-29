@@ -30,7 +30,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   migrate. If you depended on it, pin `1.2.3` and open an issue describing the
   use case.
 
+- **BREAKING:** the `BruQuery` type and the `BruFile.query` field are gone.
+  Nothing read them: the `.bru` parser never populated the field and the `.bru`
+  writer never serialized it, so the only code that assigned it was silently
+  discarding data (see *Fixed*). Query parameters live on `BruFile.params` as
+  `BruParam` entries, which round-trip and are applied.
+
 ### Fixed
+
+- Query parameters given to `create_request` and `modify_request` are now written
+  to the file. Three separate holes, all silent:
+
+  - `create_request` on a **`.bru`** collection stored the pairs on a `BruFile.query`
+    field that the `.bru` writer never serialized. The request landed on disk with
+    no parameters at all — the caller got `success: true` and a file missing the
+    data it had just supplied. The `.yml` path wrote them correctly, so the same
+    call lost data in one format and not the other.
+  - `modify_request` ignored its `query` input in **both** formats. It is part of
+    the advertised tool schema, it was threaded all the way to the update
+    function, and that function never read it. The call reported success and
+    changed nothing.
+
+  Query parameters replace the previous ones, the way `headers` already do. Path
+  parameters are preserved across such an edit: the `query` input never names
+  one, so discarding them would be collateral damage from an unrelated change.
+
+  This was the writing half of the defect fixed above. Applying parameters at
+  send time only helps a file that declares them, and for `.bru` collections
+  created through the MCP tools, none did.
+
+- Per-request `settings` authored in a `.bru` file now take effect. The executor
+  reads the timeout, redirect policy, TLS options and proxy off the request's
+  settings, and the `.bru`-to-executor translation did not forward them — so a
+  `.bru` request's `settings { timeout: … }` was parsed, written back faithfully,
+  and then ignored, leaving every such request on the 30s default. The `.yml`
+  path honoured the same field, so the two formats disagreed.
 
 - Query and path parameters are now actually sent. They were declared in both
   request formats, populated by both parsers and written back faithfully by both
@@ -55,18 +89,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Known gaps
 
-Two features are still parsed, persisted and round-tripped without being applied
-at execution time. Neither is newly broken; both are recorded here so they are
-not mistaken for working:
+These features are still parsed, persisted and round-tripped without being
+applied at execution time. None is newly broken; they are recorded here so they
+are not mistaken for working:
 
 - **`assert` blocks are never evaluated**, in either format. A run reports zero
   assertions rather than checking the ones the collection declares.
 - **`vars:pre-request` and `vars:post-response` are never applied.**
+- **`settings.encodeUrl` is never read.** Both formats parse it and both writers
+  preserve it, and nothing consults it when building the request. Parameter values
+  are always percent-encoded. It is left unimplemented rather than guessed at:
+  the flag's exact scope upstream (whether it covers the authored URL, the path
+  segments, or only the query string) decides what turning it off should mean,
+  and inventing that would silently send different bytes than Bruno does.
 
-Auth is not in this category — unapplied auth types warn explicitly, and
-`auth: inherit` reports that collection-level inheritance is unsupported. The
-`AuthType` union does, however, advertise `api-key`, `oauth2` and `digest` while
-only `bearer` and `basic` are implemented.
+Auth is not in this category — unapplied types warn explicitly, and
+`auth: inherit` reports that collection-level inheritance is unsupported.
+`bearer`, `basic` and `api-key` are implemented (`api-key` accepts Bruno's own
+one-word `apikey` spelling and honours both header and query placement); only
+`oauth2` and `digest` are declared without an implementation, and both warn.
 
 - JSON, XML and SPARQL request bodies are no longer sent labelled as plain text.
   A `Content-Type` is now derived from the body type: `application/json`,
