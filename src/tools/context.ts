@@ -1,5 +1,5 @@
 /**
- * The slice of BrunoMcpServer that tool registrations need (finding Q14).
+ * The slice of BrunoMcpServer that tool registrations need.
  *
  * Each tool used to be a private method reaching into `this`. Passing this
  * context instead is what let the registrations move out of server.ts without

@@ -1,8 +1,8 @@
 /**
- * General `.bru` round-trip fidelity guard (finding D10).
+ * General `.bru` round-trip fidelity guard.
  *
- * `bru-roundtrip-fidelity.test.ts` pins down the specific fields that findings
- * D5/D6 restored. This suite is the *general* property those targeted tests
+ * `bru-roundtrip-fidelity.test.ts` pins down the specific fields that earlier
+ * fixes restored. This suite is the *general* property those targeted tests
  * cannot express: for any document, parse → generate → parse must lose nothing,
  * and the failure must name what was lost.
  *
@@ -41,7 +41,7 @@ interface BruFixture {
    * round-trip. The order assertions become `it.failing`, so the day the cause
    * is fixed this suite goes red and the waiver has to be removed.
    *
-   * The cause is upstream and confirmed (finding D12): `@usebruno/lang`'s
+   * The cause is upstream and confirmed: `@usebruno/lang`'s
    * `jsonToBru.js` emits every ordered block in two filtered passes —
    * `enabled(items)` then `disabled(items)` (see its lines 6-7 and 156-170) — so
    * a `~`-disabled entry written mid-block is always relocated to the bottom.
@@ -579,8 +579,8 @@ describe('.bru fixture table covers the whole model', () => {
    */
   const UNREACHABLE: Record<string, string> = {
     query:
-      'legacy flat query map: parseBruRequest never populates it (params/BruParam superseded it in D5)',
-    vars: 'legacy flat vars map: parseBruRequest populates varSets instead (D5)',
+      'legacy flat query map: parseBruRequest never populates it (params/BruParam superseded it)',
+    vars: 'legacy flat vars map: parseBruRequest populates varSets instead',
   };
 
   const exercised = new Set(

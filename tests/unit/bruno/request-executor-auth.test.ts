@@ -1,5 +1,5 @@
 /**
- * Auth application at execution (finding A7).
+ * Auth application at execution.
  *
  * Auth is authored and parsed but was never applied on the wire: a request with
  * bearer/basic/api-key auth sent no credential, so a run against a protected
@@ -149,7 +149,7 @@ describe('bruAuthToYamlAuth (.bru auth reaches the executor)', () => {
 });
 
 /**
- * Unresolved-variable warnings (finding X8).
+ * Unresolved-variable warnings.
  *
  * When substitution leaves a `{{var}}` placeholder unresolved the literal used
  * to go on the wire silently. buildFetchOptions now names each unresolved

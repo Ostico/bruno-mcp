@@ -13,7 +13,7 @@ import { parseBruRequest } from '../../../src/bruno/bru-parser';
 
 // In-memory fs
 const store = new Map<string, string>();
-// D9: writers now go through writeFileAtomic instead of a plain fs write. Route it
+// Writers now go through writeFileAtomic instead of a plain fs write. Route it
 // back to the same fs mock so these tests keep asserting on the content and path
 // written; the write mechanism itself is covered by the atomic-write suites.
 jest.mock('../../../src/bruno/atomic-write.js', () => ({

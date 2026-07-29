@@ -1,5 +1,5 @@
 /**
- * The syscall-level contract of writeFileAtomic (finding S24).
+ * The syscall-level contract of writeFileAtomic.
  *
  * The real-filesystem suite proves the observable behaviour. These assert the
  * properties that make it *safe* and that no black-box test can see: where the

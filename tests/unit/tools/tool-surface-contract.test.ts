@@ -1,5 +1,5 @@
 /**
- * Golden master of the MCP tool surface (finding Q14).
+ * Golden master of the MCP tool surface.
  *
  * Written BEFORE server.ts was split into per-tool modules, and deliberately
  * not touched by that refactor: it exists to prove the split changed nothing a
@@ -127,7 +127,7 @@ const EXPECTED_TOOLS = [
   'run_collection',
 ];
 
-describe('MCP tool surface contract (Q14)', () => {
+describe('MCP tool surface contract', () => {
   const surface = readSurface();
 
   it('registers exactly the expected tools, in the expected order', () => {

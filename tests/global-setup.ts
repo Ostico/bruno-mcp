@@ -7,7 +7,7 @@
  * test files in parallel workers. When each suite built in its own `beforeAll`,
  * one suite's `--clean` could land after the other's build had finished but
  * before it spawned, so a suite would spawn a path that had just been deleted
- * (finding Q18). That is a real flake, not a theoretical one; mcp-stdio.test.ts
+ *. That is a real flake, not a theoretical one; mcp-stdio.test.ts
  * used to carry a snapshot-plus-retry workaround for it.
  *
  * Hoisting the build here removes the race by construction rather than making
@@ -28,7 +28,7 @@ import path from 'node:path';
 
 const repoRoot = path.resolve(__dirname, '..');
 
-/** Left behind by the pre-Q18 snapshot workaround in mcp-stdio.test.ts. */
+/** Left behind by an earlier snapshot workaround in mcp-stdio.test.ts. */
 const legacySnapshotDir = path.join(repoRoot, 'tests', 'integration', '.mcp-stdio-dist');
 
 interface ExecError extends Error {

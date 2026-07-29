@@ -136,7 +136,7 @@ describe('Environment Loader', () => {
     });
   });
 
-  describe('loadEnvironment — native .bru format (finding X11)', () => {
+  describe('loadEnvironment — native .bru format', () => {
     it('should load variables from a native .bru environment file when no .yml exists', async () => {
       const envDir = join(tempDir, 'environments');
       await fs.mkdir(envDir, { recursive: true });
@@ -270,7 +270,7 @@ describe('Environment Loader', () => {
     });
   });
 
-  describe('findUnresolvedPlaceholders (finding X8)', () => {
+  describe('findUnresolvedPlaceholders', () => {
     it('returns an empty array for an empty template', () => {
       expect(findUnresolvedPlaceholders('', new Map())).toEqual([]);
     });

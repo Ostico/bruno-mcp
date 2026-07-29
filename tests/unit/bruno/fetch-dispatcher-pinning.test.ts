@@ -1,5 +1,5 @@
 /**
- * End-to-end proof that address pinning actually takes effect (S20/S21).
+ * End-to-end proof that address pinning actually takes effect.
  *
  * The rest of the dispatcher suite mocks undici, so it can only assert that a
  * `connect.lookup` was handed over. These tests run against the real undici and

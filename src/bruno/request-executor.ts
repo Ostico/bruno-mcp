@@ -107,8 +107,8 @@ export function bruFileToYamlRequest(bru: BruFile): YamlRequest {
   // Prefer headersList: it is the parser's order-preserving record of every
   // authored header, duplicates and disabled flags included. `bru.headers` is
   // the flat Record kept for lookups, so building from it collapsed repeated
-  // names before the model even existed (finding D4) and dropped the disabled
-  // flag that buildFetchOptions needs to honour (D13). Fall back to the Record
+  // names before the model even existed and dropped the disabled
+  // flag that buildFetchOptions needs to honour. Fall back to the Record
   // only for a BruFile that carries no headersList.
   const headers = bru.headersList
     ? bru.headersList.map((h) => ({
@@ -132,7 +132,7 @@ export function bruFileToYamlRequest(bru: BruFile): YamlRequest {
         };
         if (part.contentType) item.contentType = part.contentType;
         // Carry the enabled flag through so a part disabled in the .bru file is
-        // not silently re-enabled by the converter (finding X13). Only an
+        // not silently re-enabled by the converter. Only an
         // explicit `false` is recorded; `undefined`/`true` stay enabled.
         if (part.enabled === false) item.enabled = false;
         return item;
@@ -163,7 +163,7 @@ export function bruFileToYamlRequest(bru: BruFile): YamlRequest {
  * the executor and the .yml path both consume the flat form ({type, token} /
  * {type, username, password} / {type, key, value, in}). Without this, auth
  * authored in a .bru file was dropped here — before the request even reached
- * buildFetchOptions — which is the first half of finding A7.
+ * buildFetchOptions.
  */
 export function bruAuthToYamlAuth(auth: BruFile['auth']): YamlAuth | undefined {
   if (!auth || auth.type === 'none') {
@@ -269,7 +269,7 @@ function isWithin(root: string, p: string): boolean {
  * The path comes from the (untrusted) collection, so without confinement a
  * collection could name `/etc/passwd`, `~/.ssh/id_rsa`, an env file, etc. and
  * have its contents POSTed to any host — arbitrary file read + exfiltration
- * (finding S05).
+ *.
  *
  * The read is allowed only when the resolved path sits under one of: the
  * collection root, the user's home directory, the OS temp dir (and `/tmp`), or
@@ -310,7 +310,7 @@ function confineUploadPath(filePath: string, collectionRoot: string | undefined)
   return resolved;
 }
 
-/** Query-parameter names whose values are masked before a URL is shown to the caller (finding S22). */
+/** Query-parameter names whose values are masked before a URL is shown to the caller. */
 const SECRET_QUERY_PARAMS = new Set([
   'key', 'api-key', 'apikey', 'api_key', 'x-api-key',
   'token', 'access_token', 'refresh_token', 'id_token', 'api_token', 'apitoken',
@@ -320,7 +320,7 @@ const SECRET_QUERY_PARAMS = new Set([
 
 /**
  * Redact secrets from a URL before it is returned to the caller or embedded in
- * an error message (finding S22). A query api-key or userinfo
+ * an error message. A query api-key or userinfo
  * (`https://user:pass@host`) substituted from an env file must not cross back
  * over the MCP boundary. Userinfo is always stripped; the values of known
  * secret-bearing query parameters are masked. When there is nothing sensitive
@@ -354,7 +354,7 @@ const CROSS_ORIGIN_STRIP_HEADERS = ['authorization', 'cookie', 'proxy-authorizat
 
 /**
  * Drop credential-bearing headers when a redirect crosses to a different origin
- * (findings S06/S07). Real fetch() strips these on a cross-origin redirect; the
+ *. Real fetch() strips these on a cross-origin redirect; the
  * manual redirect loop must do the same, or a target that 302s to an attacker
  * hands it the caller's Authorization / api-key / cookies. `authHeaderNames`
  * are the header names auth was actually applied to, so a caller-named api-key
@@ -377,7 +377,7 @@ export function stripCredentialHeaders(
 
 /**
  * Request headers whose value is NOT defined as a comma-separated list, so a
- * sender must not repeat them at all (finding D15).
+ * sender must not repeat them at all.
  *
  * RFC 9110 §5.2/§5.3 permit combining repeated field lines only when the field
  * is defined as a list (ABNF `#rule`). Repeating a singleton field and joining
@@ -415,7 +415,7 @@ const SINGLE_VALUE_HEADERS = new Set([
 
 /**
  * Add one authored header to the outgoing set, combining rather than replacing
- * when the name has already been seen (finding D4).
+ * when the name has already been seen.
  *
  * A collection may author the same header twice — two Accept values, two Cookie
  * pairs, an X-Forwarded-For chain. The previous `headers[h.name] = value` kept
@@ -458,7 +458,7 @@ export async function buildFetchOptions(
   vars: Map<string, string>,
   collectionRoot?: string,
 ): Promise<{ url: string; options: RequestInit; warnings?: string[]; authHeaderNames?: string[] }> {
-  // Finding X8: surface any {{var}} that substitution could not resolve so an
+  // Surface any {{var}} that substitution could not resolve so an
   // unsubstituted placeholder can no longer reach the wire silently. The
   // failure mode is starkest under parallel per-folder isolation — a variable
   // set by a script in one folder is invisible to another folder's requests —
@@ -488,7 +488,7 @@ export async function buildFetchOptions(
   const headerWarnings: string[] = [];
   if (yaml.http.headers) {
     for (const h of yaml.http.headers) {
-      // A header explicitly disabled in the collection must not be sent (D13).
+      // A header explicitly disabled in the collection must not be sent.
       // Skip before substituting, so a disabled header's placeholders are not
       // reported as unresolved either.
       if (h.disabled === true) continue;
@@ -507,7 +507,7 @@ export async function buildFetchOptions(
     }
   }
 
-  // Apply the request's auth on the wire (finding A7): it was authored and
+  // Apply the request's auth on the wire: it was authored and
   // parsed but never sent. Header-based schemes mutate `headers`; a query
   // api-key comes back to be appended to the URL; a scheme we cannot apply
   // automatically is surfaced as a warning rather than dropped in silence.
@@ -540,8 +540,8 @@ export async function buildFetchOptions(
     const parts = body!.data as MultipartFormPart[];
 
     for (const part of parts) {
-      // A part explicitly disabled in the collection must not be sent (finding
-      // X13). Skip before tracking/substituting so a disabled part's
+      // A part explicitly disabled in the collection must not be sent.
+      // Skip before tracking/substituting so a disabled part's
       // placeholders never reach the wire nor raise a warning.
       if (part.enabled === false) continue;
       if (part.contentType) trackUnresolved(part.contentType);
@@ -556,7 +556,7 @@ export async function buildFetchOptions(
           const filePath = substitute(String(rawPath), vars);
           // A file-part path is collection-controlled; confine the read to the
           // collection root so a collection cannot exfiltrate arbitrary host
-          // files (finding S05).
+          // files.
           const resolvedPath = confineUploadPath(filePath, collectionRoot);
           const buf = await readFile(resolvedPath);
           form.append(
@@ -611,7 +611,7 @@ export async function buildFetchOptions(
 }
 
 /**
- * Apply a request's auth to the outgoing headers (finding A7).
+ * Apply a request's auth to the outgoing headers.
  *
  * Header-based schemes (bearer, basic, header api-key) mutate `headers` in
  * place. A query api-key is returned so the caller can append it to the URL.
@@ -734,7 +734,7 @@ async function executeSingleRequest(
   let url = built.url;
   let options = built.options;
   // Reassignable: a pre-request script that sets a variable triggers a
-  // re-substitution below (finding X12), which re-derives auth warnings and the
+  // re-substitution below, which re-derives auth warnings and the
   // applied auth-header names from the merged vars so they stay consistent.
   let authWarnings = built.warnings;
   let authHeaderNames = built.authHeaderNames ?? [];
@@ -754,7 +754,7 @@ async function executeSingleRequest(
     const preResult = await scriptRunner.runPreRequestScript(preScript, mockReqData, {
       timeout: yaml.settings?.timeout ?? 5000,
       // Seed the merged env/collection/runtime vars so the script can read them
-      // via bru.getVar (finding X10). effectiveVars is the same set fed to
+      // via bru.getVar. effectiveVars is the same set fed to
       // buildFetchOptions, so getVar and {{placeholder}} substitution see one
       // consistent view. Object.fromEntries defines every entry as an OWN data
       // property (so a variable literally named "__proto__" is a plain key, not
@@ -764,14 +764,14 @@ async function executeSingleRequest(
 
     // Feed variables the script set into the store FIRST, so they are visible
     // both to later requests and — via the re-substitution below — to THIS
-    // request's own {{placeholders}} (finding X12).
+    // request's own {{placeholders}}.
     if (variableStore) {
       for (const [k, v] of Object.entries(preResult.variables)) {
         variableStore.set(k, v as string | number | boolean);
       }
     }
 
-    // X12: substitution in buildFetchOptions ran BEFORE this script, so a
+    // Substitution in buildFetchOptions ran BEFORE this script, so a
     // `bru.setVar('x', …)` here could not fill this request's own `{{x}}`. When
     // the script set any variable, re-substitute from the ORIGINAL templates
     // with the now-merged vars. This is still a SINGLE pass over the original
@@ -810,10 +810,10 @@ async function executeSingleRequest(
   // The URL is finalized here (post pre-request mutation). `url` keeps any
   // substituted secrets and is what we actually fetch; `shownUrl` is the
   // redacted form used everywhere a URL crosses back to the caller — results
-  // and error messages (finding S22).
+  // and error messages.
   const shownUrl = redactUrl(url);
 
-  // A failing pre-request script must HALT the request (finding X15): the HTTP
+  // A failing pre-request script must HALT the request: the HTTP
   // call must not fire. Return a failed result carrying the script error before
   // the SSRF check and fetch, using the already-redacted URL so no substituted
   // secret crosses back to the caller.
@@ -861,8 +861,8 @@ async function executeSingleRequest(
   // A dispatcher is built for every hop, not only when the collection carries
   // TLS/proxy settings: without one the request would go through global fetch(),
   // which re-resolves the hostname and can land on an address the SSRF check
-  // never saw (S20). Each hop gets its own, so a socket is never reused for a
-  // target it was not validated against (S21).
+  // never saw. Each hop gets its own, so a socket is never reused for a
+  // target it was not validated against.
   const openDispatchers: DispatcherResult[] = [];
   const dispatcherFor = async (
     target: string,
@@ -929,7 +929,7 @@ async function executeSingleRequest(
         };
       }
 
-      // X2 / RFC 9110: following a 303 (always) and a 301/302 (near-universal
+      // RFC 9110: following a 303 (always) and a 301/302 (near-universal
       // browser and fetch behaviour) with a method other than GET/HEAD must
       // switch the method to GET and drop the request body on the redirected
       // hop. 307/308 preserve method and body, so they are left untouched.
@@ -942,7 +942,7 @@ async function executeSingleRequest(
         }
       }
 
-      // S06/S07: strip credential headers when the hop crosses origin, so a
+      // Strip credential headers when the hop crosses origin, so a
       // redirect to another host cannot harvest the caller's Authorization,
       // api-key, or cookies. Once stripped they stay stripped for later hops.
       if (new URL(redirectUrl).origin !== new URL(currentUrl).origin) {
@@ -971,7 +971,7 @@ async function executeSingleRequest(
       redirectCount++;
     }
 
-    // X1: the cap is only exceeded when the loop stopped at the limit while the
+    // The cap is only exceeded when the loop stopped at the limit while the
     // response is STILL a redirect that would need following. A final non-3xx
     // response reached within the cap (including maxRedirects: 0 with no
     // redirect at all) is a success, not a "too many redirects" error.
@@ -1003,7 +1003,7 @@ async function executeSingleRequest(
       const scriptResult = await scriptRunner.runScript(testScript, wrappedResponse, {
         // Seed the current merged vars (env/collection/runtime plus anything the
         // pre-request script wrote into the store) so a post-response script can
-        // read them via bru.getVar (finding X10).
+        // read them via bru.getVar.
         variables: Object.fromEntries(
           variableStore ? variableStore.merge(vars) : vars,
         ),
@@ -1143,7 +1143,7 @@ export class RequestExecutor {
           // one folder is therefore invisible to another folder's requests. We
           // do NOT bridge stores across folders; instead buildFetchOptions
           // surfaces any {{var}} left unresolved as a per-request warning
-          // (finding X8), so this isolation can no longer let an unsubstituted
+          //, so this isolation can no longer let an unsubstituted
           // placeholder reach the wire silently the way serial mode would not.
           const folderStore = new VariableStore();
           const folderRes: RequestExecutionResult[] = [];

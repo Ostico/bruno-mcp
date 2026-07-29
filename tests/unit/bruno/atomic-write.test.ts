@@ -1,5 +1,5 @@
 /**
- * Behaviour of writeFileAtomic against a real filesystem (findings D9 / S24).
+ * Behaviour of writeFileAtomic against a real filesystem.
  */
 
 import { mkdtemp, readFile, writeFile, stat, chmod, readdir, mkdir, rm } from 'node:fs/promises';

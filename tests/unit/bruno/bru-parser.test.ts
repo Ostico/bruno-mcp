@@ -257,7 +257,7 @@ get {
     });
   });
 
-  describe('non-string body round-trips (D2)', () => {
+  describe('non-string body round-trips', () => {
     it('preserves a graphql body (query + variables) through parse -> generate -> parse', () => {
       const bru = `meta {
   name: GQL
@@ -384,7 +384,7 @@ body:file {
     });
   });
 
-  describe('disabled header round-trip (D3)', () => {
+  describe('disabled header round-trip', () => {
     const BRU_WITH_DISABLED_HEADER = `meta {
   name: Sec
   type: http
@@ -642,7 +642,7 @@ script:post-response {
     });
   });
 
-  describe('.bru environment secret flag round-trip (D7)', () => {
+  describe('.bru environment secret flag round-trip', () => {
     it('preserves secret:true across generate + parse', () => {
       const vars: EnvVariable[] = [
         { name: 'apiKey', value: 's3cret', secret: true },

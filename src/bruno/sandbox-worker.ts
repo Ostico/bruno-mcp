@@ -597,7 +597,7 @@ export function detectDoubleParse(message: string): string[] {
  */
 const SANDBOX_BRU_LIB = `
 (function() {
-  // Two stores, deliberately separate (finding X10):
+  // Two stores, deliberately separate:
   //   store   - everything the script can READ via getVar: the external
   //             env/collection variables seeded by __bruSeed PLUS the script's
   //             own writes.
@@ -637,8 +637,8 @@ const SANDBOX_BRU_LIB = `
 
 /**
  * Per-job JS source that seeds the sandbox variable store with external
- * (env/collection) variables so a script's bru.getVar can read them (finding
- * X10). Emitted AFTER SANDBOX_BRU_LIB so __bruSeed is defined, and BEFORE the
+ * (env/collection) variables so a script's bru.getVar can read them.
+ * Emitted AFTER SANDBOX_BRU_LIB so __bruSeed is defined, and BEFORE the
  * user script so reads see the values.
  *
  * The variables cross as a JSON string literal, double-encoded: the inner
@@ -772,7 +772,7 @@ export interface SandboxJob {
   response?: MockResponseData;
   /**
    * External (env/collection) variables to seed into the sandbox so the
-   * script's bru.getVar can read them (finding X10). Plain JSON-serialisable
+   * script's bru.getVar can read them. Plain JSON-serialisable
    * data; the worker never treats it as anything but values to read back.
    */
   variables?: Record<string, unknown>;
@@ -876,7 +876,7 @@ const PENDING_NEVER_SETTLED =
  * registered a pending slot but never settled to a failure.
  *
  * Called from the catch path to preserve results already recorded before a
- * top-level throw (finding A4): the outer catch used to return a single
+ * top-level throw: the outer catch used to return a single
  * synthetic failure, discarding every test() result the script had produced
  * before it threw. The success path reads __results with the same shape inline;
  * the two share PENDING_NEVER_SETTLED so the never-settled mapping cannot drift.
@@ -1012,7 +1012,7 @@ export function runTestJob(
 
       const warnings = detectDoubleParse(message);
 
-      // A4: a top-level throw after one or more test() blocks already recorded
+      // A top-level throw after one or more test() blocks already recorded
       // results must not discard them. Recover whatever the sandbox managed to
       // record before the throw and report the script error alongside it,
       // rather than replacing the entire run with a single synthetic failure.

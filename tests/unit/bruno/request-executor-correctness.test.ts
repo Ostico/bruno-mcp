@@ -1,12 +1,12 @@
 /**
  * Correctness fixes for the request executor.
  *
- *  X13 — a multipart form part disabled in the collection must NOT be sent.
+ *  A multipart form part disabled in the collection must NOT be sent.
  *        The .bru -> internal converter now carries the `enabled` flag and the
  *        multipart build loop skips any part with `enabled === false`.
- *  X15 — a failing pre-request script must HALT the request: the HTTP call must
+ *  A failing pre-request script must HALT the request: the HTTP call must
  *        not fire and the result carries the script error.
- *  X12 — a variable set by the pre-request script must fill THIS request's own
+ *  A variable set by the pre-request script must fill THIS request's own
  *        {{placeholders}} (re-substitution from the original template with the
  *        merged vars), while the script's req.set* mutations keep precedence.
  *
@@ -99,10 +99,10 @@ function mockScriptRunner(preResult: {
 }
 
 // ---------------------------------------------------------------------------
-// X13 — disabled multipart parts must not be sent
+// Disabled multipart parts must not be sent
 // ---------------------------------------------------------------------------
 
-describe('X13 — disabled multipart form parts are dropped', () => {
+describe('Disabled multipart form parts are dropped', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockFetch.mockResolvedValue(createMockResponse({ ok: true }));
@@ -162,10 +162,10 @@ describe('X13 — disabled multipart form parts are dropped', () => {
 });
 
 // ---------------------------------------------------------------------------
-// X15 — a failing pre-request script halts the request
+// A failing pre-request script halts the request
 // ---------------------------------------------------------------------------
 
-describe('X15 — failing pre-request script halts before fetch', () => {
+describe('Failing pre-request script halts before fetch', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockFetch.mockResolvedValue(createMockResponse({ ok: true }));
@@ -237,10 +237,10 @@ runtime:
 });
 
 // ---------------------------------------------------------------------------
-// X12 — a pre-request setVar fills this request's own {{placeholders}}
+// A pre-request setVar fills this request's own {{placeholders}}
 // ---------------------------------------------------------------------------
 
-describe('X12 — pre-request variables fill the same request', () => {
+describe('Pre-request variables fill the same request', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockFetch.mockResolvedValue(createMockResponse({ ok: true }));

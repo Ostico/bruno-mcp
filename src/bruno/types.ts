@@ -73,7 +73,7 @@ export interface BruAuth {
     scope?: string;
     username?: string;
     password?: string;
-    /** Extra parameters attached to the authorization/token/refresh calls (D6). */
+    /** Extra parameters attached to the authorization/token/refresh calls. */
     additionalParameters?: BruOAuth2AdditionalParameters;
   };
   apikey?: {
@@ -110,7 +110,7 @@ export interface BruFilePart {
 
 // A `body:graphql` payload. `@usebruno/lang` returns the graphql body as an
 // object { query, variables? } (both raw strings), not a string — the string
-// guard in the parser used to discard it entirely (finding D2).
+// guard in the parser used to discard it entirely.
 export interface BruGraphql {
   query: string;
   variables?: string;
@@ -133,13 +133,13 @@ export interface BruBody {
 // HTTP headers — effective (enabled-only) name→value map. Disabled headers are
 // intentionally excluded here because this map drives what actually gets sent;
 // their names/values/flags are preserved separately in BruFile.headersList so
-// they survive a parse→generate round-trip (finding D3).
+// they survive a parse→generate round-trip.
 export interface BruHeaders {
   [key: string]: string;
 }
 
 // A single header entry preserving its enabled/disabled state, following the
-// MultipartFormPart `enabled?` pattern (finding X13). `enabled` is only recorded
+// MultipartFormPart `enabled?` pattern. `enabled` is only recorded
 // when the header is explicitly disabled (Bruno's leading `~`); default stays
 // enabled. Used for lossless round-tripping alongside the BruHeaders map.
 export interface BruHeader {
@@ -177,7 +177,7 @@ export interface BruTests {
 /**
  * A `params:query` / `params:path` entry. Kept as an ordered list rather than a
  * record so duplicate names and the disabled (`~`) marker both survive a
- * round-trip (finding D5).
+ * round-trip.
  */
 export interface BruParam {
   name: string;
@@ -229,7 +229,7 @@ export interface BruOAuth2AdditionalParam {
 }
 
 /**
- * Extra parameters attached to the three oauth2 exchanges (finding D6). The
+ * Extra parameters attached to the three oauth2 exchanges. The
  * grammar allows eight blocks: the authorization request takes headers and
  * queryparams, while the token and refresh requests also take body.
  */
@@ -246,7 +246,7 @@ export interface BruFile {
   headers?: BruHeaders;
   /**
    * Full ordered header list preserving each header's enabled/disabled (`~`)
-   * state (finding D3). `headers` above holds only the enabled subset for value
+   * state. `headers` above holds only the enabled subset for value
    * lookup and stays for backward compatibility; when present, this list is the
    * source of truth on generate so a disabled header is never silently re-armed.
    */
@@ -260,13 +260,13 @@ export interface BruFile {
   };
   tests?: BruTests;
   docs?: string;
-  /** `params:query` and `params:path` entries, in document order (D5). */
+  /** `params:query` and `params:path` entries, in document order. */
   params?: BruParam[];
-  /** `assert` entries, in document order (D5). */
+  /** `assert` entries, in document order. */
   assertions?: BruAssertion[];
-  /** The request-level `settings` block (D5). */
+  /** The request-level `settings` block. */
   settings?: BruRequestSettings;
-  /** Vars with their disabled/local flags preserved (D5). */
+  /** Vars with their disabled/local flags preserved. */
   varSets?: BruVarSets;
 }
 
@@ -403,7 +403,7 @@ export interface YamlHeader {
   value: string;
   /**
    * A header the author switched off. It must survive a round-trip and must not
-   * be sent (finding D13): dropping the flag silently re-armed a header the user
+   * be sent: dropping the flag silently re-armed a header the user
    * had deliberately disabled, including a credential one.
    */
   disabled?: boolean;
@@ -465,14 +465,14 @@ export interface YamlSettings {
   proxy?: string;
 }
 
-/** An `assert` entry in a .yml request (finding D11). */
+/** An `assert` entry in a .yml request. */
 export interface YamlAssertion {
   name: string;
   value: string;
   disabled?: boolean;
 }
 
-/** A `vars` entry in a .yml request (finding D11). */
+/** A `vars` entry in a .yml request. */
 export interface YamlVar {
   name: string;
   value: string;
@@ -491,9 +491,9 @@ export interface YamlRequest {
   runtime?: YamlRuntime;
   settings?: YamlSettings;
   docs?: string;
-  /** Assertions, preserved across a round-trip (D11). */
+  /** Assertions, preserved across a round-trip. */
   assert?: YamlAssertion[];
-  /** Pre-request and post-response vars, preserved across a round-trip (D11). */
+  /** Pre-request and post-response vars, preserved across a round-trip. */
   vars?: YamlVars;
 }
 
@@ -564,7 +564,7 @@ export interface MockResponseData {
   responseTime: number;
   /** Raw response text before any JSON parsing (consumed once from the stream). */
   rawBody?: string;
-  /** Every Set-Cookie value, preserved individually (finding X7) — the flat
+  /** Every Set-Cookie value, preserved individually — the flat
    * `headers` map comma-joins them, which is lossy because cookie values may
    * contain commas. Present only when the response set at least one cookie. */
   setCookies?: string[];
@@ -584,7 +584,7 @@ export interface TestRunnerOptions {
   timeout?: number;
   /**
    * External (env/collection) variables the script may read via bru.getVar
-   * (finding X10). Seeded into the sandbox's read store only; a variable the
+   *. Seeded into the sandbox's read store only; a variable the
    * script merely reads is not echoed back in the result's `variables`.
    */
   variables?: Record<string, unknown>;
@@ -630,7 +630,7 @@ export interface EnvVariable {
   disabled?: boolean;
   /** Whether the .bru `secret` flag is set on this variable. Preserved across
    * parse/generate/merge so an edit does not downgrade a secret var to
-   * plaintext (finding D7). */
+   * plaintext. */
   secret?: boolean;
 }
 

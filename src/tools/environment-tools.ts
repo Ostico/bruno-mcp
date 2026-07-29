@@ -1,5 +1,5 @@
 /**
- * MCP tool registrations: environment tools (finding Q14).
+ * MCP tool registrations: environment tools.
  *
  * Moved out of server.ts unchanged apart from `this.` becoming `ctx.`.
  */

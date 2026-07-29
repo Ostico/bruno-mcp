@@ -81,7 +81,7 @@ function parseHeaders(raw: unknown): YamlHeader[] | undefined {
       value: String(h.value ?? ''),
     };
     // Without this the flag was dropped at parse time and the header came back
-    // enabled, so a disabled credential header got sent (D13).
+    // enabled, so a disabled credential header got sent.
     if (h.disabled === true) header.disabled = true;
     return header;
   });
@@ -106,8 +106,8 @@ function parseBody(raw: unknown): YamlBody | undefined {
       if (part.contentType !== undefined) {
         item.contentType = String(part.contentType);
       }
-      // The executor skips a part with enabled === false (X13), but nothing in
-      // the .yml path ever set it, so a disabled part was silently sent (D14).
+      // The executor skips a part with enabled === false, but nothing in
+      // the .yml path ever set it, so a disabled part was silently sent.
       if (part.disabled === true) item.enabled = false;
       return item;
     });
@@ -145,7 +145,7 @@ function parseHttpSection(raw: Record<string, unknown>): YamlHttp {
   };
 
   // The generator already writes params back out; not reading them here is what
-  // dropped every query and path parameter on a round-trip (D11).
+  // dropped every query and path parameter on a round-trip.
   const params = parseParams(raw.params);
   if (params.length > 0) http.params = params;
 
@@ -282,7 +282,7 @@ export function parseYamlRequest(content: string): YamlRequest {
   }
 
   // Assertions and vars were not modelled at all, so they vanished on any
-  // read-modify-write of a .yml request (D11).
+  // read-modify-write of a .yml request.
   const assertions = parseAssertions(doc.assert);
   if (assertions.length > 0) result.assert = assertions;
 

@@ -169,7 +169,7 @@ export class RequestBuilder {
    */
   async updateRequest(filePath: string, updates: Partial<CreateRequestInput>): Promise<FileOperationResult> {
     // The file is read, merged with `updates`, and written back. Hold the lock
-    // across the pair so a concurrent update is not silently discarded (D8).
+    // across the pair so a concurrent update is not silently discarded.
     return withPathLock(filePath, () => this.updateRequestLocked(filePath, updates));
   }
 

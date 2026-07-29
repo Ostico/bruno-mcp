@@ -270,7 +270,7 @@ describe('BrunoResponse', () => {
   });
 });
 
-describe('readBodyCapped (X3: bounded response read)', () => {
+describe('readBodyCapped (bounded response read)', () => {
   it('reads a small streamed body in full', async () => {
     const res = new Response('hello world');
     expect(await readBodyCapped(res, 1000)).toEqual({ text: 'hello world', truncated: false });
@@ -314,7 +314,7 @@ describe('readBodyCapped (X3: bounded response read)', () => {
   });
 });
 
-describe('readBodyCapped — Content-Type charset (X4)', () => {
+describe('readBodyCapped — Content-Type charset', () => {
   it('decodes a non-UTF-8 body using the declared charset (ISO-8859-1)', async () => {
     // 0xE9 is 'é' in ISO-8859-1 (latin1) but an invalid UTF-8 lead byte.
     const body = new Uint8Array([0x63, 0x61, 0x66, 0xe9]); // "café" in latin1
@@ -354,7 +354,7 @@ describe('readBodyCapped — Content-Type charset (X4)', () => {
   });
 });
 
-describe('wrapFetchResponse — Set-Cookie preservation (X7)', () => {
+describe('wrapFetchResponse — Set-Cookie preservation', () => {
   it('preserves every Set-Cookie value individually', async () => {
     const headers = new Headers();
     headers.append('set-cookie', 'a=1; Path=/');
@@ -369,7 +369,7 @@ describe('wrapFetchResponse — Set-Cookie preservation (X7)', () => {
   });
 });
 
-describe('isJsonContentType — unified predicate boundary (X6)', () => {
+describe('isJsonContentType — unified predicate boundary', () => {
   it.each([
     ['application/json', true],
     ['application/json; charset=utf-8', true],
@@ -393,7 +393,7 @@ describe('isJsonContentType — unified predicate boundary (X6)', () => {
   });
 });
 
-describe('JSON content-type detection consistency (X6)', () => {
+describe('JSON content-type detection consistency', () => {
   it('text/json: getBody() and wrapFetchResponse agree — both parse to the same object', async () => {
     const jsonBody = JSON.stringify({ ok: true });
 
@@ -426,7 +426,7 @@ describe('wrapFetchResponse — body handling', () => {
     expect(out.rawBody).toBe('{"a":1}');
   });
 
-  it('caps an oversized body and warns (X3)', async () => {
+  it('caps an oversized body and warns', async () => {
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     const out = await wrapFetchResponse(new Response('y'.repeat(1000)), 1, 20);
     expect(out.rawBody!.length).toBe(20);

@@ -7,9 +7,9 @@ import type { TlsSettings, YamlSettings } from './types.js';
  * `settings.proxy` unconditionally lets any collection disable certificate
  * verification, install its own CA/client certificate, or route every request
  * — with all its credentials — through a proxy it names: a silent MITM with no
- * preconditions (findings S10/S11/S12). So these overrides are DENIED by
+ * preconditions. So these overrides are DENIED by
  * default and re-enabled only per target host by the operator, mirroring the
- * host-scoped SSRF allowlist (finding S13):
+ * host-scoped SSRF allowlist:
  *
  *   BRUNO_INSECURE_TLS_HOSTS  hosts that may use a collection's
  *                             rejectUnauthorized:false / ca / cert / key
@@ -113,7 +113,7 @@ export interface DispatcherResult {
  * `pinnedAddresses` are the addresses validateUrl() already checked against the
  * SSRF denylist. When present, the dispatcher connects to exactly those and
  * performs no lookup of its own, which closes the DNS-rebinding window between
- * validation and connection (findings S20/S21). The Host header and TLS SNI
+ * validation and connection. The Host header and TLS SNI
  * still carry the hostname, so virtual hosting and certificate validation are
  * unaffected.
  *

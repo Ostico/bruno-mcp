@@ -1,5 +1,5 @@
 /**
- * Unresolved-variable warnings (finding X8).
+ * Unresolved-variable warnings.
  *
  * Requests are executed with per-folder VariableStore isolation. In parallel
  * mode each folder gets its own fresh store, so a variable set by a script in
@@ -152,7 +152,7 @@ function setupTwoFolders(): void {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('RequestExecutor — unresolved variable warnings (X8)', () => {
+describe('RequestExecutor — unresolved variable warnings', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockFetch.mockResolvedValue(createMockResponse({ ok: true }));

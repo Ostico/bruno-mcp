@@ -1,5 +1,5 @@
 /**
- * General `.yml` round-trip fidelity guard (finding D10).
+ * General `.yml` round-trip fidelity guard.
  *
  * The `.yml` twin of `bru-roundtrip-completeness.test.ts`, and it needs one
  * extra layer that the `.bru` side gets for free.
@@ -300,7 +300,7 @@ docs: Everything, in one document.
   },
 
   // ---------------------------------------------------------------------
-  // Switched-off entries. These were the D13/D14 defects; the flags now
+  // Switched-off entries. These were the dropped-flag defects; the flags now
   // survive, so these fixtures are held to the full round-trip property.
   // ---------------------------------------------------------------------
   {
@@ -445,7 +445,7 @@ describe('.yml completeness guard actually detects loss', () => {
   });
 });
 
-describe('.yml keeps a switched-off entry switched off (D13/D14)', () => {
+describe('.yml keeps a switched-off entry switched off', () => {
   // Both of these used to lose the flag at parse time and hand the entry back
   // enabled. For a header that meant a credential the author had deliberately
   // disabled was sent on the next run, so these are regression guards, not
@@ -474,7 +474,7 @@ describe('.yml keeps a switched-off entry switched off (D13/D14)', () => {
   });
 
   it('models a disabled part as enabled: false, which the executor already skips', () => {
-    // The executor skips a part with enabled === false (X13). Nothing in the
+    // The executor skips a part with enabled === false. Nothing in the
     // .yml path used to set it, which is what let a disabled part be sent.
     const parts = parseYamlRequest(multipart.src).http.body?.data;
 

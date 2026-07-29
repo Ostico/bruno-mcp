@@ -1,5 +1,5 @@
 /**
- * Schema fragments shared by more than one tool (finding Q14).
+ * Schema fragments shared by more than one tool.
  */
 
 import { z } from 'zod';

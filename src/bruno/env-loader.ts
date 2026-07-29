@@ -15,7 +15,7 @@ export async function loadEnvironment(
     content = await readFile(envFilePath, 'utf-8');
   } catch {
     // No YAML environment — fall back to a native Bruno `.bru` environment file
-    // (finding X11). Native collections store environments as `.bru`, not `.yml`.
+    //. Native collections store environments as `.bru`, not `.yml`.
     return loadBruEnvironment(collectionPath, envName);
   }
 
@@ -52,7 +52,7 @@ export async function loadEnvironment(
 }
 
 /**
- * Load a native Bruno `.bru` environment file (finding X11). Reuses
+ * Load a native Bruno `.bru` environment file. Reuses
  * `parseBruEnvironmentRaw` and maps its output to the same `name -> value`
  * shape the `.yml` loader returns: disabled variables are dropped, while
  * enabled variables — including `secret` ones — are kept with their value.
@@ -106,7 +106,7 @@ export function substitute(
 
 /**
  * Report the distinct `{{name}}` placeholders in `template` that `vars` does
- * not resolve (finding X8).
+ * not resolve.
  *
  * Detection runs against the ORIGINAL template and mirrors `substitute`'s rule
  * exactly: a placeholder is unresolved when `vars.get(name)` is `undefined`. It

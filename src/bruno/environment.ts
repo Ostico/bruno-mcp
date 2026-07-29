@@ -253,7 +253,7 @@ export class EnvironmentManager {
     environmentName: string,
     variables: Record<string, string | number | boolean>
   ): Promise<FileOperationResult> {
-    // Hold the lock across the read and the write so a concurrent edit is not lost (D8).
+    // Hold the lock across the read and the write so a concurrent edit is not lost.
     return withPathLock(environmentLockKey(collectionPath, environmentName), () =>
       this.updateEnvironmentLocked(collectionPath, environmentName, variables),
     );
@@ -423,7 +423,7 @@ export class EnvironmentManager {
     value: string | number | boolean,
     enabled?: boolean
   ): Promise<FileOperationResult> {
-    // Hold the lock across the read and the write so a concurrent edit is not lost (D8).
+    // Hold the lock across the read and the write so a concurrent edit is not lost.
     return withPathLock(environmentLockKey(collectionPath, environmentName), () =>
       this.setEnvironmentVariableLocked(collectionPath, environmentName, key, value, enabled),
     );
@@ -474,7 +474,7 @@ export class EnvironmentManager {
     environmentName: string,
     key: string
   ): Promise<FileOperationResult> {
-    // Hold the lock across the read and the write so a concurrent edit is not lost (D8).
+    // Hold the lock across the read and the write so a concurrent edit is not lost.
     return withPathLock(environmentLockKey(collectionPath, environmentName), () =>
       this.removeEnvironmentVariableLocked(collectionPath, environmentName, key),
     );
