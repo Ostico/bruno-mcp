@@ -73,17 +73,23 @@ describe('query parameters reach the request', () => {
     expect(seen).toContain('on=yes');
   });
 
-  it('percent-encodes a substituted value that contains separators', async () => {
-    // Same ordering rule as form bodies: substitute first, encode second, or a
-    // variable containing & or = forges extra parameters.
+  it('substitutes a value containing separators raw, as Bruno does', async () => {
+    // This request declares no `settings` block, so `encodeUrl` defaults to off
+    // and the URL is sent byte for byte — which means a value carrying `&` or `=`
+    // becomes additional parameters.
+    //
+    // That is upstream behaviour, not an oversight here. Bruno applies its URL
+    // encoding as a pass over the finished string and splits query pairs on the
+    // raw text, so a separator inside a variable's value is already its own pair
+    // before any encoding happens: the transform normalizes, it does not
+    // sanitize. Encoding per-value here instead would be *safer* but would send
+    // different bytes than Bruno for the same collection, which is the one thing
+    // a collection runner must not do.
     const seen = await sendBru(
       bru('/s', '\nparams:query {\n  q: {{needle}}\n}\n'),
       new Map([['needle', 'a&b=c']]),
     );
-    expect(seen).toBe('/s?q=a%26b%3Dc');
-    const parsed = new URLSearchParams(seen!.split('?')[1]);
-    expect(parsed.get('q')).toBe('a&b=c');
-    expect([...parsed.keys()]).toEqual(['q']);
+    expect(seen).toBe('/s?q=a&b=c');
   });
 });
 
@@ -100,13 +106,31 @@ describe('path parameters reach the request', () => {
     expect(seen).toBe('/u/:missing');
   });
 
-  it('encodes a path value containing a slash so it cannot escape its segment', async () => {
-    // A raw `/` here would silently address a different resource.
+  it('substitutes a path value containing a slash raw, as Bruno does', async () => {
+    // A `/` in the value does add a path segment. Upstream splices path parameter
+    // values in unencoded, and even with `encodeUrl` on the split into segments
+    // happens after substitution, so the slash stays a separator either way.
+    // Matching that is the point; the host cannot be affected, since substitution
+    // only ever happens after the authority.
     const seen = await sendBru(
       bru('/u/:id', '\nparams:path {\n  id: {{v}}\n}\n'),
       new Map([['v', 'a/b']]),
     );
-    expect(seen).toBe('/u/a%2Fb');
+    expect(seen).toBe('/u/a/b');
+  });
+
+  it('substitutes an OData-style parameter inside parentheses', async () => {
+    // Bruno recognises `EntitySet(:key)` in addition to a whole `:segment`, so a
+    // lookbehind requiring `/` before the colon is not sufficient.
+    const seen = await sendBru(bru('/Customers(:id)', '\nparams:path {\n  id: ALFKI\n}\n'));
+    expect(seen).toBe('/Customers(ALFKI)');
+  });
+
+  it('leaves a :name inside a query value alone', async () => {
+    // Upstream substitutes into url.pathname and reattaches the raw query string,
+    // so a colon-prefixed token in a query value is not a path parameter.
+    const seen = await sendBru(bru('/s?next=/u/:id', '\nparams:path {\n  id: 9\n}\n'));
+    expect(seen).toBe('/s?next=/u/:id');
   });
 
   it('substitutes only whole segments, not a colon inside a value', async () => {
@@ -131,6 +155,29 @@ describe('edge cases that must not corrupt the url', () => {
   it('leaves the url untouched when every parameter is disabled', async () => {
     const seen = await sendBru(bru('/s', '\nparams:query {\n  ~off: no\n}\n'));
     expect(seen).toBe('/s');
+  });
+});
+
+describe('a raw parameter value cannot redirect the request to another host', () => {
+  // Substituting raw is Bruno parity, so it is worth pinning what raw canNOT do.
+  // Path parameters only ever appear after the authority, so none of these change
+  // the host — and the SSRF check downstream runs on the final URL either way.
+  const hostile = ['@evil.com', '/evil.com', '//evil.com', '..%2F..%2Fetc', 'x?a=b', 'x#frag'];
+
+  it.each(hostile)('keeps the host when a path value is %s', async (value) => {
+    const yaml = bruFileToYamlRequest(
+      parseBruRequest(bru('/u/:id', '\nparams:path {\n  id: {{v}}\n}\n')),
+    );
+    const { url } = await buildFetchOptions(yaml, new Map([['v', value]]));
+    expect(new URL(url).host).toBe(`127.0.0.1:${port}`);
+  });
+
+  it.each(hostile)('keeps the host when a query value is %s', async (value) => {
+    const yaml = bruFileToYamlRequest(
+      parseBruRequest(bru('/s', '\nparams:query {\n  q: {{v}}\n}\n')),
+    );
+    const { url } = await buildFetchOptions(yaml, new Map([['v', value]]));
+    expect(new URL(url).host).toBe(`127.0.0.1:${port}`);
   });
 });
 

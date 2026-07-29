@@ -38,6 +38,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `settings.encodeUrl` is now honoured, and URL encoding matches Bruno.
+
+  The setting was parsed and preserved by both formats and read by nothing, while
+  parameter values were percent-encoded unconditionally. Both halves of that were
+  wrong, and the second is the one that mattered: this server was sending
+  different bytes than Bruno for the same collection. A collection runner that
+  quietly rewrites the request misreports what the collection does, and anyone
+  debugging against the Bruno UI is chasing a difference introduced here.
+
+  The transform is now a deliberate port of Bruno's, applied where Bruno applies
+  it — over the whole finished URL, after interpolation, after path parameters,
+  and after a pre-request script has had its chance to rewrite the URL:
+
+  - Scheme and authority are preserved verbatim, including userinfo, port and
+    bracketed IPv6 literals. A scheme is prepended first when absent, or the colon
+    in a `host:port` authority would be encoded as path data.
+  - Path segments encode idempotently (decode, then re-encode), so an
+    already-encoded path is not encoded twice.
+  - The query side is content blind and **intentionally double-encodes**:
+    `?q=%20` becomes `?q=%2520`. That is upstream's documented contract — it lets
+    a pre-encoded redirect URL survive a server-side decode pass.
+  - `#` is data, not a fragment delimiter, and becomes `%23`. To send a literal
+    fragment, turn the setting off, which preserves the URL byte for byte.
+  - A parameter with no name is dropped; `?flag` stays valueless and distinct
+    from `?flag=`.
+
+  The default is two-valued, which is easy to get wrong in either direction: with
+  **no** `settings` block the URL is sent **raw**, but a `settings` block that
+  does not mention `encodeUrl` defaults it to **on**. Bruno writes
+  `encodeUrl: true` explicitly when it saves a request, so anything its UI has
+  touched arrives with the flag set.
+
+  Consequently, parameter values are no longer percent-encoded on their own.
+  **A value containing `&`, `=`, `?` or `/` changes the structure of the request,
+  not just its content** — `q={{v}}` with `v` set to `a&b=c` sends two query
+  parameters. This is upstream behaviour rather than a new weakness: Bruno splits
+  query pairs on the raw string too, so its transform normalizes and does not
+  sanitize. What is guaranteed is narrower and now tested: substitution only ever
+  happens after the authority, so **no parameter value can change the target
+  host**, and the SSRF check still runs on the final URL. A URL containing a
+  newline is encoded (`%0A`) rather than passed through.
+
+- Path parameters now also substitute inside OData-style segments —
+  `/Customers(:id)`, `/Orders(Key1=:a,Key2=:b)`. Bruno recognises these in
+  addition to a whole `:segment`, and only the latter was handled. A `:name`
+  appearing in a query value is correctly left alone: upstream substitutes into
+  the path and reattaches the raw query string.
+
 - Query parameters given to `create_request` and `modify_request` are now written
   to the file. Three separate holes, all silent:
 
@@ -77,11 +125,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `run_collection` sent the request without it.
 
   Parameters are applied before the URL is validated, so the URL that is checked
-  is the one that is sent. Values are substituted first and encoded second — the
-  reverse order would let a variable containing `&` or `=` forge extra
-  parameters, and one containing `/` silently address a different resource. A
-  `:name` with no matching parameter is deliberately left standing: wrong but
-  visible, rather than quietly pointing elsewhere.
+  is the one that is sent. Values are substituted raw and encoding is left to
+  `settings.encodeUrl` (see above), matching Bruno. A `:name` with no matching
+  parameter is deliberately left standing: wrong but visible, rather than quietly
+  pointing elsewhere.
 
   Note for the `.bru` path: the two formats spell the switched-off flag with
   opposite polarity (`enabled` vs `disabled`), so forwarding without inverting
@@ -96,12 +143,6 @@ are not mistaken for working:
 - **`assert` blocks are never evaluated**, in either format. A run reports zero
   assertions rather than checking the ones the collection declares.
 - **`vars:pre-request` and `vars:post-response` are never applied.**
-- **`settings.encodeUrl` is never read.** Both formats parse it and both writers
-  preserve it, and nothing consults it when building the request. Parameter values
-  are always percent-encoded. It is left unimplemented rather than guessed at:
-  the flag's exact scope upstream (whether it covers the authored URL, the path
-  segments, or only the query string) decides what turning it off should mean,
-  and inventing that would silently send different bytes than Bruno does.
 
 Auth is not in this category — unapplied types warn explicitly, and
 `auth: inherit` reports that collection-level inheritance is unsupported.
