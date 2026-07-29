@@ -16,20 +16,32 @@
  * The tool surface picks ONE spelling — `disabled`, absent meaning active — and
  * each writer converts. Both formats are asserted here rather than one.
  *
- * Assertions are against the bytes on disk, and the closing test runs a real
- * server: authoring that produces a correct-looking file but a request that does
- * not actually assert anything would be the same defect wearing a new hat.
+ * Assertions are against the bytes on disk, and the closing test runs the whole
+ * thing through the executor: authoring that produces a correct-looking file but
+ * a request that does not actually assert anything would be the same defect
+ * wearing a new hat.
  */
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { createServer, Server } from 'http';
 import { createCollectionManager } from '../../../src/bruno/collection.js';
 import { createRequestBuilder, RequestBuilder } from '../../../src/bruno/request.js';
 import { parseBruRequest } from '../../../src/bruno/bru-parser.js';
 import { parseYamlRequest } from '../../../src/bruno/yaml-parser.js';
 import { RequestExecutor } from '../../../src/bruno/request-executor.js';
-import { resetAllowlistCache } from '../../../src/bruno/url-validator.js';
+
+// The closing test runs the executor. fetch is mocked rather than pointed at a
+// local server: a real socket would add nothing — path substitution, vars and
+// assertion evaluation all happen in this process — and it would make the suite
+// depend on process-global undici state another test file owns. Matching
+// request-executor-varsets.test.ts, url-validator is stubbed too, since
+// otherwise the host never resolves and no request is attempted.
+const mockFetch = jest.fn();
+(global as unknown as { fetch: unknown }).fetch = mockFetch;
+
+jest.mock('../../../src/bruno/url-validator', () => ({
+  validateUrl: jest.fn().mockReturnValue({ valid: true }),
+}));
 
 let builder: RequestBuilder;
 
@@ -468,35 +480,15 @@ describe('create_request authors path parameters', () => {
 // ----------------------------------------------------------------------------
 
 describe('an authored request actually asserts and substitutes when run', () => {
-  let server: Server;
-  let port: number;
-  let receivedUrl: string | undefined;
-  let previousAllowlist: string | undefined;
-
-  beforeAll(async () => {
-    // Loopback is blocked as an SSRF target, so the local test server needs the
-    // operator allowlist that exists for exactly this case.
-    previousAllowlist = process.env.BRUNO_SSRF_ALLOWLIST;
-    process.env.BRUNO_SSRF_ALLOWLIST = '127.0.0.1';
-    resetAllowlistCache();
-
-    server = createServer((req, res) => {
-      receivedUrl = req.url;
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ id: 7 }));
-    });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    port = (server.address() as { port: number }).port;
-  });
-
-  afterAll(async () => {
-    if (previousAllowlist === undefined) {
-      delete process.env.BRUNO_SSRF_ALLOWLIST;
-    } else {
-      process.env.BRUNO_SSRF_ALLOWLIST = previousAllowlist;
-    }
-    resetAllowlistCache();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+  beforeEach(() => {
+    mockFetch.mockReset();
+    mockFetch.mockResolvedValue({
+      status: 200,
+      statusText: 'OK',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      text: async () => JSON.stringify({ id: 7 }),
+      ok: true,
+    } as unknown as Response);
   });
 
   it('runs an authored assert, path param and vars end to end', async () => {
@@ -509,7 +501,7 @@ describe('an authored request actually asserts and substitutes when run', () => 
       collectionPath,
       name: 'ById',
       method: 'GET',
-      url: `http://127.0.0.1:${port}/users/:id`,
+      url: 'https://api.example.com/users/:id',
       pathParams: { id: '42' },
       vars: {
         preRequest: [{ name: 'unusedButParsed', value: 'x' }],
@@ -523,7 +515,7 @@ describe('an authored request actually asserts and substitutes when run', () => 
     expect(created.success).toBe(true);
 
     const run = await RequestExecutor.executeCollection(collectionPath, {});
-    expect(receivedUrl).toBe('/users/42');
+    expect(String(mockFetch.mock.calls[0][0])).toBe('https://api.example.com/users/42');
 
     const request = run.results[0];
     expect(request.tests.map((t) => [t.description, t.status])).toEqual([
