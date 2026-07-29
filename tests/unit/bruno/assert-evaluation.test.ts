@@ -39,6 +39,36 @@ function assertOne(name: string, value: string, res = response()) {
   return results[0];
 }
 
+describe('an assertion that never finishes is the run timing out, not one check failing', () => {
+  // Assertions are isolated so a broken one fails only itself — but a timeout
+  // must NOT be caught that way. A V8 timeout force-terminates the whole
+  // context, so nothing further can run in it; swallowing it and moving to the
+  // next assertion would mean the remaining ones evaluate in a dead context and
+  // the run's own timeout handling never sees the problem. A left-hand
+  // expression is arbitrary JS from the collection, so a loop here is reachable.
+  const looping = [{ name: '(function () { while (true) {} })()', value: 'isDefined' }];
+
+  it('reports the run as timed out rather than as one failed assertion', () => {
+    const { results } = runTestJob('', response(), 50, undefined, looping);
+
+    // The timeout escapes the per-assertion isolation, and the job turns it into
+    // a single run-level failure. It is deliberately not attributed to the
+    // assertion: once the context is terminated the run is over, not merely one
+    // check.
+    expect(results).toHaveLength(1);
+    expect(results[0].status).toBe('fail');
+    expect(results[0].error).toMatch(/timed out/i);
+  });
+
+  it('never reports the looping assertion as passing', () => {
+    // The failure mode that would matter most: a check that never ran counted as
+    // green, which is the exact shape of the defect this feature fixes.
+    const { results } = runTestJob('', response(), 50, undefined, looping);
+
+    expect(results.some((r) => r.status === 'pass')).toBe(false);
+  });
+});
+
 describe('declared assertions — evaluation', () => {
   it('evaluates an assertion when there is no post-response script at all', () => {
     const { results } = runTestJob('', response(), 5000, undefined, [
