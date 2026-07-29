@@ -62,6 +62,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`form-urlencoded` bodies survive both writing and rewriting.** Bruno spells
+  this type two ways on purpose: the BLOCK is kebab-case
+  (`body:form-urlencoded {`) while the MODE in the method block is camelCase
+  (`body: formUrlEncoded`). The generator already restored that camelCase for
+  multipart and simply never did it here, and the authoring path never built the
+  entries at all.
+
+  - **Rewriting an existing request downgraded the mode to `form-urlencoded`,**
+    which Bruno does not recognise. The block survived, so the file still looked
+    correct while the body stopped being sent. Any `modify_request` on a
+    form-urlencoded request did this to it.
+  - **`create_request` dropped the body entirely.** Upstream reads
+    `body.formUrlEncoded` as an array of `{name, value, enabled}`; the builder
+    handed it the raw `content` string, so no block was written and the request
+    went out as an empty POST. Both shapes are now accepted — explicit entries via
+    `formData`, or an encoded string via `content`, parsed with `URLSearchParams`
+    so percent-escapes and `+` resolve as they would on the wire.
+
+  A round-trip fixture had the kebab spelling too, which is why the existing
+  completeness guard could not see either defect: it described this server's own
+  output rather than a file Bruno would write. Corrected, with the multipart
+  entry alongside it left as the reference — those two are the only body types
+  whose mode differs from their block name.
+
 - **The `.bru` files this server writes are now files Bruno can read.** Four
   defects, all of them invisible to a parse-then-compare test because our own
   parser is tolerant of our own malformed output. Each was found by reading the

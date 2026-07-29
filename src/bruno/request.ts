@@ -94,6 +94,38 @@ function replaceQueryParams<T extends { type?: string }>(existing: T[] | undefin
 }
 
 /**
+ * Turn a form-urlencoded body into the entries upstream's serializer reads.
+ *
+ * Upstream expects `body.formUrlEncoded` to be an array of {name, value,
+ * enabled}. Handing it the raw `content` string wrote no block at all, so an
+ * authored body was silently dropped and the request went out empty.
+ *
+ * Both shapes a caller might reasonably send are accepted: explicit entries via
+ * `formData`, or an encoded string via `content`. The string is parsed with
+ * URLSearchParams, so percent-escapes and `+` resolve the way they would on the
+ * wire rather than being stored literally.
+ */
+function toFormUrlEncodedEntries(
+  body: NonNullable<CreateRequestInput['body']>,
+): Array<{ name: string; value: string; enabled: boolean }> | undefined {
+  if (body.formData && body.formData.length > 0) {
+    return body.formData.map((field) => ({
+      name: field.name,
+      value: Array.isArray(field.value) ? field.value.join(',') : field.value,
+      enabled: field.enabled !== false,
+    }));
+  }
+  if (typeof body.content === 'string' && body.content.length > 0) {
+    return [...new URLSearchParams(body.content)].map(([name, value]) => ({
+      name,
+      value,
+      enabled: true,
+    }));
+  }
+  return undefined;
+}
+
+/**
  * The auth mode token as Bruno spells it in the method block.
  *
  * Only api-key differs: the block is `auth:apikey`, so the mode has to be
@@ -638,6 +670,10 @@ export class RequestBuilder {
         content: input.body.content
       };
 
+      if (input.body.type === 'form-urlencoded') {
+        bruFile.body.formUrlEncoded = toFormUrlEncodedEntries(input.body);
+      }
+
       // Handle form data
       if (input.body.formData) {
         bruFile.body.formData = input.body.formData.map(field => {
@@ -879,6 +915,10 @@ export class RequestBuilder {
         type: updates.body.type,
         content: updates.body.content
       };
+
+      if (updates.body.type === 'form-urlencoded') {
+        updated.body.formUrlEncoded = toFormUrlEncodedEntries(updates.body);
+      }
     }
 
     if (updates.auth) {
