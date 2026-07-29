@@ -276,6 +276,27 @@ export interface BruFile {
 }
 
 // Request creation input
+/**
+ * One declared assertion as the MCP tools accept it.
+ *
+ * `disabled` rather than `enabled`: absent means active, so the common case is
+ * two fields. The `.bru` writer inverts this to `enabled`.
+ */
+export interface RequestAssertionInput {
+  name: string;
+  value: string;
+  disabled?: boolean;
+}
+
+/** One declared variable as the MCP tools accept it. Same polarity choice. */
+export interface RequestVarInput {
+  name: string;
+  value: string;
+  disabled?: boolean;
+  /** Pre-request only: keep the value out of the persisted runtime store. */
+  local?: boolean;
+}
+
 export interface CreateRequestInput {
   collectionPath: string;
   name: string;
@@ -292,6 +313,31 @@ export interface CreateRequestInput {
     config: Record<string, string>;
   };
   query?: Record<string, string | number | boolean>;
+  /**
+   * Values for `:name` segments in the URL, written as a `params:path` block.
+   * Separate from `query` because the two address different parts of the URL and
+   * are replaced independently on update.
+   */
+  pathParams?: Record<string, string | number | boolean>;
+  /**
+   * Declared assertions, written as an `assert` block and evaluated by the
+   * executor after the post-response script. `name` is the left-hand expression
+   * (`res.status`), `value` is the operator plus operand (`eq 200`).
+   *
+   * The two file formats spell the switched-off flag with opposite polarity, so
+   * this surface picks one — absent `disabled` means active — and each writer
+   * converts.
+   */
+  assert?: RequestAssertionInput[];
+  /**
+   * Declared variables. The two halves are asymmetric: `preRequest` values are
+   * RAW text folded into interpolation before the request is built, while
+   * `postResponse` values are JS EXPRESSIONS evaluated against the response.
+   */
+  vars?: {
+    preRequest?: RequestVarInput[];
+    postResponse?: RequestVarInput[];
+  };
   folder?: string;
   sequence?: number;
   /**
