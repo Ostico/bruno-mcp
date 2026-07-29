@@ -32,6 +32,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- JSON, XML and SPARQL request bodies are no longer sent labelled as plain text.
+  A `Content-Type` is now derived from the body type: `application/json`,
+  `application/xml`, `application/sparql-query`.
+
+  The Fetch standard labels *any* string body `text/plain;charset=UTF-8`, and
+  nothing set a `Content-Type`, so a JSON payload went out announced as plain
+  text. That is worse than sending no type at all — a server handed an explicit
+  but wrong type has no reason to sniff the content, so `express.json()` leaves
+  `req.body` empty and Spring answers 415. Bruno derives the header at send
+  time, so collections authored in the Bruno GUI carry no explicit
+  `Content-Type` of their own and were affected by default.
+
+  A `Content-Type` set by the collection always wins, matched case-insensitively
+  (RFC 9110 §5.1). `text` bodies are deliberately left to the Fetch default,
+  which is already the correct type and additionally declares the charset.
+
 - `form-urlencoded` and `graphql` request bodies authored in a `.bru` file are no
   longer silently dropped. Running such a request sent it with **no body at
   all** — no error and no warning, just whatever the server made of an empty
