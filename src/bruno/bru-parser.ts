@@ -22,7 +22,7 @@ import {
   type BruOAuth2AdditionalParameters,
   type BruOAuth2ParamTarget,
 } from './types.js';
-import { toHttpMethod } from './parse-guards.js';
+import { toHttpMethod, normalizeBodyType } from './parse-guards.js';
 
 const MAX_SCRIPT_SIZE = 50_000;
 
@@ -127,9 +127,16 @@ export function parseBruRequest(content: string): BruFile {
         }),
       };
     } else {
+      // The `http` block spells the type in Bruno's camelCase vocabulary while
+      // the body block is named in kebab-case, so the two disagree for
+      // form-urlencoded. Normalize the type to the kebab-case name BodyType
+      // declares, but keep the raw spelling to look the content up: the parsed
+      // body is keyed by whatever the `http` block actually said.
+      const rawType = http.body as string;
+      http.body = normalizeBodyType(rawType);
       body = { type: http.body };
       const rawBody = json.body as Record<string, unknown>;
-      const bodyContent = rawBody[http.body];
+      const bodyContent = rawBody[rawType];
       const graphql = rawBody.graphql as { query?: string; variables?: string } | undefined;
       const formUrlEncoded = rawBody.formUrlEncoded as
         | Array<{ name?: string; value?: string; enabled?: boolean }>

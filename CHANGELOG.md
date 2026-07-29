@@ -32,6 +32,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `form-urlencoded` and `graphql` request bodies authored in a `.bru` file are no
+  longer silently dropped. Running such a request sent it with **no body at
+  all** — no error and no warning, just whatever the server made of an empty
+  payload. Only the textual body types (`json`, `text`, `xml`, `sparql`) and
+  `multipart-form` survived the translation into the executor's shape.
+
+  The cause was a type that misdescribed its own data. Bruno spells the body type
+  in camelCase inside the `http` block (`body: formUrlEncoded`) while naming the
+  body block in kebab-case (`body:form-urlencoded {`). Only `multipartForm` was
+  normalized, so `body.type` also carried raw values like `formUrlEncoded` —
+  values the declared `BodyType` union does not contain. Because the field
+  claimed to be a `BodyType`, nothing flagged the mismatch, and the translation
+  only ever looked for a string body or a multipart array. Both of these bodies
+  are parsed into their own fields, matched neither, and fell through.
+
+  The camelCase spellings are now normalized at the parse boundary so the
+  declared type is true, and `sparql` — a real Bruno body type that was also
+  flowing through unlisted — has been added to the union.
+
+  A `Content-Type` is now derived from the body type for these two bodies
+  (`application/x-www-form-urlencoded` and `application/json`), since neither is
+  usable without one. A `Content-Type` set explicitly by the collection is never
+  overwritten.
+
+  Form pairs and the GraphQL envelope are built *after* variable substitution.
+  The reverse order is a correctness trap: a `{{var}}` whose value contains `&`
+  or `=` would splice extra fields into an encoded form body, and one containing
+  `"` would break a stringified JSON envelope.
+
+  `body:file` remains unsent: `@usebruno/lang` 0.36.0 has no such block, so one
+  parses as ordinary name/value pairs and the file path is never populated.
+
 - Duplicate request headers are no longer silently dropped. A collection that
   authored the same header name more than once — two `Accept` values, two
   `Cookie` pairs, an `X-Forwarded-For` chain — sent only the last value. Both

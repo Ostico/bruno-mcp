@@ -20,6 +20,8 @@ import type {
   RequestExecutionResult,
   TestResult,
   MultipartFormPart,
+  FormUrlEncodedPart,
+  BruGraphql,
 } from './types.js';
 
 interface ExecutionOptions {
@@ -140,7 +142,19 @@ export function bruFileToYamlRequest(bru: BruFile): YamlRequest {
     };
   } else if (bru.body?.content) {
     body = { type: bru.body.type, data: bru.body.content };
+  } else if (bru.body?.formUrlEncoded && bru.body.formUrlEncoded.length > 0) {
+    // Carried as pairs, not as a pre-encoded string: buildFetchOptions
+    // substitutes variables and only then encodes, so a value containing `&` or
+    // `=` cannot forge extra fields.
+    body = { type: 'form-urlencoded', data: bru.body.formUrlEncoded };
+  } else if (bru.body?.graphql) {
+    body = { type: 'graphql', data: bru.body.graphql };
   }
+  // `file` bodies are deliberately not handled. @usebruno/lang 0.36.0 has no
+  // `body:file` block, so such a block parses as generic name/value pairs and
+  // the filePath the parser looks for is never present — sending one would mean
+  // resolving an empty path against the collection root and reading a
+  // directory. Supporting it needs the block to exist upstream first.
 
   return {
     info: { name: bru.meta.name, type: bru.meta.type, seq: bru.meta.seq },
@@ -436,6 +450,22 @@ const SINGLE_VALUE_HEADERS = new Set([
  * shorter and was rejected because it lowercases every name, changing what a
  * case-sensitive server receives.
  */
+/**
+ * Set Content-Type for a body whose type implies one, without overriding the
+ * author.
+ *
+ * A collection may deliberately send a charset or a vendor media type, so an
+ * explicit header always wins. Matched case-insensitively (RFC 9110 §5.1)
+ * because a .bru file may spell the name any way.
+ */
+function setDefaultContentType(headers: Record<string, string>, value: string): void {
+  const existing = Object.keys(headers).find(
+    (name) => name.toLowerCase() === 'content-type',
+  );
+  if (existing !== undefined) return;
+  headers['Content-Type'] = value;
+}
+
 function appendHeader(
   headers: Record<string, string>,
   headerKeys: Map<string, string>,
@@ -591,6 +621,42 @@ export async function buildFetchOptions(
   } else if (typeof body?.data === 'string') {
     trackUnresolved(body.data);
     options.body = substitute(body.data, vars);
+  } else if (body?.type === 'form-urlencoded' && Array.isArray(body.data)) {
+    // Substitute first, encode second. The reverse order lets a variable whose
+    // value contains `&` or `=` splice extra fields into the body.
+    const params = new URLSearchParams();
+    for (const pair of body.data as FormUrlEncodedPart[]) {
+      // A pair the author switched off must not be sent. Skipped before
+      // tracking so its placeholders raise no unresolved-variable warning.
+      if (pair.enabled === false) continue;
+      trackUnresolved(pair.name);
+      trackUnresolved(pair.value);
+      params.append(substitute(pair.name, vars), substitute(pair.value, vars));
+    }
+    options.body = params.toString();
+    setDefaultContentType(headers, 'application/x-www-form-urlencoded');
+  } else if (body?.type === 'graphql' && body.data != null && !Array.isArray(body.data)) {
+    // Same ordering rule: build the envelope from substituted parts so a value
+    // containing a quote cannot break out of the JSON string.
+    const graphql = body.data as BruGraphql;
+    trackUnresolved(graphql.query);
+    const envelope: { query: string; variables?: unknown } = {
+      query: substitute(graphql.query, vars),
+    };
+    if (graphql.variables !== undefined) {
+      trackUnresolved(graphql.variables);
+      const substituted = substitute(graphql.variables, vars);
+      // A `body:graphql:vars` block is parsed as text. Send it as real JSON when
+      // it parses, and as the raw string when it does not, so a malformed vars
+      // block surfaces as a server-side error rather than being dropped here.
+      try {
+        envelope.variables = JSON.parse(substituted) as unknown;
+      } catch {
+        envelope.variables = substituted;
+      }
+    }
+    options.body = JSON.stringify(envelope);
+    setDefaultContentType(headers, 'application/json');
   }
 
   // Name the placeholder (e.g. `{{token}}`) but never a resolved value — the

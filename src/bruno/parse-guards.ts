@@ -42,6 +42,7 @@ export const BODY_TYPES: readonly BodyType[] = [
   'json',
   'text',
   'xml',
+  'sparql',
   'graphql',
   'form-data',
   'multipart-form',
@@ -49,6 +50,20 @@ export const BODY_TYPES: readonly BodyType[] = [
   'file',
   'binary',
 ];
+
+/**
+ * Bruno's camelCase spellings, as written in the `http` block, mapped to the
+ * kebab-case block name BodyType declares.
+ *
+ * `multipartForm` maps to 'form-data' because that is the name the MCP-facing
+ * side already used for it; the .bru parser reaches this case through its own
+ * branch, and the entry is here so the mapping is total rather than split
+ * across two places.
+ */
+const BODY_TYPE_ALIASES: Readonly<Record<string, BodyType>> = {
+  formUrlEncoded: 'form-urlencoded',
+  multipartForm: 'form-data',
+};
 
 /** Keep a malformed file from putting an unbounded string into an error message. */
 function forMessage(raw: unknown): string {
@@ -84,5 +99,20 @@ export function toBodyType(raw: unknown, field = 'body type'): BodyType {
   return BODY_TYPES.includes(value as BodyType)
     ? (value as BodyType)
     : reject(field, raw, BODY_TYPES);
+}
+
+/**
+ * Translate a body type as written in a .bru `http` block into the kebab-case
+ * BodyType member.
+ *
+ * Separate from toBodyType because this one accepts Bruno's camelCase
+ * vocabulary, which BodyType deliberately does not contain. An unrecognised
+ * value is still rejected — silently passing it through is what let
+ * 'formUrlEncoded' reach a field annotated BodyType and hide a dropped body.
+ */
+export function normalizeBodyType(raw: unknown, field = 'body type'): BodyType {
+  if (raw === undefined || raw === null || raw === '') return 'none';
+  const value = String(raw);
+  return BODY_TYPE_ALIASES[value] ?? toBodyType(value, field);
 }
 
