@@ -26,7 +26,7 @@ jobs:
     - name: Install dependencies
       run: npm ci
 
-    # NOTE: there is deliberately no `npm run build` step here (finding Q21).
+    # NOTE: there is deliberately no `npm run build` step here.
     # The integration jest project's globalSetup (tests/global-setup.ts) builds
     # unconditionally, so every step below that needs dist/ gets a freshly built
     # one, and an explicit step here only added a third build to this leg.
@@ -44,7 +44,7 @@ jobs:
     - name: Run linting
       run: npm run lint
 
-    # ── Test lanes (finding Q4) ───────────────────────────────────────
+    # ── Test lanes ────────────────────────────────────────────────────
     # Unit and integration are separate jest projects and run as separate,
     # individually attributable steps. BOTH must run: dropping the
     # integration lane from CI would hollow out the suite exactly the way an
@@ -64,7 +64,7 @@ jobs:
     # Runs the FULL suite (both jest projects) — a single-lane run would
     # produce a partial report and understate coverage in test-guard.
     #
-    # NO `continue-on-error` here (finding Q8). It used to be set, which meant
+    # NO `continue-on-error` here. It used to be set, which meant
     # a coverage run that crashed left the job green while test-guard was fed a
     # missing or stale artifact: the gate measured nothing and nobody noticed.
     # Same precedent as the lint step, whose `continue-on-error` was removed.
@@ -87,7 +87,7 @@ jobs:
         retention-days: 7
         if-no-files-found: warn
 
-    # Explicit gate (findings Q8/Q9). Deleting `continue-on-error` alone is not
+    # Explicit gate. Deleting `continue-on-error` alone is not
     # enough: the naive version fails downstream on a *missing artifact*, which
     # in the logs is indistinguishable from a real coverage regression. This
     # step makes the two outcomes say different things, out loud.
@@ -205,7 +205,7 @@ jobs:
         with:
           name: coverage-report
 
-      # Consumer-side half of findings Q8/Q9. The producer already asserts the
+      # Consumer-side half of the coverage-artifact gate. The producer already asserts the
       # artifact is usable, but this job is the one that renders a verdict on
       # the PR — so it must never be able to report "gate passed" off a file
       # that never arrived. Fails loudly and says which of the two it is.
@@ -255,7 +255,7 @@ jobs:
           # matches. So adding a narrow key cannot narrow anything: the previous
           # value here added a `ts-unit` key while the built-in `ts-test`/`ts-spec`/
           # `ts-dir` kept `src_pattern: **/*.ts`, leaving EVERY .ts file in the repo
-          # classified as coverage-owing source (finding Q20). It was doubly inert,
+          # classified as coverage-owing source. It was doubly inert,
           # because fnmatch has no special meaning for `/`: `src/**/*.ts` compiles to
           # `src/.*.*/.*\.ts`, which requires two slashes and so never even matched
           # `src/index.ts`. The correct single-star form is `src/*.ts`, where the

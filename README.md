@@ -787,7 +787,9 @@ All outbound requests from `run_collection` are validated:
 - **Blocked hostnames**: `localhost`, `*.local`, and `metadata.google.internal`
 - **Redirect TOCTOU protection**: Each redirect hop is re-validated against SSRF rules (prevents DNS rebinding via redirects to internal IPs)
 
-> **Known residual risk — DNS rebinding:** validation resolves the hostname, but the subsequent HTTP request re-resolves DNS independently and could connect to a different address. Full mitigation (pinning the validated IP at connect time) is tracked as a follow-up. Note that an allowlisted **hostname** is accepted *before* resolution, so it is the less-verified of the two allowlist forms — prefer IP or CIDR entries where you can.
+- **DNS rebinding**: the addresses validated above are pinned at connect time — the request connects to exactly those and performs no second lookup, so DNS cannot change under the request after it passed validation. The `Host` header and TLS SNI still carry the hostname, so virtual hosting and certificate validation are unaffected.
+
+> **Residual risk:** pinning does not apply when the collection routes through a proxy, because the proxy terminates the connection and resolves the target itself — there is no local lookup left to pin. That path is already gated on an explicit operator decision (`BRUNO_PROXY_HOSTS`), which is the trust boundary covering whatever the proxy reaches. Separately, an allowlisted **hostname** is accepted *before* resolution, so it is the less-verified of the two allowlist forms — prefer IP or CIDR entries where you can.
 
 A refusal is reported per-request as an `SSRF blocked` error with `status: 0`, and — when an allowlist entry could legitimately permit the target — carries remediation naming `BRUNO_SSRF_ALLOWLIST` and whether any entries are currently configured. The configured entries themselves are never echoed. Blocks an allowlist cannot fix, such as a DNS failure or a malformed URL, get no remediation, since pointing at the allowlist would be misleading.
 
