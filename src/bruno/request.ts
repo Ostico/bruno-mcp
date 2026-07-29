@@ -16,6 +16,14 @@ import {
   YamlAuth,
   BruParam,
   YamlParam,
+  BruAssertion,
+  BruVar,
+  BruVarSets,
+  YamlAssertion,
+  YamlVar,
+  YamlVars,
+  RequestAssertionInput,
+  RequestVarInput,
   CreateRequestInput,
   FileOperationResult,
   BrunoError,
@@ -82,6 +90,101 @@ function queryToYamlParams(query: NonNullable<CreateRequestInput['query']>): Yam
 function replaceQueryParams<T extends { type?: string }>(existing: T[] | undefined, fresh: T[]): T[] {
   const paths = (existing ?? []).filter((param) => param.type === 'path');
   return [...paths, ...fresh];
+}
+
+/** The mirror of replaceQueryParams: swap the path entries, keep the query ones. */
+function replacePathParams<T extends { type?: string }>(existing: T[] | undefined, fresh: T[]): T[] {
+  const queries = (existing ?? []).filter((param) => param.type !== 'path');
+  return [...queries, ...fresh];
+}
+
+/** Turn the tool's `pathParams` record into .bru parameter entries. */
+function pathParamsToBruParams(
+  pathParams: NonNullable<CreateRequestInput['pathParams']>,
+): BruParam[] {
+  return Object.entries(pathParams).map(([name, value]) => ({
+    name,
+    value: String(value),
+    enabled: true,
+    type: 'path' as const,
+  }));
+}
+
+/** Turn the tool's `pathParams` record into .yml parameter entries. */
+function pathParamsToYamlParams(
+  pathParams: NonNullable<CreateRequestInput['pathParams']>,
+): YamlParam[] {
+  return Object.entries(pathParams).map(([name, value]) => ({
+    name,
+    value: String(value),
+    type: 'path' as const,
+  }));
+}
+
+/**
+ * Turn declared assertions into a .bru `assert` block.
+ *
+ * The tool surface carries `disabled`; .bru carries `enabled`. Inverting here
+ * rather than at the parser keeps one spelling on the outside.
+ */
+function assertionsToBru(entries: RequestAssertionInput[]): BruAssertion[] {
+  return entries.map((entry) => ({
+    name: entry.name,
+    value: entry.value,
+    enabled: entry.disabled !== true,
+  }));
+}
+
+/** Turn declared assertions into a .yml `assert` block, which already uses `disabled`. */
+function assertionsToYaml(entries: RequestAssertionInput[]): YamlAssertion[] {
+  return entries.map((entry) => ({
+    name: entry.name,
+    value: entry.value,
+    ...(entry.disabled === true ? { disabled: true } : {}),
+  }));
+}
+
+/**
+ * Turn declared vars into .bru `vars:pre-request` / `vars:post-response` blocks.
+ *
+ * Only the halves that were supplied are written, and each half is replaced
+ * whole: they mean different things, so naming one must not discard the other.
+ */
+function varsToBruVarSets(
+  vars: NonNullable<CreateRequestInput['vars']>,
+  existing: BruVarSets | undefined,
+): BruVarSets {
+  const convert = (entries: RequestVarInput[]): BruVar[] =>
+    entries.map((entry) => ({
+      name: entry.name,
+      value: entry.value,
+      enabled: entry.disabled !== true,
+      ...(entry.local === true ? { local: true } : {}),
+    }));
+  return {
+    ...existing,
+    ...(vars.preRequest ? { req: convert(vars.preRequest) } : {}),
+    ...(vars.postResponse ? { res: convert(vars.postResponse) } : {}),
+  };
+}
+
+/** Turn declared vars into a .yml `vars` block. Same per-half replacement. */
+function varsToYamlVars(
+  vars: NonNullable<CreateRequestInput['vars']>,
+  existing: YamlVars | undefined,
+): YamlVars {
+  const convert = (entries: RequestVarInput[]): YamlVar[] =>
+    entries.map((entry) => ({
+      name: entry.name,
+      value: entry.value,
+      ...(entry.disabled === true ? { disabled: true } : {}),
+      ...(entry.local === true ? { local: true } : {}),
+    }));
+  return {
+    ...existing,
+    ...(vars.preRequest ? { preRequest: convert(vars.preRequest) } : {}),
+    ...(vars.postResponse ? { postResponse: convert(vars.postResponse) } : {}),
+  };
 }
 import { generateYamlRequest } from './yaml-generator.js';
 import { parseBruRequest, generateBruRequest } from './bru-parser.js';
@@ -247,6 +350,18 @@ export class RequestBuilder {
             yamlReq.http.params,
             queryToYamlParams(updates.query),
           );
+        }
+        if (updates.pathParams) {
+          yamlReq.http.params = replacePathParams(
+            yamlReq.http.params,
+            pathParamsToYamlParams(updates.pathParams),
+          );
+        }
+        if (updates.assert) {
+          yamlReq.assert = assertionsToYaml(updates.assert);
+        }
+        if (updates.vars) {
+          yamlReq.vars = varsToYamlVars(updates.vars, yamlReq.vars);
         }
 
         const updatedContent = generateYamlRequest(yamlReq);
@@ -472,6 +587,22 @@ export class RequestBuilder {
       bruFile.params = queryToBruParams(input.query);
     }
 
+    // Path parameters share the `params` field, distinguished by `type`.
+    if (input.pathParams && Object.keys(input.pathParams).length > 0) {
+      bruFile.params = [
+        ...(bruFile.params ?? []),
+        ...pathParamsToBruParams(input.pathParams),
+      ];
+    }
+
+    if (input.assert && input.assert.length > 0) {
+      bruFile.assertions = assertionsToBru(input.assert);
+    }
+
+    if (input.vars) {
+      bruFile.varSets = varsToBruVarSets(input.vars, bruFile.varSets);
+    }
+
     // Add body if provided
     if (input.body && input.body.type !== 'none') {
       bruFile.body = {
@@ -567,6 +698,22 @@ export class RequestBuilder {
     // Add query params
     if (input.query && Object.keys(input.query).length > 0) {
       yamlRequest.http.params = queryToYamlParams(input.query);
+    }
+
+    // Path parameters share the `params` field, distinguished by `type`.
+    if (input.pathParams && Object.keys(input.pathParams).length > 0) {
+      yamlRequest.http.params = [
+        ...(yamlRequest.http.params ?? []),
+        ...pathParamsToYamlParams(input.pathParams),
+      ];
+    }
+
+    if (input.assert && input.assert.length > 0) {
+      yamlRequest.assert = assertionsToYaml(input.assert);
+    }
+
+    if (input.vars) {
+      yamlRequest.vars = varsToYamlVars(input.vars, yamlRequest.vars);
     }
 
     // Add auth
@@ -681,6 +828,21 @@ export class RequestBuilder {
 
     if (updates.query) {
       updated.params = replaceQueryParams(updated.params, queryToBruParams(updates.query));
+    }
+
+    if (updates.pathParams) {
+      updated.params = replacePathParams(
+        updated.params,
+        pathParamsToBruParams(updates.pathParams),
+      );
+    }
+
+    if (updates.assert) {
+      updated.assertions = assertionsToBru(updates.assert);
+    }
+
+    if (updates.vars) {
+      updated.varSets = varsToBruVarSets(updates.vars, updated.varSets);
     }
 
     if (updates.body) {

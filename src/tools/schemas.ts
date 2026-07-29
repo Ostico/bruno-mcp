@@ -27,3 +27,51 @@ export const inlineScriptsSchema = z.object({
   'Content-Type is application/json or a +json type (raw text otherwise). Access fields directly — res.getBody().field — ' +
   'and do NOT JSON.parse() it, which throws SyntaxError: "[object Object]" is not valid JSON.',
 );
+
+/**
+ * One declared assertion, shared by create_request and modify_request.
+ *
+ * Declared assertions are evaluated after the post-response script, so they can
+ * read anything a script or a `vars:post-response` entry set. Unlike a bare
+ * `expect()` in a script, they need no `test()` wrapper to be reported.
+ */
+export const assertionEntrySchema = z.object({
+  name: z.string().min(1).describe(
+    'Left-hand expression, evaluated against the response. Examples: res.status, ' +
+    'res.body.id, res.body.items.length, res.headers["content-type"], ' +
+    'res.responseTime, bru.getVar("token").'
+  ),
+  value: z.string().min(1).describe(
+    'Operator plus operand. 28 operators: eq, neq, gt, gte, lt, lte, in, notIn, ' +
+    'contains, notContains, length, matches, notMatches, startsWith, endsWith, ' +
+    'between, and 12 that take NO operand: isEmpty, isNotEmpty, isNull, ' +
+    'isUndefined, isDefined, isTruthy, isFalsy, isJson, isNumber, isString, ' +
+    'isBoolean, isArray. Prefix any with "not " to negate. Examples: "eq 200", ' +
+    '"between 200, 299", "matches /^v[0-9]+$/", "isNumber". An unrecognised ' +
+    'operator becomes an eq against the whole string, matching Bruno.'
+  ),
+  disabled: z.boolean().optional().describe('Omit to keep the assertion active.'),
+});
+
+/** One declared variable, shared by create_request and modify_request. */
+export const varEntrySchema = z.object({
+  name: z.string().min(1),
+  value: z.string().describe(
+    'For preRequest: RAW text, with {{placeholders}} resolved against variables ' +
+    'declared earlier. For postResponse: a JS EXPRESSION evaluated against the ' +
+    'response, e.g. res.body.id or res.body.items.length * 2.'
+  ),
+  disabled: z.boolean().optional().describe('Omit to keep the variable active.'),
+  local: z.boolean().optional().describe('Pre-request only: keep out of the runtime store.'),
+});
+
+/**
+ * Declared `vars` blocks. The two halves are asymmetric on purpose, matching
+ * Bruno: pre-request values are raw text folded into interpolation BEFORE the
+ * request is built, post-response values are expressions evaluated against the
+ * response and stored with bru.setVar.
+ */
+export const requestVarsSchema = z.object({
+  preRequest: z.array(varEntrySchema).optional(),
+  postResponse: z.array(varEntrySchema).optional(),
+}).optional();

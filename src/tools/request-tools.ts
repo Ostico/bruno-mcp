@@ -16,7 +16,7 @@ import {
 } from '../bruno/types.js';
 import { validateToolPath, resolveRequestFile } from './tool-path.js';
 import { topologicalSort } from './topological-sort.js';
-import { inlineScriptsSchema } from './schemas.js';
+import { inlineScriptsSchema, assertionEntrySchema, requestVarsSchema } from './schemas.js';
 import type { ToolContext } from './context.js';
 
 export function registerCreateRequestTool(ctx: ToolContext): void {
@@ -46,6 +46,11 @@ export function registerCreateRequestTool(ctx: ToolContext): void {
           config: z.record(z.string())
         }).optional(),
         query: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+        pathParams: z.record(z.union([z.string(), z.number(), z.boolean()])).optional()
+          .describe('Values for :name segments in the URL, e.g. { id: "42" } for /users/:id.'),
+        assert: z.array(assertionEntrySchema).optional()
+          .describe('Declared assertions, evaluated on every run without needing a test() block.'),
+        vars: requestVarsSchema,
         folder: z.string().optional(),
         sequence: z.number().optional(),
         scripts: inlineScriptsSchema
@@ -77,6 +82,9 @@ export function registerCreateRequestTool(ctx: ToolContext): void {
             config: args.auth.config
           } : undefined,
           query: args.query,
+          pathParams: args.pathParams,
+          assert: args.assert,
+          vars: args.vars,
           folder: args.folder,
           sequence: args.sequence,
           scripts: args.scripts as Record<string, string> | undefined
@@ -146,6 +154,11 @@ export function registerModifyRequestTool(ctx: ToolContext): void {
           config: z.record(z.string())
         }).optional(),
         query: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+        pathParams: z.record(z.union([z.string(), z.number(), z.boolean()])).optional()
+          .describe('Replaces the declared path parameters; query parameters are left alone.'),
+        assert: z.array(assertionEntrySchema).optional()
+          .describe('Replaces the whole assert block. Omit to leave existing assertions untouched.'),
+        vars: requestVarsSchema,
         scripts: inlineScriptsSchema,
         scriptMode: z.enum(['replace', 'append']).optional().default('replace').describe(
           'How to write the scripts field. "replace" (default) overwrites the existing script ' +
@@ -215,6 +228,9 @@ export function registerModifyRequestTool(ctx: ToolContext): void {
           };
         }
         if (args.query !== undefined) updates.query = args.query;
+        if (args.pathParams !== undefined) updates.pathParams = args.pathParams;
+        if (args.assert !== undefined) updates.assert = args.assert;
+        if (args.vars !== undefined) updates.vars = args.vars;
         if (args.scripts !== undefined) {
           updates.scripts = args.scripts as Record<string, string>;
           // Default explicitly: the zod default only applies when the SDK

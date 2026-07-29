@@ -12,6 +12,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > semver, so it cannot ship as a patch or minor no matter how small the diff
 > that follows it.
 
+### Added
+
+- **`create_request` and `modify_request` can author `assert`, `vars` and path
+  parameters.** These three features were already applied at run time but had no
+  field on any tool, so the execution engine was unreachable from the MCP surface:
+  an agent could not write an assertion at all, and a `:id` segment had no way to
+  get a value. This is the mirror of the *parsed, persisted, never applied* class
+  the previous releases closed — same broken data path, opposite end.
+
+  - `assert` — a list of `{ name, value, disabled? }`, where `name` is the
+    left-hand expression and `value` is an operator plus operand (`eq 200`,
+    `between 200, 299`, `isNumber`). Evaluated after the post-response script, so
+    unlike a bare `expect()` in a script it needs no `test()` wrapper to report.
+  - `vars` — `{ preRequest?, postResponse? }`. The halves stay asymmetric,
+    matching Bruno: pre-request values are raw text folded into interpolation
+    before the request is built, post-response values are JS expressions
+    evaluated against the response.
+  - `pathParams` — a record mirroring `query`, written as `params:path`. The two
+    are replaced independently, so setting one never discards the other.
+
+  Both formats are covered, and the switched-off flag keeps its per-format
+  spelling on disk (`.bru` `enabled`, `.yml` `disabled`) while the tool surface
+  exposes only `disabled`, absent meaning active.
+
 ### Removed
 
 - **BREAKING:** `BruGenerator`, `generateBruFile`, and `createBasicBruFile` are
@@ -283,8 +307,8 @@ Nothing in the request schema is parsed, persisted and round-tripped without bei
 applied any more — `vars:pre-request` / `vars:post-response` were the last of that
 class and are now applied (see above).
 
-Two limitations of declared assertions specifically, both recorded rather than
-left to be discovered:
+One limitation of declared assertions specifically, recorded rather than left to
+be discovered:
 
 - **A bare variable name as the left-hand side is a `ReferenceError`, not
   `undefined`.** Bruno spreads env/collection/runtime variables into the
@@ -292,10 +316,9 @@ left to be discovered:
   the `{{var}}` form and `bru.getVar("name")` resolve. Seeding arbitrary variable
   names as context globals would risk shadowing `res`, `bru` and `expect`, so the
   fix belongs in a per-expression scope rather than the shared context.
-- **No tool can author an `assert` block.** `create_request` and `modify_request`
-  expose no `assert` field, so evaluation reaches only collections written by
-  hand or by Bruno itself. An agent building a collection through this server
-  still has to use `test()` blocks in a post-response script.
+
+(The second limitation recorded here — that no tool could author an `assert`
+block — is fixed above.)
 
 Auth is not in this category — unapplied types warn explicitly, and
 `auth: inherit` reports that collection-level inheritance is unsupported.
