@@ -229,11 +229,13 @@ describe('stripRegexDelimiters', () => {
     expect(stripRegexDelimiters('^ab+c$/')).toBe('^ab+c$/');
   });
 
-  it('does not mistake a lone slash for a delimited empty pattern', () => {
-    // A single "/" satisfies both startsWith and endsWith, and Bruno's
-    // substring(1, length - 1) would turn it into "" — a regex matching
-    // everything. Guarded here because that silently passes any assertion.
-    expect(stripRegexDelimiters('/')).toBe('/');
+  it('strips a lone slash to the empty pattern, as Bruno does', () => {
+    // A single "/" satisfies both startsWith and endsWith on the same character,
+    // so Bruno's substring turns it into "" — a regex matching everything, an
+    // assertion that cannot fail. Reproduced rather than guarded: this runner
+    // reports what the collection does under Bruno, and treating "/" as a
+    // literal-slash match instead would report a failure Bruno never sees.
+    expect(stripRegexDelimiters('/')).toBe('');
   });
 
   it('keeps interior slashes', () => {

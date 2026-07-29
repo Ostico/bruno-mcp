@@ -1039,7 +1039,8 @@ async function executeSingleRequest(
       const scriptResult = await scriptRunner.runScript(testScript ?? '', wrappedResponse, {
         // Seed the current merged vars (env/collection/runtime plus anything the
         // pre-request script wrote into the store) so a post-response script can
-        // read them via bru.getVar.
+        // read them via bru.getVar, and so a declared assertion's `{{var}}`
+        // operand resolves against the same map the URL was built from.
         variables: Object.fromEntries(
           variableStore ? variableStore.merge(vars) : vars,
         ),

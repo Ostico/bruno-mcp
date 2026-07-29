@@ -19,7 +19,10 @@ export const inlineScriptsSchema = z.object({
   'reports "tests": [] and the request looks green with no assertions. Available in scripts: ' +
   'res.getStatus()/getStatusText()/getHeader(name)/getHeaders()/getBody()/getResponseTime(), ' +
   'bru.setVar(name, value)/getVar(name), and expect(actual) with .to.equal/.contain/.include, ' +
-  '.to.have.property/.lengthOf, .to.be.a/.an/.below/.above, and .to.not.* negations. ' +
+  '.to.have.property/.lengthOf, .to.be.a/.an, ' +
+  '.to.be.above/.below/.at.least/.at.most (aliases .gt/.lt/.gte/.lte/.greaterThan/.lessThan), ' +
+  '.to.be.within(min, max), .to.be.oneOf([...]), .to.match(/re/), ' +
+  '.to.startWith/.endWith, .to.be.true/.false/.null/.undefined/.empty/.json,and .to.not.* negations. ' +
   'RETURN TYPE: res.getBody() returns the response already parsed into a JS object/array when the ' +
   'Content-Type is application/json or a +json type (raw text otherwise). Access fields directly — res.getBody().field — ' +
   'and do NOT JSON.parse() it, which throws SyntaxError: "[object Object]" is not valid JSON.',

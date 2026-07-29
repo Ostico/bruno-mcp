@@ -21,6 +21,7 @@ import {
   chainForOperator,
   parseAssertionOperator,
   splitOperandList,
+  splitOperandRange,
   stripRegexDelimiters,
   type AssertArgument,
   type OperandKind,
@@ -54,9 +55,48 @@ export interface AssertionPlan {
  * this adds is the split between what will become source and what will stay
  * data.
  */
-export function planAssertion(assertion: SandboxAssertion): AssertionPlan {
+/**
+ * Resolve `{{var}}` placeholders in an operand.
+ *
+ * Bruno wraps every operand branch of its assert runtime in `interpolateString`
+ * against the merged env/collection/folder/request/runtime variables, so
+ * `eq {{expectedStatus}}` compares against the resolved value. Without this the
+ * comparison is against the literal 18 characters and every parameterised
+ * assertion reports a failure it should not.
+ *
+ * Applied to the OPERAND ONLY, and only after the operator has been parsed off.
+ * Interpolating the whole `value` first would let a variable's own text be read
+ * as the operator: a bare `{{status}}` holding `eq 200` parses upstream as
+ * `eq "eq 200"` (unrecognised token, whole string as operand) and would parse
+ * here as `eq 200` — a different assertion.
+ *
+ * An unresolved placeholder is left exactly as written, which is both what
+ * `substitute` does for URLs and what upstream does; the resulting comparison
+ * against the literal text is the visible symptom of a missing variable.
+ */
+export function interpolateOperand(
+  operand: string,
+  variables: Record<string, unknown> | undefined,
+): string {
+  if (operand.length === 0 || variables === undefined) {
+    return operand;
+  }
+  return operand.replace(/\{\{([^}]+)\}\}/g, (match, name: string) => {
+    if (!Object.prototype.hasOwnProperty.call(variables, name)) {
+      return match;
+    }
+    const value = variables[name];
+    return value === undefined || value === null ? match : String(value);
+  });
+}
+
+export function planAssertion(
+  assertion: SandboxAssertion,
+  variables?: Record<string, unknown>,
+): AssertionPlan {
   const { operator, operand } = parseAssertionOperator(assertion.value);
   const chain = chainForOperator(operator);
+  const resolved = interpolateOperand(operand, variables);
 
   let operands: readonly string[];
   switch (chain.operandKind) {
@@ -64,14 +104,18 @@ export function planAssertion(assertion: SandboxAssertion): AssertionPlan {
       operands = [];
       break;
     case 'list':
+      operands = splitOperandList(resolved);
+      break;
     case 'range':
-      operands = splitOperandList(operand);
+      // Not splitOperandList: the bracket strip is Bruno's `in`/`notIn` branch
+      // only, and applying it here turns a Bruno failure into a pass.
+      operands = splitOperandRange(resolved);
       break;
     case 'regexSource':
-      operands = [stripRegexDelimiters(operand)];
+      operands = [stripRegexDelimiters(resolved)];
       break;
     default:
-      operands = [operand];
+      operands = [resolved];
   }
 
   return {
@@ -119,8 +163,12 @@ function __assertInit(json) {
 // how a bare word becomes a string rather than a ReferenceError. Here the bare
 // word is simply returned: the sandbox has code generation disabled, and the
 // operand deliberately never becomes source. The results agree for every operand
-// without a \${...} placeholder — and Bruno resolves {{var}} references before
-// this point, so placeholders do not appear in practice.
+// without a \${...} placeholder.
+//
+// {{var}} placeholders are already resolved by then — interpolateOperand runs
+// host-side in planAssertion, which is where upstream resolves them too. An
+// UNRESOLVED placeholder does reach here, as the literal text, which is what
+// makes a missing variable visible in the failure message.
 function __coerceOperand(text) {
   if (!text || !text.length || typeof text !== 'string') { return text; }
   var t = text.trim();
@@ -153,14 +201,11 @@ function __assertArgs(plan) {
     return [list];
   }
   if (plan.argument.kind === 'spreadOperand') {
-    // .within takes two arguments, so the bounds are spread. A malformed operand
-    // is rejected rather than passed through: within(min, undefined) would fail
-    // with a confusing "undefined is not a number" instead of naming the cause.
-    if (plan.operands.length !== 2) {
-      throw new Error(
-        'expected two comma-separated bounds, but got ' + plan.operands.length
-      );
-    }
+    // .within takes two arguments, so the bounds are spread. Exactly the first
+    // two, whatever the count: upstream destructures [lhs, rhs] and ignores any
+    // extras, so rejecting three bounds would fail an assertion Bruno can pass.
+    // Fewer than two needs no check either — the missing bound arrives as
+    // undefined and requireNumbers fails it, which is what upstream's chai does.
     return [__coerceOperand(plan.operands[0]), __coerceOperand(plan.operands[1])];
   }
   return [__coerceOperand(plan.operands[0])];
@@ -230,6 +275,36 @@ export function buildAssertPlansScript(plans: readonly AssertionPlan[]): string 
 }
 
 /**
+ * Reject a left-hand side that is not a single expression.
+ *
+ * The wrapper `__assertOne(i, function() { return (<expr>); });` is a template,
+ * not a boundary: `0); } ); doSomething(); //` closes the call and comments away
+ * the tail, and `0); } ); doSomething(); (function(){ return (0` rebalances it.
+ * Both compile, and the statements run.
+ *
+ * Compiling the expression ALONE first is what makes the template's assumption
+ * true. `(\n<expr>\n)` parses only if the text really is one expression — the
+ * newlines matter, so a trailing line comment cannot swallow the closing paren.
+ * Both payloads above fail this and are recorded as ordinary assertion failures.
+ *
+ * The privilege gained by escaping was never large: the left-hand side is already
+ * arbitrary JS in that context, at the same trust level as the post-response
+ * script, and `(a, b)` or an IIFE reaches whatever a statement could. What it did
+ * buy is throwing a chosen value OUT of runInContext into the host's catch, past
+ * the in-context try in __assertOne — which is the one thing an expression cannot
+ * do, and the reason host-side error handling should never see attacker-shaped
+ * objects.
+ *
+ * Compiling twice also fixes a plain authoring case the template breaks on its
+ * own: `res.status // why` is a legitimate expression whose comment would
+ * otherwise eat the wrapper's `); });`.
+ */
+function assertExpressionIsAnExpression(expression: string): void {
+  // Compiled, never run. A syntax error here is the whole signal.
+  new vm.Script(`(\n${expression}\n)`, { filename: 'bruno-assertion-check.js' });
+}
+
+/**
  * Record an assertion failure the sandbox could not record for itself.
  *
  * Best-effort: if the context is no longer usable the assertion goes unreported
@@ -258,10 +333,15 @@ function recordAssertionFailure(
  *
  * One script per assertion is the isolation: a left-hand expression that does
  * not parse is a compile error, and compiling all of them together would let one
- * malformed assertion in a collection stop every assertion after it. The
- * expression is spliced into source because it IS source — a JS expression is
- * what the format declares — and parenthesised so it cannot smuggle in extra
- * statements. Everything else about the assertion crossed as JSON data.
+ * malformed assertion in a collection stop every assertion after it.
+ *
+ * The expression is spliced into source because it IS source — a JS expression
+ * is what the format declares. Parenthesising it is NOT a containment boundary:
+ * an expression ending in `);` closes the wrapper and the `__assertOne(` call
+ * with it, and a trailing `//` or a rebalancing `(function(){ return (0` absorbs
+ * the leftover tail, so statements can follow. assertExpressionIsAnExpression is
+ * what actually holds the line. Everything else about the assertion crossed as
+ * JSON data and cannot execute at all.
  *
  * Rethrows a timeout: that force-terminates the whole context, so it is the
  * run's timeout rather than one assertion's failure, and the caller's existing
@@ -274,12 +354,24 @@ export function runAssertionsInContext(
 ): void {
   for (let i = 0; i < plans.length; i++) {
     try {
-      new vm.Script(`__assertOne(${i}, function() { return (${plans[i].expression}); });`, {
+      assertExpressionIsAnExpression(plans[i].expression);
+      // The expression goes on its own line, for the same reason the check
+      // compiles it that way: on one line a trailing `//` comment in an
+      // otherwise valid expression would comment out the wrapper's own tail.
+      const source = `__assertOne(${i}, function() { return (\n${plans[i].expression}\n); });`;
+      new vm.Script(source, {
         filename: `bruno-assertion-${i}.js`,
       }).runInContext(context, { timeout: budget() });
     } catch (error: unknown) {
       const { label, message } = describeSandboxError(error);
-      if (isTimeoutMessage(message)) {
+      // Corroborated against the clock, not trusted from the text. The message
+      // is the only thing distinguishing a V8 interrupt from an ordinary Error,
+      // and a collection author can throw that exact wording — which rethrows,
+      // and the run's timeout handling then discards every result already
+      // recorded plus every assertion and the script still to come. So one
+      // assertion could void the whole report. A real interrupt only fires once
+      // the budget it was given is spent, which leaves budget() at its floor.
+      if (isTimeoutMessage(message) && budget() <= 1) {
         throw error;
       }
       recordAssertionFailure(context, i, `${label}: ${message}`, budget());
