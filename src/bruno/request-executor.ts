@@ -12,6 +12,7 @@ import { VariableStore } from './variable-store.js';
 import { buildDispatcher, type DispatcherResult } from './fetch-dispatcher.js';
 import { describeNetworkError } from './network-error.js';
 import { applyParams } from './request-params.js';
+import { encodeRequestUrl, shouldEncodeUrl, hasExplicitScheme } from './url-encoder.js';
 import {
   SINGLE_VALUE_HEADERS,
   appendHeader,
@@ -809,6 +810,18 @@ async function executeSingleRequest(
     if (preResult.error) {
       preScriptError = preResult.error;
     }
+  }
+
+  // `settings.encodeUrl` is applied here and nowhere else, matching where Bruno
+  // applies it: on the finished URL, after interpolation, after path parameters
+  // and after any pre-request script rewrite. Doing it earlier would encode a URL
+  // a script then replaces, and doing it per-value would send different bytes
+  // than Bruno for the same collection.
+  if (shouldEncodeUrl(yaml.settings)) {
+    // A scheme has to be present first or the port colon in a `host:port`
+    // authority is encoded as path data. Confined to this branch so a schemeless
+    // URL reaches validateUrl unchanged when the setting is off.
+    url = encodeRequestUrl(hasExplicitScheme(url) ? url : `http://${url}`);
   }
 
   // The URL is finalized here (post pre-request mutation). `url` keeps any
