@@ -3,7 +3,7 @@
 !.github
 !.github/**
 # The `.*` rule above would otherwise make an ESLint config impossible to
-# commit, which is why `npm run lint` had no config to find (finding Q5).
+# commit, which is why `npm run lint` had no config to find.
 !.eslintrc.json
 # Dependencies
 node_modules/
@@ -62,7 +62,7 @@ generated-collections/
 # Prettier cache
 .prettiercache
 
-# QA / verification artifacts (S23)
+# QA / verification artifacts
 # The verification workflow writes captured request/response data here, which
 # can include live Authorization/Cookie headers and full environment dumps.
 # This must never enter git history — keep it local-only.

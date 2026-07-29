@@ -8,7 +8,7 @@ const shared: Config = {
   // `roots` bounds the haste map, and collectCoverageFrom can only report on
   // files inside it. With only tests/ here the coverage gate silently skipped
   // every src file no test imports — including 455 lines of dead code — while
-  // still reporting 100% (finding Q3).
+  // still reporting 100%.
   roots: ['<rootDir>/src', '<rootDir>/tests'],
   moduleFileExtensions: ['ts', 'js', 'json'],
   transform: {
@@ -34,7 +34,7 @@ const shared: Config = {
 const coverage = {
   // Widening `roots` alone is not enough: without this, coverage still reports
   // only the files some test happened to import, so an untested file is absent
-  // from the report rather than shown at 0% (finding Q3).
+  // from the report rather than shown at 0%.
   collectCoverageFrom: ['src/**/*.ts'],
   coveragePathIgnorePatterns: [
     // Type-only declarations carry no runtime code to cover.
@@ -49,7 +49,7 @@ const coverage = {
 
 const config: Config = {
   ...coverage,
-  // Two explicitly separated lanes (finding Q4). Previously a single
+  // Two explicitly separated lanes. Previously a single
   // `testMatch: ['<rootDir>/tests/**/*.test.ts']` fused them, so there was no
   // way to run the fast lane on its own: integration tests use real sockets,
   // real child processes and real filesystem writes, and dragging that into
@@ -73,7 +73,7 @@ const config: Config = {
       testMatch: ['<rootDir>/tests/integration/**/*.test.ts'],
       // Builds dist/ once, before any worker starts, replacing the per-suite
       // `beforeAll` builds that raced each other through `tsup --clean`
-      // (finding Q18 — tests/global-setup.ts documents the race).
+      // (tests/global-setup.ts documents the race).
       //
       // Runs exactly once per jest invocation whichever level it is declared
       // at: @jest/core's runGlobalHook gathers the root hook and every

@@ -13,7 +13,7 @@ The threat is a hostile or buggy `.bru` script — a pre-request or test script
 authored by someone other than the operator, or an honest script that misbehaves.
 
 `node:vm` **is not a security boundary.** Node's own documentation says so, and
-this project proved it: the reproduced RCE (finding S01) escaped a hardened vm
+this project proved it: the reproduced RCE escaped a hardened vm
 context through a host-realm closure reachable via `bru`. Hardening the vm in
 place (PRs #15–#17) closed the *demonstrated* escape, but cannot prove the
 absence of the next one — a vm shares a heap and an event loop with the host.
@@ -56,7 +56,7 @@ Projecting a non-serialisable **request body** to a safe form is the parent's
 job, done by `toSendableJob` in `sandbox-host.ts` before `child.send()`. Under
 the default `'json'` codec a `FormData` or `Blob` body would otherwise arrive as
 `{}`, so a pre-request script would inspect an empty object instead of the body
-it was handed (finding S19). Instead the parent substitutes a truthful,
+it was handed. Instead the parent substitutes a truthful,
 **names-only** descriptor:
 
 - `FormData` → `{ type: 'multipart/form-data', parts: string[] }` — the part
@@ -107,7 +107,7 @@ second tsup entry) with:
 
 - **`stdio: ['ignore', 'pipe', 'pipe', 'ipc']`** — stdin ignored; stdout and
   stderr **piped and captured** by the parent (never inherited — inheriting fd 1
-  is what corrupts the JSON-RPC stream, finding S03); fd 3 the IPC channel for
+  is what corrupts the JSON-RPC stream); fd 3 the IPC channel for
   the messages above. Captured stdout/stderr are length-capped and returned as
   diagnostics inside the result, never replayed to the parent's own streams.
 - **scrubbed `env`** — an explicit allowlist, not the parent's environment. A
@@ -115,7 +115,7 @@ second tsup entry) with:
 - **no environment-driven worker path** — the worker location is resolved from
   the parent module's own location (`import.meta.url`), never from an env var.
   A `fork(process.env.SOMETHING)` in the very file meant to remove code execution
-  would reintroduce it (finding S13).
+  would reintroduce it.
 
 ### Lifecycle and bounds
 
