@@ -604,6 +604,20 @@ export interface TestResult {
   error?: string;
 }
 
+/**
+ * One declared assertion to evaluate, reduced to what the sandbox needs.
+ *
+ * `name` is the left-hand side and is a JS expression (`res.status`,
+ * `res.body.items.length`); `value` is the raw `<operator> <operand>` string as
+ * authored. Both formats' enabled/disabled polarity is resolved before an
+ * assertion reaches this type — a disabled one is dropped, never carried with a
+ * flag, so nothing downstream can evaluate a check the author switched off.
+ */
+export interface SandboxAssertion {
+  name: string;
+  value: string;
+}
+
 export interface TestRunnerOptions {
   timeout?: number;
   /**
@@ -612,6 +626,11 @@ export interface TestRunnerOptions {
    * script merely reads is not echoed back in the result's `variables`.
    */
   variables?: Record<string, unknown>;
+  /**
+   * Declared assertions to evaluate alongside the script. Already filtered to
+   * the enabled ones.
+   */
+  assertions?: readonly SandboxAssertion[];
 }
 
 export interface ScriptResult {

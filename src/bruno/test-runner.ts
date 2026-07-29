@@ -44,6 +44,12 @@ export class TestRunner {
     options?: TestRunnerOptions,
   ): Promise<ScriptResult> {
     const timeout = options?.timeout ?? DEFAULT_TIMEOUT;
-    return runTestJob(script, response, timeout, options?.variables);
+    return runTestJob(
+      script,
+      response,
+      timeout,
+      options?.variables,
+      options?.assertions,
+    );
   }
 }

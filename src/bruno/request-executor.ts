@@ -140,6 +140,15 @@ export function bruFileToYamlRequest(bru: BruFile): YamlRequest {
     ...(param.enabled === false ? { disabled: true } : {}),
   }));
 
+  // Same opposite-polarity trap as params, and worse here: forwarding `enabled`
+  // straight through would evaluate the assertions the author switched off and
+  // report their failures as the request's.
+  const assertions = bru.assertions?.map((assertion) => ({
+    name: assertion.name,
+    value: assertion.value,
+    ...(assertion.enabled === false ? { disabled: true } : {}),
+  }));
+
   let body: YamlRequest['http']['body'];
   if (bru.body?.formData && bru.body.formData.length > 0) {
     body = {
@@ -190,6 +199,7 @@ export function bruFileToYamlRequest(bru: BruFile): YamlRequest {
     // from a .bru request: the .bru format declares `timeout`, the parser read it
     // and the writer preserved it, and it then had no effect whatsoever.
     settings: bru.settings,
+    assert: assertions,
     docs: bru.docs,
   };
 }
@@ -1016,14 +1026,24 @@ async function executeSingleRequest(
     let tests: TestResult[] = [];
     let scriptWarnings: string[] | undefined;
     const testScript = getAfterResponseScript(yaml);
-    if (testScript) {
-      const scriptResult = await scriptRunner.runScript(testScript, wrappedResponse, {
+    // Assertions the author switched off are dropped here rather than carried
+    // with a flag, so nothing downstream can evaluate one or report it.
+    const assertions = (yaml.assert ?? [])
+      .filter((assertion) => assertion.disabled !== true)
+      .map((assertion) => ({ name: assertion.name, value: assertion.value }));
+    // The gate is script OR assertions. Gating on the script alone meant a
+    // request that declared assertions but no post-response script never invoked
+    // the sandbox, so its declared checks were parsed, written back faithfully,
+    // and never evaluated — the run reported zero assertions and looked green.
+    if (testScript || assertions.length > 0) {
+      const scriptResult = await scriptRunner.runScript(testScript ?? '', wrappedResponse, {
         // Seed the current merged vars (env/collection/runtime plus anything the
         // pre-request script wrote into the store) so a post-response script can
         // read them via bru.getVar.
         variables: Object.fromEntries(
           variableStore ? variableStore.merge(vars) : vars,
         ),
+        assertions,
       });
       tests = scriptResult.results;
       if (scriptResult.warnings && scriptResult.warnings.length > 0) {
