@@ -50,6 +50,7 @@ export class TestRunner {
       timeout,
       options?.variables,
       options?.assertions,
+      options?.postResponseVars,
     );
   }
 }

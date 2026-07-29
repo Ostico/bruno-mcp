@@ -375,6 +375,16 @@ describe('declared assertions — operand interpolation', () => {
     expect(results[0].description).toBe('res.status eq {{v}}');
   });
 
+  it('leaves the placeholder alone for a variable whose value is null', () => {
+    // A null-valued variable is not a resolution: substituting "null" as text
+    // would silently compare against the four characters n-u-l-l.
+    const { results } = runTestJob('', response(), 5000, { nothing: null }, [
+      { name: 'res.status', value: 'eq {{nothing}}' },
+    ]);
+    expect(results[0].status).toBe('fail');
+    expect(results[0].error).toMatch(/\{\{nothing\}\}/);
+  });
+
   it('does not resolve inherited property names', () => {
     const { results } = runTestJob('', response(), 5000, {}, [
       { name: 'res.status', value: 'eq {{constructor}}' },

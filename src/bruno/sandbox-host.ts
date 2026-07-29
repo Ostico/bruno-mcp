@@ -326,11 +326,16 @@ export function createForkingScriptRunner(
 
     async runScript(script, response, options) {
       const assertions = options?.assertions;
+      const postResponseVars = options?.postResponseVars;
       const hasScript = Boolean(script) && script.trim().length > 0;
-      // Declared assertions are reason enough to fork: gating on the script alone
-      // is what left a request that declares assertions and no script never
-      // reaching the sandbox at all.
-      if (!hasScript && (!assertions || assertions.length === 0)) {
+      // Declared assertions and post-response vars are each reason enough to
+      // fork: gating on the script alone is what left a request that declares
+      // them and no script never reaching the sandbox at all.
+      if (
+        !hasScript &&
+        (!assertions || assertions.length === 0) &&
+        (!postResponseVars || postResponseVars.length === 0)
+      ) {
         return { results: [], variables: {} };
       }
       const out = await runner(
@@ -341,6 +346,7 @@ export function createForkingScriptRunner(
           timeout: options?.timeout ?? DEFAULT_TIMEOUT,
           variables: options?.variables,
           assertions,
+          postResponseVars,
         },
         { workerPath },
       );

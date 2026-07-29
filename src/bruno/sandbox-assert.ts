@@ -158,6 +158,12 @@ function __assertInit(json) {
 //   - a number above MAX_SAFE_INTEGER stays a STRING, because Number() would
 //     alter its digits and an equality check against the response's own text
 //     would then fail for no visible reason.
+//   - that guard is one-sided upstream and one-sided here: utils.js:99 tests
+//     only "number > Number.MAX_SAFE_INTEGER", so a literal below
+//     -MAX_SAFE_INTEGER loses exactly the digits the positive case protects.
+//     Left as-is deliberately. Adding the missing half would make this runner
+//     report a different comparison than Bruno does for the same file, and
+//     reporting what the collection actually does is the property that matters.
 //
 // Upstream's final branch evaluates the operand as a template literal, which is
 // how a bare word becomes a string rather than a ReferenceError. Here the bare
@@ -224,7 +230,21 @@ function __assertWalk(plan, lhs) {
   if (args.length === 0) {
     // .to.be.empty / .true / .null / .undefined / .json assert from a getter, so
     // reading the property IS the call.
-    void node[terminal];
+    //
+    // Checked rather than assumed: this is the one seam guardChain cannot cover.
+    // The guard fires when a property is MISSING, but a zero-argument operator
+    // pointed at a method would find the property present, read the function
+    // object, assert nothing and report a pass. Every such operator maps to a
+    // real getter today; this is what keeps that true for the next one added.
+    // Read exactly once — the read IS the assertion, so reading twice would run
+    // it twice.
+    var value = node[terminal];
+    if (typeof value === 'function') {
+      throw new Error(
+        'matcher "' + terminal + '" is a method, not a getter, so reading it ' +
+        'would assert nothing'
+      );
+    }
     return;
   }
   node[terminal].apply(node, args);
@@ -315,17 +335,66 @@ function recordAssertionFailure(
   context: vm.Context,
   index: number,
   message: string,
-  budget: number,
+  // Named for what it is — a millisecond deadline, not the budget() function the
+  // caller holds — and already floored at 1 by that function, so not re-clamped.
+  timeout: number,
 ): void {
   try {
     vm.runInContext(
       `__assertFail(${index}, ${JSON.stringify(message)});`,
       context,
-      { timeout: Math.max(1, budget) },
+      { timeout },
     );
   } catch {
     // Nothing further can run in this context.
   }
+}
+
+/**
+ * Evaluate `vars:post-response` entries and store each result.
+ *
+ * A var's value is a JS expression, so it goes through the same treatment an
+ * assertion's left-hand side does: pre-validated as a single expression, then
+ * compiled on its own so one bad var cannot stop the others. Unlike an assertion
+ * it produces no result entry — the outcome is a variable, and a failure is
+ * reported as a warning rather than a test result, because upstream collects
+ * these errors separately from its assertion results.
+ *
+ * The write goes through bru.setVar so it lands in the same store the script and
+ * the assertions read, and so it is picked up by extractBruVars and returned to
+ * the caller as a variable write like any other.
+ *
+ * Returns one message per var that failed, for the caller to surface as warnings.
+ */
+export function runPostResponseVarsInContext(
+  context: vm.Context,
+  vars: readonly SandboxAssertion[],
+  budget: () => number,
+): string[] {
+  const failures: string[] = [];
+  for (const entry of vars) {
+    try {
+      assertExpressionIsAnExpression(entry.value);
+      // The NAME crosses as JSON data and the VALUE as source, the same split the
+      // assertion path uses: a variable name can never become code.
+      const source =
+        `bru.setVar(${JSON.stringify(entry.name)}, (\n${entry.value}\n));`;
+      new vm.Script(source, {
+        filename: `bruno-post-response-var-${entry.name}.js`,
+      }).runInContext(context, { timeout: budget() });
+    } catch (error: unknown) {
+      const { label, message } = describeSandboxError(error);
+      // A timeout terminated the context; nothing further can run in it, so it is
+      // the run's timeout and must reach the caller's handling.
+      if (isTimeoutMessage(message) && budget() <= 1) {
+        throw error;
+      }
+      failures.push(
+        `vars:post-response "${entry.name}" failed to evaluate: ${label}: ${message}`,
+      );
+    }
+  }
+  return failures;
 }
 
 /**

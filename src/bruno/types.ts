@@ -614,8 +614,8 @@ export interface TestResult {
  * flag, so nothing downstream can evaluate a check the author switched off.
  */
 export interface SandboxAssertion {
-  name: string;
-  value: string;
+  readonly name: string;
+  readonly value: string;
 }
 
 export interface TestRunnerOptions {
@@ -631,6 +631,16 @@ export interface TestRunnerOptions {
    * the enabled ones.
    */
   assertions?: readonly SandboxAssertion[];
+  /**
+   * `vars:post-response` entries to evaluate before the script and the
+   * assertions, already filtered to the enabled ones.
+   *
+   * Each `value` is a JS EXPRESSION, not a literal — that is the asymmetry with
+   * `vars:pre-request`, whose values are raw text folded into interpolation
+   * before the request is even built. The result of each is written to the
+   * variable store under `name`, so the script and the assertions both see it.
+   */
+  postResponseVars?: readonly SandboxAssertion[];
 }
 
 export interface ScriptResult {

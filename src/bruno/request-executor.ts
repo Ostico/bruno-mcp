@@ -12,6 +12,7 @@ import { VariableStore } from './variable-store.js';
 import { buildDispatcher, type DispatcherResult } from './fetch-dispatcher.js';
 import { describeNetworkError } from './network-error.js';
 import { applyParams } from './request-params.js';
+import { applyPreRequestVars, bruVarSetsToYamlVars } from './request-vars.js';
 import { encodeRequestUrl, shouldEncodeUrl, hasExplicitScheme } from './url-encoder.js';
 import {
   SINGLE_VALUE_HEADERS,
@@ -149,6 +150,13 @@ export function bruFileToYamlRequest(bru: BruFile): YamlRequest {
     ...(assertion.enabled === false ? { disabled: true } : {}),
   }));
 
+  // Third occurrence of the same inversion, and the .bru names differ too:
+  // varSets.req/.res carry `enabled`, YamlVars.preRequest/.postResponse carry
+  // `disabled`. Getting it wrong here means applying a variable the author
+  // switched off — silently, since a variable leaves no trace in the report the
+  // way a failed assertion does. `local` is carried through unchanged.
+  const vars = bruVarSetsToYamlVars(bru.varSets);
+
   let body: YamlRequest['http']['body'];
   if (bru.body?.formData && bru.body.formData.length > 0) {
     body = {
@@ -200,9 +208,14 @@ export function bruFileToYamlRequest(bru: BruFile): YamlRequest {
     // and the writer preserved it, and it then had no effect whatsoever.
     settings: bru.settings,
     assert: assertions,
+    // Without this the .bru side stayed inert whatever the executor did: the
+    // format declares vars, the parser read them and the writer preserved them,
+    // and they stopped here.
+    vars,
     docs: bru.docs,
   };
 }
+
 
 /**
  * Flatten a parsed .bru auth block into the shape the executor applies.
@@ -733,6 +746,7 @@ function capResponseBody(
   return { body: buf.subarray(0, maxBytes).toString('utf8'), truncated: true };
 }
 
+
 async function executeSingleRequest(
   yaml: YamlRequest,
   vars: Map<string, string>,
@@ -741,8 +755,14 @@ async function executeSingleRequest(
   bodyCapture?: BodyCaptureOptions,
   collectionRoot?: string,
 ): Promise<RequestExecutionResult> {
-  // Merge env vars with runtime vars (runtime takes precedence)
-  const effectiveVars = variableStore ? variableStore.merge(vars) : vars;
+  // `vars:pre-request` sits between the environment and the runtime store, which
+  // is where upstream puts it: collection < env < folder < REQUEST < oauth2 <
+  // runtime < process.env. So a request var overrides the environment, and
+  // anything bru.setVar wrote still overrides the request var.
+  const baseVars = applyPreRequestVars(vars, yaml.vars);
+
+  // Merge env + request vars with runtime vars (runtime takes precedence)
+  const effectiveVars = variableStore ? variableStore.merge(baseVars) : baseVars;
 
   // eslint-disable-next-line prefer-const -- url is reassigned by pre-request script mutations below
   const built = await buildFetchOptions(yaml, effectiveVars, collectionRoot);
@@ -796,7 +816,10 @@ async function executeSingleRequest(
     // warnings, and the cross-origin strip header names consistently from the
     // new vars, rather than leaving them computed from the stale set.
     if (variableStore && Object.keys(preResult.variables).length > 0) {
-      const rebuilt = await buildFetchOptions(yaml, variableStore.merge(vars), collectionRoot);
+      // baseVars, not vars: re-substituting from the environment alone would drop
+      // every vars:pre-request entry the moment a pre-request script wrote a
+      // variable, which is exactly when this path runs.
+      const rebuilt = await buildFetchOptions(yaml, variableStore.merge(baseVars), collectionRoot);
       url = rebuilt.url;
       options = rebuilt.options;
       authWarnings = rebuilt.warnings;
@@ -1031,20 +1054,31 @@ async function executeSingleRequest(
     const assertions = (yaml.assert ?? [])
       .filter((assertion) => assertion.disabled !== true)
       .map((assertion) => ({ name: assertion.name, value: assertion.value }));
+    // Same drop-not-flag treatment for vars:post-response. Unlike pre-request
+    // vars these values are JS EXPRESSIONS, evaluated in the sandbox with res
+    // and bru in scope — which is why they travel with the sandbox job rather
+    // than being folded into the interpolation map here.
+    const postResponseVars = (yaml.vars?.postResponse ?? [])
+      .filter((entry) => entry.disabled !== true)
+      .map((entry) => ({ name: entry.name, value: entry.value }));
     // The gate is script OR assertions. Gating on the script alone meant a
     // request that declared assertions but no post-response script never invoked
     // the sandbox, so its declared checks were parsed, written back faithfully,
     // and never evaluated — the run reported zero assertions and looked green.
-    if (testScript || assertions.length > 0) {
+    // postResponseVars joins the gate for the same reason assertions did: a
+    // request that declares only vars still has sandbox work to do, and gating it
+    // out would leave those vars parsed, written back and never evaluated.
+    if (testScript || assertions.length > 0 || postResponseVars.length > 0) {
       const scriptResult = await scriptRunner.runScript(testScript ?? '', wrappedResponse, {
         // Seed the current merged vars (env/collection/runtime plus anything the
         // pre-request script wrote into the store) so a post-response script can
         // read them via bru.getVar, and so a declared assertion's `{{var}}`
         // operand resolves against the same map the URL was built from.
         variables: Object.fromEntries(
-          variableStore ? variableStore.merge(vars) : vars,
+          variableStore ? variableStore.merge(baseVars) : baseVars,
         ),
         assertions,
+        postResponseVars,
       });
       tests = scriptResult.results;
       if (scriptResult.warnings && scriptResult.warnings.length > 0) {

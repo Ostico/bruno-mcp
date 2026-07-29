@@ -234,13 +234,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opposite polarity (`enabled` vs `disabled`), so forwarding without inverting
   would have sent exactly the parameters the author turned off.
 
+- **`.include`/`.contain` subset-checks an object**, as chai does, instead of
+  refusing any target that is not an array or string. Verified against chai
+  directly rather than inferred. Unreachable from the declared `contains`
+  operator — its operand is always a coerced primitive, which chai rejects for an
+  object target, so an object left-hand side still fails there exactly as it does
+  upstream — but a hand-written script reaches it.
+- **`length 0` no longer fails on an empty string.** The length was read behind a
+  truthiness test, and `""` is falsy while still having a length.
+- **`to.not.have.<unknown>` fails loudly.** It was the one chain object left
+  unguarded, so an unknown matcher after it read `undefined` and reported a pass.
+  No declared operator reaches it; a script can.
+- **A zero-argument matcher that is a method rather than a getter now throws.**
+  That is the one seam the unknown-matcher guard cannot cover: the property
+  exists, so reading it asserts nothing and would report a pass. No operator hits
+  it today; this keeps that true for the next one added.
+
+- **`vars:pre-request` and `vars:post-response` are now applied.** The last member
+  of the same class: both parsers read them, both generators wrote them back, and
+  nothing at execution time ever looked at them. `bruFileToYamlRequest` dropped
+  them too, so the `.bru` side would have stayed inert even after the executor
+  learned to apply them — both ends needed fixing.
+
+  The two halves are asymmetric, and matching that matters more than making them
+  consistent:
+
+  - `vars:pre-request` values are **raw text**, not expressions. They join the
+    interpolation map between the environment and the runtime store — upstream's
+    precedence is collection < env < folder < **request** < oauth2 < runtime <
+    `process.env` — so a request var overrides the environment and anything
+    `bru.setVar` wrote still overrides it. Each value is itself substituted
+    against the variables established so far, in declaration order, so
+    `{{version}}/widgets` resolves if `version` was declared earlier.
+  - `vars:post-response` values **are** JS expressions, evaluated against the
+    response and stored with `bru.setVar`. They run before the post-response
+    script and before the declared assertions, which is upstream's order and is
+    what lets both read them. A var whose expression throws is reported as a
+    warning rather than a test result — its outcome is a variable, not a check,
+    and inventing a failing assertion for it would inflate the reported count.
+
+  Third occurrence of the opposite-polarity trap: `.bru` carries `enabled`,
+  `.yml` carries `disabled`. Getting it wrong here is quieter than for an
+  assertion — a wrongly applied variable leaves no trace in the report at all.
+
 ### Known gaps
 
-One feature is still parsed, persisted and round-tripped without being applied at
-execution time. It is not newly broken; it is recorded here so it is not mistaken
-for working:
-
-- **`vars:pre-request` and `vars:post-response` are never applied.**
+Nothing in the request schema is parsed, persisted and round-tripped without being
+applied any more — `vars:pre-request` / `vars:post-response` were the last of that
+class and are now applied (see above).
 
 Two limitations of declared assertions specifically, both recorded rather than
 left to be discovered:
