@@ -34,7 +34,7 @@ import {
   BruAuthMode,
   BodyType
 } from './types.js';
-import { MultipartFormPart, BruBody } from './types.js';
+import { MultipartFormPart, BruBody, BruGraphql, FormUrlEncodedPart, YamlBody } from './types.js';
 import { detectFormat } from './format-detector.js';
 import type { CollectionFormat } from './format-detector.js';
 import { createWriter, normalizeScriptType } from './format-factory.js';
@@ -106,6 +106,40 @@ function replaceQueryParams<T extends { type?: string }>(existing: T[] | undefin
  * URLSearchParams, so percent-escapes and `+` resolve the way they would on the
  * wire rather than being stored literally.
  */
+/**
+ * Move a parsed `.yml` body onto the BruBody field that matches its payload.
+ *
+ * `YamlBody.data` is a union: payload text for the text-ish types, a
+ * `{ query, variables }` mapping for graphql, and a list of parts for the two
+ * form types. BruBody keeps each of those in a different field, so a caller that
+ * only reads `content` sees nothing at all for graphql and form bodies — and
+ * loadRequest feeds modify_request, which writes the request back out. Keeping
+ * only the string meant editing a header on a graphql request silently dropped
+ * its query.
+ */
+function yamlBodyToBruBody(body: YamlBody): BruBody {
+  const type = body.type as BodyType;
+  const data = body.data;
+
+  if (typeof data === 'string') {
+    return { type, content: data };
+  }
+
+  if (Array.isArray(data)) {
+    // Both form types arrive as a list of parts; only the declared type says
+    // which kind of part it is.
+    return type === 'form-urlencoded'
+      ? { type, formUrlEncoded: data as FormUrlEncodedPart[] }
+      : { type, formData: data as MultipartFormPart[] };
+  }
+
+  if (data && typeof data === 'object') {
+    return { type, graphql: data as BruGraphql };
+  }
+
+  return { type };
+}
+
 function toFormUrlEncodedEntries(
   body: NonNullable<CreateRequestInput['body']>,
 ): Array<{ name: string; value: string; enabled: boolean }> | undefined {
@@ -458,10 +492,7 @@ export class RequestBuilder {
         }
 
         if (yamlReq.http.body && yamlReq.http.body.type !== 'none') {
-          bruFile.body = {
-            type: yamlReq.http.body.type as BodyType,
-            content: typeof yamlReq.http.body.data === 'string' ? yamlReq.http.body.data : undefined,
-          };
+          bruFile.body = yamlBodyToBruBody(yamlReq.http.body);
         }
 
         if (yamlReq.http.auth && typeof yamlReq.http.auth !== 'string') {
