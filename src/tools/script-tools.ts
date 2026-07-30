@@ -34,8 +34,8 @@ export function registerAddTestScriptTool(ctx: ToolContext): void {
         ),
         scriptMode: z.enum(['append', 'replace']).optional().default('append').describe(
           'How to write the script. "append" (default) concatenates onto any existing script ' +
-          'of this type; "replace" overwrites it. In .yml collections post-response and tests ' +
-          'share one after-response slot, so replacing either overwrites that shared block.',
+          'of this type; "replace" overwrites it. Each of the three script types has its own ' +
+          'slot in both .bru and .yml, so replacing one leaves the other two untouched.',
         )
       }
     },
@@ -122,9 +122,6 @@ export function registerAddTestScriptTool(ctx: ToolContext): void {
             {
               type: 'text',
               text: `Successfully ${scriptMode === 'replace' ? 'replaced' : 'appended'} ${canonicalScriptType} script in ${path.basename(args.bruFilePath)} (${detection.format} format)`
-                + (detection.format === 'yaml' && (canonicalScriptType === 'tests' || canonicalScriptType === 'post-response')
-                  ? '. Note: .yml collections store post-response and tests in one shared after-response block.'
-                  : '')
             }
           ]
         };
@@ -152,9 +149,9 @@ export function registerRemoveScriptTool(ctx: ToolContext): void {
       inputSchema: {
         bruFilePath: z.string().min(1, 'BRU file path is required').describe('Absolute path to the .yml or .bru request file. Get from list_requests or get_collection_stats.'),
         scriptType: z.enum(['pre-request', 'post-response', 'tests', 'before-request', 'after-response']).describe(
-          'Which script to remove. In .yml collections post-response and tests share one ' +
-          'after-response block, so removing either clears that shared block; .bru files keep ' +
-          'the three slots separate and removal is precise.',
+          'Which script to remove. Both .bru and .yml keep the three script types in ' +
+          'separate slots, so removal is precise: clearing tests leaves a post-response ' +
+          'script in place, and vice versa.',
         )
       }
     },
@@ -201,9 +198,6 @@ export function registerRemoveScriptTool(ctx: ToolContext): void {
             {
               type: 'text',
               text: `Removed ${canonicalScriptType} script from ${path.basename(args.bruFilePath)} (${resolved.format} format)`
-                + (resolved.format === 'yaml' && (canonicalScriptType === 'tests' || canonicalScriptType === 'post-response')
-                  ? '. Note: .yml collections store post-response and tests in one shared after-response block, so both are now cleared.'
-                  : '')
             }
           ]
         };

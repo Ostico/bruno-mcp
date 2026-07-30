@@ -21,6 +21,7 @@ import {
   generateYamlEnvironment,
   injectYamlScript,
   removeYamlScript,
+  type YamlScriptType,
 } from './yaml-generator.js';
 import {
   BrunoError,
@@ -56,9 +57,8 @@ export interface FormatWriter {
   /**
    * Remove every script block of the given type.
    *
-   * Note for the 'yaml' format: Bruno's .yml dialect has no separate `tests`
-   * slot — both 'post-response' and 'tests' compile to a single
-   * `after-response` entry, so removing either removes that shared block.
+   * Both formats keep the three script types in three separate slots, so
+   * removing one leaves the other two untouched.
    */
   removeScript(content: string, scriptType: string): string;
   getRequestExtension(): '.bru' | '.yml';
@@ -99,12 +99,15 @@ export function normalizeScriptType(inputType: string): GenericScriptType {
   return normalized;
 }
 
-// In opencollection YAML format, both post-response and tests map to 'after-response'
-// runtime.scripts entries. This is per-spec but means replace mode cannot distinguish them.
+// The .yml dialect names its runtime.scripts entries differently from .bru, but
+// it has the same three of them: a test script is its own `type: tests` entry,
+// which Bruno reads back into the request's `tests` block rather than into
+// `script.res`. Collapsing it onto 'after-response' would move the script to a
+// different slot in Bruno's editor and a different field in its data model.
 const YAML_SCRIPT_MAP: Record<GenericScriptType, string> = {
   'pre-request': 'before-request',
   'post-response': 'after-response',
-  tests: 'after-response',
+  tests: 'tests',
 };
 
 const BRU_SCRIPT_MAP: Record<GenericScriptType, string> = {
@@ -235,25 +238,16 @@ export function createWriter(format: CollectionFormat): FormatWriter {
           scriptType as GenericScriptType,
           'yaml',
         );
-        // NOTE: 'tests' and 'post-response' both map to 'after-response' in
-        // YAML — Bruno's .yml dialect has one slot for both. 'replace'
-        // therefore replaces that shared block. Callers that write several
-        // script types in a single operation must merge them into one code
-        // string first (see RequestBuilder.applyInlineScripts) so the second
-        // write does not discard the first.
         return injectYamlScript(
           content,
-          mapped as 'before-request' | 'after-response',
+          mapped as YamlScriptType,
           code,
           mode,
         );
       },
       removeScript: (content: string, scriptType: string) => {
         const mapped = mapScriptType(scriptType as GenericScriptType, 'yaml');
-        return removeYamlScript(
-          content,
-          mapped as 'before-request' | 'after-response',
-        );
+        return removeYamlScript(content, mapped as YamlScriptType);
       },
       getRequestExtension: () => '.yml',
     };

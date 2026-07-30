@@ -142,21 +142,24 @@ describe('remove_script tool handler', () => {
     expect(res.content[0].text).toMatch(/Removed tests script from request\.yml/);
   });
 
-  it('notes the shared after-response slot for .yml collections', async () => {
+  // A .yml request keeps its test script in a slot of its own, so removing one
+  // script type says nothing about the others and the message must not claim it
+  // cleared a shared block.
+  it('does not claim a shared after-response slot on .yml collections', async () => {
     const res = await handler({
       bruFilePath: '/workspace/collection/request.yml',
       scriptType: 'tests',
     });
-    expect(res.content[0].text).toMatch(/shared after-response block/);
+    expect(res.content[0].text).not.toMatch(/shared/i);
   });
 
-  it('does not add the shared-slot note for pre-request', async () => {
+  it('reports a pre-request removal without a shared-slot caveat', async () => {
     const res = await handler({
       bruFilePath: '/workspace/collection/request.yml',
       scriptType: 'pre-request',
     });
     expect(mockRemoveScript).toHaveBeenCalledWith(ORIGINAL, 'pre-request');
-    expect(res.content[0].text).not.toMatch(/shared after-response block/);
+    expect(res.content[0].text).not.toMatch(/shared/i);
   });
 
   it('normalizes the after-response alias to post-response', async () => {
