@@ -456,3 +456,66 @@ settings:
     });
   });
 });
+
+describe('parseYamlRequest - graphql block without a query string', () => {
+  it('falls back to an empty query rather than throwing', () => {
+    // YAML turns a bare `query:` into null, and a hand-edited file can omit the
+    // key entirely. The parser substitutes an empty string so the request stays
+    // loadable. This pins the fallback; it is not a claim that such a file is a
+    // valid graphql request.
+    const yaml = `info:
+  name: NoQuery
+  type: graphql
+http:
+  method: POST
+  url: https://api.example.com/graphql
+  body:
+    type: graphql
+    data:
+      variables: '{"id":1}'
+`;
+
+    const result = parseYamlRequest(yaml);
+
+    expect(result.http.body?.type).toBe('graphql');
+    expect((result.http.body?.data as { query: string }).query).toBe('');
+  });
+});
+
+describe('parseYamlRequest - non-string body data', () => {
+  it('keeps a numeric body as the digits that were written', () => {
+    // A bare `data: 42` parses as a YAML number. Stringifying it preserves what
+    // the author wrote instead of putting `[object Object]` on the wire.
+    const yaml = `info:
+  name: NumberBody
+  type: http
+http:
+  method: POST
+  url: https://api.example.com/count
+  body:
+    type: text
+    data: 42
+`;
+
+    const result = parseYamlRequest(yaml);
+
+    expect(result.http.body?.data).toBe('42');
+  });
+
+  it('keeps a boolean body as the word that was written', () => {
+    const yaml = `info:
+  name: BoolBody
+  type: http
+http:
+  method: POST
+  url: https://api.example.com/flag
+  body:
+    type: text
+    data: true
+`;
+
+    const result = parseYamlRequest(yaml);
+
+    expect(result.http.body?.data).toBe('true');
+  });
+});
