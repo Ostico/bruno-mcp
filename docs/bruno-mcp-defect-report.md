@@ -4,10 +4,11 @@
 **Pinned at:** `main@4df3f16`. Every line number below was read at that commit — **re-verify before acting**, files move.
 **Last verified:** 2026-07-30.
 
-**Supersedes** `adversarial-review-2026-07-29.md` (findings pinned at `main@75b28ad`, most since fixed) and the
-standalone field-audit defect report it was merged from. The older review is kept for its refutation record —
-the items it got *wrong* are as useful as the ones it got right — but it is no longer the working list.
-`blind-discoverability-test.md` is methodology, not findings, and is unaffected.
+**Supersedes and replaces** `adversarial-review-2026-07-29.md` (findings pinned at `main@75b28ad`, most since
+fixed) and the standalone field-audit defect report it was merged from. Both files were removed once their
+open findings, their corrections and their reusable lessons had been folded in here; the review remains in git
+history if the full original text is ever wanted. `blind-discoverability-test.md` is methodology, not findings, and is
+unaffected.
 
 ## Provenance
 
@@ -33,32 +34,48 @@ claims needed correcting against current code; see the notes under H3 and L3.
 
 ## Open — High
 
-### H1 — `form-urlencoded` bodies are impossible to author in a `.yml` collection. CONFIRMED, reproduced.
+### H1 — a `.yml` body whose `data` is not a string is silently dropped. CONFIRMED.
 
-`request.ts:892-900` (create) and `:555-561` (modify) build the YAML body as:
+Two separately-reported symptoms, one root cause. The executor's body chain
+(`request-executor.ts:392-435`) is, in order:
 
-- if `isMultipartBodyType(type)` → `data: toMultipartData(formData)`
-- else → `data: input.body.content` — **the raw string**
+1. multipart → `FormData`
+2. `typeof body?.data === 'string'` → send verbatim, and set the implied content-type from
+   `BODY_TYPE_CONTENT_TYPES[body.type]` (`:397-398`)
+3. `body?.type === 'form-urlencoded' && Array.isArray(body.data)` → proper `URLSearchParams` encode
+4. `body?.type === 'graphql' && !Array.isArray(body.data)` → JSON envelope
 
-`isMultipartBodyType` (`request.ts:43`) matches only `form-data` / `multipart-form`. So for `form-urlencoded`:
+**There is no final `else`.** Any `data` that is an object and is neither a graphql body nor a
+form-urlencoded array matches nothing, `options.body` is never assigned, and **the request goes out with no
+body at all** — no error, no warning. Two known ways in:
 
-- passing `content: "a=1&b=2"` writes `data: a=1&b=2`, a scalar where the executor iterates a list of
-  `{name, value}` pairs (`request-executor.ts:407-409`) → **the request goes out with an empty body**
-- passing `formData` writes `data: undefined` → the body is dropped entirely
+- **`form-urlencoded` authored with `formData`.** `request.ts:892-900` (create) and `:555-561` (modify) build
+  the YAML body as `isMultipartBodyType(type) ? toMultipartData(formData) : input.body.content`.
+  `isMultipartBodyType` (`request.ts:43`) matches only `form-data` / `multipart-form`, so `form-urlencoded`
+  takes the else and writes `data: undefined`.
+- **`type: json` with a YAML mapping** rather than a JSON string. Reaches no branch. (Previously this
+  stringified to a literal `[object Object]` on the wire; the `String()` catch-all is gone, so it is now a
+  silent drop instead — quieter, and worse.)
 
-There is no input shape that produces a working `form-urlencoded` body. The normaliser that would fix this,
-`toFormUrlEncodedEntries` (`request.ts:143-161`), accepts *both* shapes and is correct — but at the pinned
-commit it still has exactly **one** call site, `request.ts:190`, inside `yamlBodyToBruBody`, i.e. the `.bru`
-path only.
+The normaliser that fixes the first case, `toFormUrlEncodedEntries` (`request.ts:143-161`), accepts *both*
+shapes and is correct — but at the pinned commit it still has exactly **one** call site, `request.ts:190`,
+inside `yamlBodyToBruBody`, i.e. the `.bru` path only. Routing the `.yml` path through it moves
+form-urlencoded into branch 3. The `json` case needs a real fallback branch, not a `String()` cast.
 
-Failure mode is the worst this tool has: no error, no warning. The file looks right, the run reports a clean
-2xx/4xx, and the body was never sent. Any assertion on "the endpoint rejects bad input" passes for the wrong
-reason.
+Failure mode is the worst this tool has. The file looks right, the run reports a clean 2xx/4xx, and the body
+was never sent. Any assertion on "the endpoint rejects bad input" passes for the wrong reason.
 
-**Fix both ends together.** The read path has the mirror-image defect: `parseYamlRequest` routes *every* array
+> **Partial correction to the field audit.** It also reported that authoring with `content: "a=1&b=2"` sends
+> an empty body, citing the executor iterating `{name, value}` pairs at `:407-409`. That mechanism does not
+> hold: `:407-409` is inside branch 3, which a string never reaches. A string `data` hits branch 2 and is sent
+> verbatim *with* the correct implied content-type. The audit did reproduce a live rejection, so something on
+> that path is still wrong — but **re-reproduce before fixing it**, because the cited cause is unreachable.
+> The `formData` case above is confirmed by reading and is sufficient on its own to justify the fix.
+
+**Fix both ends together.** The read path has a mirror-image defect: `parseYamlRequest` routes *every* array
 body through the multipart part mapper, stamping `type: 'text'` onto form-urlencoded parts, which Bruno does
-not do. Fixing only the write path leaves a file that round-trips through us but diverges from Bruno.
-Fix `toFormUrlEncodedEntries` routing and the parser in one change, and fix L2 while in the file.
+not do. Fixing only the write path leaves a file that round-trips through us but diverges from Bruno. Route
+`toFormUrlEncodedEntries`, add the missing fallback branch, fix the parser, and fix L2, in one change.
 
 ### H2 — No cookie jar, so no session can be exercised without hand-rolled relaying. CONFIRMED.
 
@@ -388,6 +405,28 @@ For orientation only — full detail is in the superseded review and in the PRs.
   `deleteEnvironment`, `createCollection`, and the `delete_request` unlink.
 
 ---
+
+## Reading notes — dead ends already walked
+
+Carried over from the superseded review's refutation section. Each of these is a wrong reading that looked
+right, recorded so it is not re-derived.
+
+- **Audit at the layer that matters, not the convenient one.** Upstream's `JSON.parse(request.data.variables)`
+  was once offered as evidence about `.yml` on-disk shape. That line lives in Bruno's **runner**, not its
+  filestore, so it says nothing about the file format. Check the wire, or check the file — not the layer that
+  happens to be open. The same error produced H1's unreachable `:407-409` citation.
+- **`format-factory.ts`'s two script maps are per-format, not per-direction.** The maps around `:104` and
+  `:110` are the **yaml** and **bru** maps. Reading them as an asymmetric write-map/read-map pair leads to the
+  conclusion that `.yml` tests never execute, which is false — `request-executor.ts:115` folds `.bru`'s
+  `tests` block into `after-response`, and scripts run on both formats. Two adjacent constants are not a
+  before/after pair just because they look like one.
+- **Auth is not an inert feature.** Tempting to group with the parsed-persisted-never-applied class, but it
+  does not belong: unapplied auth types warn explicitly, and `inherit` warns about unsupported inheritance.
+  Auth is honest about its limits. Its problem is a type surface that over-promises (L3), which is a different
+  defect with a different fix.
+- **Fixing one end of a data path is not a fix.** Recurring across this list: the write side and the read side
+  are separate code, and closing one silently leaves the hole open. See H1, M4, and the note under M5. A test
+  that passes because our own parser tolerates our own malformed output proves nothing — read the bytes.
 
 ## Suggested order of work
 
