@@ -193,12 +193,12 @@ describe('format-factory', () => {
         );
       });
 
-      it('injectScript maps tests to after-response for YAML', () => {
+      it('injectScript keeps tests in its own slot for YAML', () => {
         const content = 'info:\n  name: Test\n';
         writer.injectScript(content, 'tests', 'test code', 'append');
         expect(injectYamlScript).toHaveBeenCalledWith(
           content,
-          'after-response',
+          'tests',
           'test code',
           'append',
         );
@@ -284,8 +284,8 @@ describe('format-factory', () => {
       expect(mapScriptType('post-response', 'yaml')).toBe('after-response');
     });
 
-    it('maps tests to after-response for yaml', () => {
-      expect(mapScriptType('tests', 'yaml')).toBe('after-response');
+    it('maps tests to tests for yaml', () => {
+      expect(mapScriptType('tests', 'yaml')).toBe('tests');
     });
 
     it('maps pre-request to pre-request for bru', () => {
@@ -365,7 +365,7 @@ describe('format-factory', () => {
   });
 
   // =========================================================================
-  // createWriter — YAML shared after-response slot
+  // createWriter — YAML tests slot
   // =========================================================================
   describe('createWriter YAML tests replace mode', () => {
     it('passes replace through for tests scripts (no silent downgrade)', () => {
@@ -373,7 +373,7 @@ describe('format-factory', () => {
       writer.injectScript('info:\n  name: T\n', 'tests', 'test code', 'replace');
       expect(injectYamlScript).toHaveBeenCalledWith(
         'info:\n  name: T\n',
-        'after-response',
+        'tests',
         'test code',
         'replace',
       );
@@ -384,12 +384,12 @@ describe('format-factory', () => {
   // createWriter — removeScript
   // =========================================================================
   describe('createWriter removeScript', () => {
-    it('maps tests to after-response for the YAML writer', () => {
+    it('maps tests to the tests slot for the YAML writer', () => {
       const writer = createWriter('yaml');
       writer.removeScript('info:\n  name: T\n', 'tests');
       expect(removeYamlScript).toHaveBeenCalledWith(
         'info:\n  name: T\n',
-        'after-response',
+        'tests',
       );
     });
 

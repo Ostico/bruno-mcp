@@ -28,6 +28,7 @@ import {
 } from './request-headers.js';
 import type {
   YamlRequest,
+  YamlScript,
   YamlAuth,
   MockRequestData,
   CollectionRunResult,
@@ -577,14 +578,31 @@ function getBeforeRequestScript(yaml: YamlRequest): string | null {
   return beforeScripts.length > 0 ? beforeScripts.join('\n') : null;
 }
 
+/**
+ * The code to run in the post-response phase.
+ *
+ * A .yml request keeps its test script in a slot of its own (`type: tests`)
+ * separate from the post-response script (`type: after-response`); a .bru
+ * request keeps the same split between its `script:post-response` and `tests`
+ * blocks. This runner has a single post-response phase, so both are folded into
+ * one program here — after-response first, then tests, which is the order Bruno
+ * runs them in. Reading only 'after-response' would store an authored test
+ * faithfully and never execute it, reporting a run with zero tests as green.
+ */
 function getAfterResponseScript(yaml: YamlRequest): string | null {
   if (!yaml.runtime?.scripts) return null;
 
   const afterScripts = yaml.runtime.scripts
-    .filter(s => s.type === 'after-response')
+    .filter(s => s.type === 'after-response' || s.type === 'tests')
+    .sort((a, b) => scriptPhaseOrder(a.type) - scriptPhaseOrder(b.type))
     .map(s => s.code);
 
   return afterScripts.length > 0 ? afterScripts.join('\n') : null;
+}
+
+/** Sort key that puts an 'after-response' entry ahead of a 'tests' entry. */
+function scriptPhaseOrder(type: YamlScript['type']): number {
+  return type === 'tests' ? 1 : 0;
 }
 
 const DEFAULT_TIMEOUT_MS = 30000;

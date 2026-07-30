@@ -12,8 +12,32 @@ import {
   type EnvFile,
   type YamlVar,
   type YamlBody,
+  type YamlScript,
   type MultipartFormPart,
 } from './types.js';
+
+/** The three `runtime.scripts` entry types a .yml request can carry. */
+export type YamlScriptType = YamlScript['type'];
+
+const YAML_SCRIPT_TYPES: readonly YamlScriptType[] = [
+  'before-request',
+  'after-response',
+  'tests',
+];
+
+/**
+ * Guard the entry type at the boundary. The callers are typed, but the value
+ * originates in a tool argument that reaches here through a cast, so an
+ * unrecognised type has to fail loudly rather than be written to the file.
+ */
+function assertYamlScriptType(scriptType: string): asserts scriptType is YamlScriptType {
+  if (!(YAML_SCRIPT_TYPES as readonly string[]).includes(scriptType)) {
+    throw new BrunoError(
+      `Invalid script type "${scriptType}": expected one of ${YAML_SCRIPT_TYPES.join(', ')}`,
+      'VALIDATION_ERROR',
+    );
+  }
+}
 
 /**
  * Strip undefined and null values from an object tree so they
@@ -238,33 +262,18 @@ function copyExtraKeys(
 }
 
 /**
- * Inject a script into existing YAML request file content.
- *
- * @param content     Existing YAML content
- * @param scriptType  'before-request' or 'after-response'
- * @param scriptCode  The script code to inject
- * @param mode        'append' adds to existing scripts, 'replace' replaces scripts of same type
- * @returns Updated YAML content
- */
-/**
  * Remove every script of the given type from YAML request file content.
  *
- * Bruno's .yml dialect has a single `after-response` slot, so removing
- * 'after-response' removes what the MCP surface calls both post-response
- * and tests.
+ * The three entry types are independent slots, so removing 'tests' leaves an
+ * 'after-response' script in place and vice versa.
  *
  * @returns Updated YAML content
  */
 export function removeYamlScript(
   content: string,
-  scriptType: 'before-request' | 'after-response',
+  scriptType: YamlScriptType,
 ): string {
-  if (scriptType !== 'before-request' && scriptType !== 'after-response') {
-    throw new BrunoError(
-      `Invalid script type "${scriptType}": expected "before-request" or "after-response"`,
-      'VALIDATION_ERROR',
-    );
-  }
+  assertYamlScriptType(scriptType);
 
   const parsed = parseYaml(content) as Record<string, unknown>;
 
@@ -289,19 +298,22 @@ export function removeYamlScript(
   return yamlStringify(parsed, { indent: 2 });
 }
 
+/**
+ * Inject a script into existing YAML request file content.
+ *
+ * @param content     Existing YAML content
+ * @param scriptType  'before-request', 'after-response' or 'tests'
+ * @param scriptCode  The script code to inject
+ * @param mode        'append' adds to existing scripts, 'replace' replaces scripts of same type
+ * @returns Updated YAML content
+ */
 export function injectYamlScript(
   content: string,
-  scriptType: 'before-request' | 'after-response',
+  scriptType: YamlScriptType,
   scriptCode: string,
   mode: 'append' | 'replace',
 ): string {
-  // Validate scriptType
-  if (scriptType !== 'before-request' && scriptType !== 'after-response') {
-    throw new BrunoError(
-      `Invalid script type "${scriptType}": expected "before-request" or "after-response"`,
-      'VALIDATION_ERROR',
-    );
-  }
+  assertYamlScriptType(scriptType);
 
   // Reject null bytes
   if (scriptCode.includes('\0')) {

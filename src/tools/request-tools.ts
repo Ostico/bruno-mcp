@@ -164,8 +164,10 @@ export function registerModifyRequestTool(ctx: ToolContext): void {
           'How to write the scripts field. "replace" (default) overwrites the existing script ' +
           'of each provided type, so calling modify_request repeatedly is idempotent. "append" ' +
           'concatenates onto the existing script, which accumulates blocks across calls. ' +
-          'In .yml collections post-response and tests share one after-response slot, so ' +
-          'replacing either overwrites that shared block; supplying both in one call merges them.',
+          'Each script type has its own slot in both .bru and .yml, so replacing one leaves ' +
+          'the others untouched. One exception on .yml: supplying post-response and tests ' +
+          'together in a single call still merges both into the after-response slot, so ' +
+          'write the tests script in its own call to keep it in the tests slot.',
         )
       }
     },

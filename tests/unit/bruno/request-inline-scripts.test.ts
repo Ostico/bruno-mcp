@@ -83,8 +83,9 @@ describe('inline scripts round-trip', () => {
 
     expect(before).toHaveLength(1);
     expect(before[0].code).toContain('req.setHeader("x-test", "1");');
-    // post-response and tests share the single after-response slot in YAML, so
-    // they are merged into one block instead of producing two competing entries.
+    // Supplied together in one call, post-response and tests are merged into a
+    // single after-response block rather than producing two competing writes.
+    // (Written on their own, a tests script goes to the .yml `tests` slot.)
     expect(after).toHaveLength(1);
     expect(after[0].code).toContain('res.getStatus()');
     expect(after[0].code).toContain('res.getBody()');
@@ -105,7 +106,7 @@ describe('inline scripts round-trip', () => {
     });
 
     const scripts = parseYamlRequest(store.get(created.path!)!).runtime?.scripts ?? [];
-    const after = scripts.filter(s => s.type === 'after-response');
+    const after = scripts.filter(s => s.type === 'tests');
 
     expect(after).toHaveLength(1);
     expect(after[0].code).toContain('BBB');
@@ -127,7 +128,7 @@ describe('inline scripts round-trip', () => {
     }
 
     const scripts = parseYamlRequest(store.get(created.path!)!).runtime?.scripts ?? [];
-    expect(scripts.filter(s => s.type === 'after-response')).toHaveLength(1);
+    expect(scripts.filter(s => s.type === 'tests')).toHaveLength(1);
   });
 
   it('accumulates blocks only when scriptMode is append', async () => {
@@ -144,7 +145,7 @@ describe('inline scripts round-trip', () => {
     });
 
     const scripts = parseYamlRequest(store.get(created.path!)!).runtime?.scripts ?? [];
-    const after = scripts.filter(s => s.type === 'after-response');
+    const after = scripts.filter(s => s.type === 'tests');
 
     expect(after).toHaveLength(2);
     expect(after.map(s => s.code).join('\n')).toContain('AAA');
@@ -168,7 +169,7 @@ describe('inline scripts round-trip', () => {
 
     const scripts = parseYamlRequest(store.get(created.path!)!).runtime?.scripts ?? [];
     expect(scripts.filter(s => s.type === 'before-request')[0].code).toContain('x-keep');
-    expect(scripts.filter(s => s.type === 'after-response')[0].code).toContain('BBB');
+    expect(scripts.filter(s => s.type === 'tests')[0].code).toContain('BBB');
   });
 
   it('replaces the tests block in .bru files without touching post-response', async () => {

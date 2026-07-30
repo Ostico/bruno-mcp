@@ -288,10 +288,23 @@ function readAssertions(value: unknown): BruAssertion[] {
 
 function readRequestSettings(value: unknown): BruRequestSettings | undefined {
   if (!value || typeof value !== 'object') return undefined;
-  const raw = value as { encodeUrl?: unknown; timeout?: unknown };
+  const raw = value as {
+    encodeUrl?: unknown;
+    timeout?: unknown;
+    followRedirects?: unknown;
+    maxRedirects?: unknown;
+  };
   const settings: BruRequestSettings = {};
   if (typeof raw.encodeUrl === 'boolean') settings.encodeUrl = raw.encodeUrl;
   if (typeof raw.timeout === 'number') settings.timeout = raw.timeout;
+  // Typechecked rather than truthiness-checked: `followRedirects: false` and
+  // `maxRedirects: 0` are the values worth writing down, and both are falsy.
+  if (typeof raw.followRedirects === 'boolean') {
+    settings.followRedirects = raw.followRedirects;
+  }
+  if (typeof raw.maxRedirects === 'number') {
+    settings.maxRedirects = raw.maxRedirects;
+  }
   return Object.keys(settings).length > 0 ? settings : undefined;
 }
 

@@ -77,9 +77,22 @@ describe('removeYamlScript', () => {
     expect(scriptsOf(removed)).toHaveLength(0);
   });
 
+  it('removes the tests script without disturbing after-response', () => {
+    let content = injectYamlScript(YAML_BASE, 'after-response', 'bru.setVar("id", 1);', 'append');
+    content = injectYamlScript(content, 'tests', 'test("ok", function() {});', 'append');
+    expect(scriptsOf(content)).toHaveLength(2);
+
+    const removed = removeYamlScript(content, 'tests');
+    expect(scriptsOf(removed)).toEqual([
+      { type: 'after-response', code: 'bru.setVar("id", 1);' },
+    ]);
+  });
+
   it('rejects an unsupported script type', () => {
-    expect(() => removeYamlScript(YAML_BASE, 'tests' as 'after-response')).toThrow(BrunoError);
-    expect(() => removeYamlScript(YAML_BASE, 'tests' as 'after-response')).toThrow(/Invalid script type/);
+    // 'post-response' is the MCP surface's name for the slot; the .yml entry
+    // type is 'after-response', so it must not be written through unmapped.
+    expect(() => removeYamlScript(YAML_BASE, 'post-response' as 'after-response')).toThrow(BrunoError);
+    expect(() => removeYamlScript(YAML_BASE, 'post-response' as 'after-response')).toThrow(/Invalid script type/);
   });
 });
 

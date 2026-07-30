@@ -11,6 +11,8 @@ import {
   type YamlAuth,
   type YamlHeader,
   type YamlBody,
+  type BodyType,
+  type BruGraphql,
   type YamlScript,
   type YamlInfo,
   type MultipartFormPart,
@@ -87,9 +89,59 @@ function parseHeaders(raw: unknown): YamlHeader[] | undefined {
   });
 }
 
+/**
+ * Turn the `query` / `variables` mapping a graphql body is stored as into the
+ * envelope the executor reads. Both members are plain strings upstream, and an
+ * empty one is omitted rather than written as a blank.
+ */
+function parseGraphqlBody(obj: Record<string, unknown>): BruGraphql {
+  const graphql: BruGraphql = {
+    query: typeof obj.query === 'string' ? obj.query : '',
+  };
+  if (typeof obj.variables === 'string' && obj.variables !== '') {
+    graphql.variables = obj.variables;
+  }
+  return graphql;
+}
+
+/**
+ * Coerce a non-array `body.data` to what the request pipeline expects for the
+ * declared body type.
+ *
+ * A JSON body and a graphql body both sit on disk as a YAML mapping, so the
+ * plain `String()` this used to do produced the literal text "[object Object]"
+ * — still a valid string, so the user's body was replaced by garbage and
+ * nothing errored. A mapping under a type that can only hold payload text is a
+ * malformed file and is rejected instead of being coerced to something
+ * meaningless.
+ */
+function parseBodyData(value: unknown, type: BodyType): YamlBody['data'] {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+
+  if (typeof value === 'object' && value !== null) {
+    const obj = value as Record<string, unknown>;
+    if (type === 'graphql') return parseGraphqlBody(obj);
+    // Bruno stores a JSON body as the raw payload text, not as structure, so
+    // serialising is what keeps the two representations interchangeable.
+    if (type === 'json') return JSON.stringify(value, null, 2);
+  }
+
+  throw new BrunoError(
+    `Invalid body data for type "${type}": expected text, got ${typeof value}`,
+    'PARSE_ERROR',
+  );
+}
+
 function parseBody(raw: unknown): YamlBody | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const obj = raw as Record<string, unknown>;
+  // Validated before the data is read, because the data's meaning depends on
+  // it. YamlBody.type is declared string, but this is the value that later
+  // becomes a BodyType, and checking it here names the field.
+  const type = toBodyType(obj.type);
 
   let data: YamlBody['data'];
   if (Array.isArray(obj.data)) {
@@ -111,16 +163,13 @@ function parseBody(raw: unknown): YamlBody | undefined {
       if (part.disabled === true) item.enabled = false;
       return item;
     });
-  } else if (obj.data !== undefined) {
-    data = String(obj.data);
+    // A bare `data:` key parses to null. It means the body is absent, so it
+    // must stay absent — `String(null)` made it the literal text "null".
+  } else if (obj.data !== undefined && obj.data !== null) {
+    data = parseBodyData(obj.data, type);
   }
 
-  return {
-    // Validated even though YamlBody.type is declared string: this is the value
-    // that later becomes a BodyType, and checking it here names the field.
-    type: toBodyType(obj.type),
-    data,
-  };
+  return { type, data };
 }
 
 function parseAuth(raw: unknown): YamlAuth | undefined {
