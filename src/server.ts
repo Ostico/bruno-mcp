@@ -16,8 +16,8 @@ import type { ToolContext } from './tools/context.js';
 
 // Tool registrations, one module per domain.
 import { registerCreateCollectionTool, registerListCollectionsTool, registerGetCollectionStatsTool } from './tools/collection-tools.js';
-import { registerCreateEnvironmentTool, registerUpdateEnvironmentTool, registerSetEnvironmentVariableTool, registerRemoveEnvironmentVariableTool } from './tools/environment-tools.js';
-import { registerCreateRequestTool, registerModifyRequestTool, registerDeleteRequestTool, registerCreateTestSuiteTool, registerCreateCrudRequestsTool, registerListRequestsTool } from './tools/request-tools.js';
+import { registerCreateEnvironmentTool, registerUpdateEnvironmentTool, registerSetEnvironmentVariableTool, registerRemoveEnvironmentVariableTool, registerReadEnvironmentTool } from './tools/environment-tools.js';
+import { registerCreateRequestTool, registerModifyRequestTool, registerDeleteRequestTool, registerCreateTestSuiteTool, registerCreateCrudRequestsTool, registerListRequestsTool, registerReadRequestTool } from './tools/request-tools.js';
 import { registerRunCollectionTool } from './tools/run-tools.js';
 import { registerAddTestScriptTool, registerRemoveScriptTool } from './tools/script-tools.js';
 
@@ -86,6 +86,8 @@ export class BrunoMcpServer {
     registerListRequestsTool(ctx);
     registerGetCollectionStatsTool(ctx);
     registerRunCollectionTool(ctx);
+    registerReadRequestTool(ctx);
+    registerReadEnvironmentTool(ctx);
   }
 
   /**

@@ -49,6 +49,7 @@ const fs = require('fs').promises;
 const { detectFormat } = require('../../../src/bruno/format-detector.js');
 const { parse: parseYaml } = require('yaml');
 const { generateYamlEnvironment } = require('../../../src/bruno/yaml-generator.js');
+const { generateBruEnvironmentFull } = require('../../../src/bruno/bru-parser.js');
 
 describe('EnvironmentManager', () => {
   let manager: EnvironmentManager;
@@ -87,11 +88,20 @@ describe('EnvironmentManager', () => {
 
       expect(result.success).toBe(true);
       expect(result.path).toMatch(/prod\.bru$/);
-      const writeCall = fs.writeFile.mock.calls[0];
-      expect(writeCall[1]).toContain('vars {');
-      expect(writeCall[1]).toContain("'https://api.example.com'");
-      expect(writeCall[1]).toContain('false');
-      expect(writeCall[1]).toContain('5000');
+      // Serialization is Bruno's own, not this module's: an earlier hand-rolled
+      // writer quoted strings and prefixed a `# ...` header, neither of which
+      // the environment grammar accepts, so the files it produced could not be
+      // read back. Assert the delegation and the values handed over; the bytes
+      // are the serializer's contract, covered by its own suite.
+      expect(generateBruEnvironmentFull).toHaveBeenCalledWith(
+        [
+          { name: 'baseUrl', value: 'https://api.example.com' },
+          { name: 'debug', value: false },
+          { name: 'timeout', value: 5000 },
+        ],
+        undefined,
+      );
+      expect(fs.writeFile.mock.calls[0][1]).toBe('vars {\n  existing: old\n}\n');
     });
 
     it('should create bru environment with empty variables', async () => {
@@ -104,11 +114,10 @@ describe('EnvironmentManager', () => {
       });
 
       expect(result.success).toBe(true);
-      const writeCall = fs.writeFile.mock.calls[0];
-      expect(writeCall[1]).toContain('# Add your environment variables here');
+      expect(generateBruEnvironmentFull).toHaveBeenCalledWith([], undefined);
     });
 
-    it('should escape single quotes in string values', async () => {
+    it('should pass a value containing a quote through untouched', async () => {
       detectFormat.mockResolvedValue({ format: 'bru' });
 
       await manager.createEnvironment({
@@ -117,8 +126,12 @@ describe('EnvironmentManager', () => {
         variables: { msg: "it's a test" },
       });
 
-      const writeCall = fs.writeFile.mock.calls[0];
-      expect(writeCall[1]).toContain("it\\'s a test");
+      // No escaping here: the value is not quoted on disk, so a quote in it is
+      // an ordinary character and escaping it would corrupt the value.
+      expect(generateBruEnvironmentFull).toHaveBeenCalledWith(
+        [{ name: 'msg', value: "it's a test" }],
+        undefined,
+      );
     });
 
     it('should return error on empty name', async () => {

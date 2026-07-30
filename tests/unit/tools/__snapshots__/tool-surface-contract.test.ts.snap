@@ -121,6 +121,21 @@ exports[`MCP tool surface contract matches the recorded surface exactly (titles,
     },
     "title": "Modify Request",
   },
+  "read_environment": {
+    "description": "Read an environment back as structured JSON: every variable with its value, plus its disabled and secret flags. Omit "name" to list the collection's environments instead. Secret variables are returned by name only — Bruno stores no value for a secret in either file format, so there is none to return.",
+    "schema": {
+      "collectionPath": "string",
+      "name": "string?",
+    },
+    "title": "Read Bruno Environment",
+  },
+  "read_request": {
+    "description": "Read a single request file back as structured JSON: method, url, headers, query and path params, body, auth mode, scripts, assertions, vars, settings and docs. Works on both .bru and .yml and returns the same shape for each, so the on-disk format stays invisible. Use this before modify_request to see current state, and after create_request to confirm what was written. A "notes" array reports anything the file declares that the runner will not act on.",
+    "schema": {
+      "filePath": "string",
+    },
+    "title": "Read Bruno Request",
+  },
   "remove_environment_variable": {
     "description": "Remove a single variable from an existing Bruno environment. MERGES into the environment — all other variables are preserved.",
     "schema": {

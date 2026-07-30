@@ -140,7 +140,7 @@ export class EnvironmentManager {
       } else {
         // Existing BRU behavior
         const envFilePath = join(envDir, `${input.name}.bru`);
-        const envContent = this.generateEnvironmentFile(input.name, input.variables);
+        const envContent = this.generateEnvironmentFile(input.variables);
         await writeFileAtomic(envFilePath, envContent);
         return { success: true, path: envFilePath };
       }
@@ -408,7 +408,7 @@ export class EnvironmentManager {
         if (fileExtra) envFile.extra = fileExtra;
         await writeFileAtomic(envFilePath, generateYamlEnvironment(envFile));
       } else {
-        const envContent = this.generateEnvironmentFile(environmentName, variables);
+        const envContent = this.generateEnvironmentFile(variables, fileExtra);
         await writeFileAtomic(envFilePath, envContent);
       }
 
@@ -661,53 +661,27 @@ export class EnvironmentManager {
   }
 
   /**
-   * Generate environment file content in BRU format
+   * Generate environment file content in BRU format.
+   *
+   * Delegates to the same serializer Bruno itself uses. The hand-rolled writer
+   * this replaced emitted a `# ...` header and single-quoted every string:
+   * the Bruno environment grammar accepts neither, so the files it produced
+   * could not be read back — not by this server's own loader, and not by
+   * Bruno — and the quotes, where a file did parse, became part of the value.
    */
   private generateEnvironmentFile(
-    name: string,
-    variables: Record<string, string | number | boolean>
+    variables: Record<string, string | number | boolean>,
+    fileExtra?: Record<string, unknown>,
   ): string {
-    const lines: string[] = [];
-
-    // Add header comment
-    lines.push(`# ${name} Environment`);
-    lines.push(`# Generated on ${new Date().toISOString()}`);
-    lines.push('');
-
-    // Add variables block
-    if (Object.keys(variables).length > 0) {
-      lines.push('vars {');
-      
-      Object.entries(variables).forEach(([key, value]) => {
-        const formattedValue = this.formatVariableValue(value);
-        lines.push(`  ${key}: ${formattedValue}`);
-      });
-      
-      lines.push('}');
-    } else {
-      lines.push('vars {');
-      lines.push('  # Add your environment variables here');
-      lines.push('  # baseUrl: \'https://api.example.com\'');
-      lines.push('  # apiKey: \'your-api-key\'');
-      lines.push('}');
-    }
-
-    return lines.join('\n') + '\n';
+    const vars: EnvVariable[] = Object.entries(variables).map(([name, value]) => ({
+      name,
+      value,
+    }));
+    return generateBruEnvironmentFull(vars, fileExtra);
   }
 
   private parseEnvironmentFile(content: string, name: string): BrunoEnvironment {
     return parseBruEnvironment(content, name);
-  }
-
-  /**
-   * Format variable value for BRU file
-   */
-  private formatVariableValue(value: string | number | boolean): string {
-    if (typeof value === 'string') {
-      // Use single quotes for strings in BRU format
-      return `'${value.replace(/'/g, "\\'")}'`;
-    }
-    return String(value);
   }
 
   /**
