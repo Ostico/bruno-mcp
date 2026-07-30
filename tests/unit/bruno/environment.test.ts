@@ -36,6 +36,7 @@ jest.mock('../../../src/bruno/bru-parser.js', () => ({
     variables: { baseUrl: 'http://localhost:3000' },
   })),
   parseBruEnvironmentRaw: jest.fn(() => [{ name: 'existing', value: 'old' }]),
+  parseBruEnvironmentFile: jest.fn(() => ({ variables: [{ name: 'existing', value: 'old' }] })),
   generateBruEnvironmentFull: jest.fn(() => 'vars {\n  existing: old\n}\n'),
 }));
 

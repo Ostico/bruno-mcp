@@ -81,6 +81,8 @@ function createSuccessResult(total = 3, passed = 3, failed = 0): CollectionRunRe
       passed,
       failed,
       duration_ms: results.reduce((sum, r) => sum + r.duration_ms, 0),
+      tests: { total, passed: total - failed, failed },
+      requestsWithoutTests: 0,
     },
     results,
   };

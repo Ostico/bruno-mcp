@@ -167,36 +167,19 @@ export async function runInWorker(
   return new Promise<SandboxJobResult>(resolve => {
     let settled = false;
     let deadlineTimer: NodeJS.Timeout | undefined;
-
-    const child: ChildProcess = fork(workerPath, [WORKER_ARGV_SENTINEL], {
-      // fd 1 (stdout) and fd 2 (stderr) are PIPED, never inherited: inheriting
-      // fd 1 would let the child write onto the parent's MCP JSON-RPC stream.
-      // fd 3 is the IPC channel the job and reply travel over.
-      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-      // Scrubbed: the child gets only what the caller passed (default nothing),
-      // never process.env.
-      env,
-    });
-
-    // Captured, capped, and never written to the parent's stdout. Kept so a
-    // failure can be explained without ever letting child output reach fd 1.
-    let captured = '';
-    const capture = (chunk: Buffer): void => {
-      if (captured.length < maxOutputBytes) {
-        captured += chunk.toString('utf8').slice(0, maxOutputBytes - captured.length);
-      }
-    };
-    child.stdout?.on('data', capture);
-    child.stderr?.on('data', capture);
+    // Undefined until fork() returns, and it may never return: fork() can throw
+    // synchronously (EMFILE, ENOMEM, an unresolvable worker path), so every
+    // teardown path below has to cope with there being no child at all.
+    let child: ChildProcess | undefined;
 
     const cleanup = (): void => {
       if (deadlineTimer) clearTimeout(deadlineTimer);
       // The SIGKILL escalation is deliberately NOT cleared: it is only ever
       // scheduled on the deadline path, and the caller is resolved before it
       // fires. Cancelling it would leave the runaway child alive.
-      child.removeAllListeners();
-      child.stdout?.removeAllListeners();
-      child.stderr?.removeAllListeners();
+      child?.removeAllListeners();
+      child?.stdout?.removeAllListeners();
+      child?.stderr?.removeAllListeners();
     };
 
     const finish = (result: SandboxJobResult): void => {
@@ -211,54 +194,96 @@ export async function runInWorker(
     // the vm timeout cannot give — it holds no matter what the script left
     // spinning on the child's stack.
     const killChild = (): void => {
-      child.kill('SIGTERM');
+      if (!child) return;
+      const doomed = child;
+      doomed.kill('SIGTERM');
       // The handle is deliberately not kept: this escalation must never be
       // cancelled, or a runaway child would survive the SIGTERM it ignored.
       setTimeout(() => {
-        child.kill('SIGKILL');
+        doomed.kill('SIGKILL');
       }, killGraceMs);
     };
 
-    deadlineTimer = setTimeout(() => {
+    // Everything from the fork onwards runs guarded. The slot was acquired
+    // before this promise existed and is handed back only by finish(), which is
+    // otherwise reachable only from a child-process listener — so a synchronous
+    // throw here would escape holding the slot forever. The cap is module-wide
+    // and small, so a handful of such throws would leave every later script run
+    // waiting on acquireSlot() for the lifetime of the process: not a degraded
+    // sandbox but a permanently wedged one.
+    try {
+      child = fork(workerPath, [WORKER_ARGV_SENTINEL], {
+        // fd 1 (stdout) and fd 2 (stderr) are PIPED, never inherited: inheriting
+        // fd 1 would let the child write onto the parent's MCP JSON-RPC stream.
+        // fd 3 is the IPC channel the job and reply travel over.
+        stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+        // Scrubbed: the child gets only what the caller passed (default nothing),
+        // never process.env.
+        env,
+      });
+
+      // Captured, capped, and never written to the parent's stdout. Kept so a
+      // failure can be explained without ever letting child output reach fd 1.
+      let captured = '';
+      const capture = (chunk: Buffer): void => {
+        if (captured.length < maxOutputBytes) {
+          captured += chunk.toString('utf8').slice(0, maxOutputBytes - captured.length);
+        }
+      };
+      child.stdout?.on('data', capture);
+      child.stderr?.on('data', capture);
+
+      deadlineTimer = setTimeout(() => {
+        killChild();
+        finish(
+          failingResultFor(
+            job.kind,
+            `sandbox worker exceeded its ${job.timeout}ms budget and was terminated`,
+          ),
+        );
+      }, job.timeout + handshakeOverheadMs);
+
+      child.on('message', (reply: SandboxJobResult) => {
+        finish(reply);
+      });
+
+      // Spawn failure, or the child died before replying. Either way it is a
+      // failing result, not a thrown error the caller must catch.
+      child.on('error', (error: Error) => {
+        finish(
+          failingResultFor(job.kind, `sandbox worker failed to run: ${error.message}`),
+        );
+      });
+      child.on('exit', (code, signal) => {
+        finish(
+          failingResultFor(
+            job.kind,
+            `sandbox worker exited without a result (code=${code ?? 'null'}, signal=${signal ?? 'null'})`,
+          ),
+        );
+      });
+
+      child.send(toSendableJob(job), (error: Error | null) => {
+        if (error) {
+          finish(
+            failingResultFor(
+              job.kind,
+              `sandbox worker could not receive the job: ${error.message}`,
+            ),
+          );
+        }
+      });
+    } catch (error) {
+      // If the throw came from child.send() the child is alive but will never be
+      // told what to do, so it has to be killed rather than left orphaned.
       killChild();
       finish(
         failingResultFor(
           job.kind,
-          `sandbox worker exceeded its ${job.timeout}ms budget and was terminated`,
+          `sandbox worker failed to start: ${error instanceof Error ? error.message : String(error)}`,
         ),
       );
-    }, job.timeout + handshakeOverheadMs);
-
-    child.on('message', (reply: SandboxJobResult) => {
-      finish(reply);
-    });
-
-    // Spawn failure, or the child died before replying. Either way it is a
-    // failing result, not a thrown error the caller must catch.
-    child.on('error', (error: Error) => {
-      finish(
-        failingResultFor(job.kind, `sandbox worker failed to run: ${error.message}`),
-      );
-    });
-    child.on('exit', (code, signal) => {
-      finish(
-        failingResultFor(
-          job.kind,
-          `sandbox worker exited without a result (code=${code ?? 'null'}, signal=${signal ?? 'null'})`,
-        ),
-      );
-    });
-
-    child.send(toSendableJob(job), (error: Error | null) => {
-      if (error) {
-        finish(
-          failingResultFor(
-            job.kind,
-            `sandbox worker could not receive the job: ${error.message}`,
-          ),
-        );
-      }
-    });
+    }
   });
 }
 

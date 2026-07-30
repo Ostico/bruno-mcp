@@ -331,3 +331,77 @@ describe('runInWorker concurrency cap', () => {
     await p2;
   });
 });
+
+describe('runInWorker releases its slot when the spawn throws synchronously', () => {
+  /** A fork that throws instead of returning, as it does on EMFILE or ENOMEM. */
+  const throwingFork = (message: string): typeof forkType =>
+    (() => {
+      throw new Error(message);
+    }) as unknown as typeof forkType;
+
+  it('resolves as a failing result rather than rejecting', async () => {
+    const result = await runInWorker(testJob, baseOpts({ fork: throwingFork('EMFILE') }));
+
+    expect(result.kind).toBe('test');
+    expect(JSON.stringify(result)).toContain('EMFILE');
+    expect(forkCalls).toHaveLength(0);
+  });
+
+  it('leaves the slot available, so later jobs still run', async () => {
+    setMaxConcurrency(1);
+
+    // With the only slot held by the throw, this second job would never fork.
+    await runInWorker(testJob, baseOpts({ fork: throwingFork('ENOMEM') }));
+
+    const p = runInWorker(testJob, baseOpts());
+    await tick();
+
+    expect(forkCalls).toHaveLength(1);
+    children[0].emit('message', passReply);
+    await expect(p).resolves.toEqual(passReply);
+  });
+
+  it('does not wedge the pool after more failed spawns than there are slots', async () => {
+    setMaxConcurrency(2);
+
+    // Every slot in the pool is taken and thrown away, twice over.
+    for (let i = 0; i < 5; i++) {
+      const result = await runInWorker(testJob, baseOpts({ fork: throwingFork('EMFILE') }));
+      expect(result.kind).toBe('test');
+    }
+
+    // The pool is still the full size it started at: two jobs fork immediately.
+    const p1 = runInWorker(testJob, baseOpts());
+    const p2 = runInWorker(testJob, baseOpts());
+    await tick();
+
+    expect(forkCalls).toHaveLength(2);
+    children[0].emit('message', passReply);
+    children[1].emit('message', passReply);
+    await expect(Promise.all([p1, p2])).resolves.toEqual([passReply, passReply]);
+  });
+
+  it('kills the child and releases the slot when send() throws', async () => {
+    setMaxConcurrency(1);
+    // An IPC channel that is already gone: send() throws rather than calling back.
+    const sendThrows = fakeFork(c => {
+      c.sendImpl = () => {
+        throw new Error('ERR_IPC_CHANNEL_CLOSED');
+      };
+    });
+
+    const failed = await runInWorker(testJob, baseOpts({ fork: sendThrows }));
+
+    expect(JSON.stringify(failed)).toContain('ERR_IPC_CHANNEL_CLOSED');
+    // The child was forked but can never be told what to do, so it is not left
+    // running.
+    expect(children[0].signals).toContain('SIGTERM');
+
+    const p = runInWorker(testJob, baseOpts());
+    await tick();
+
+    expect(forkCalls).toHaveLength(2);
+    children[1].emit('message', passReply);
+    await expect(p).resolves.toEqual(passReply);
+  });
+});

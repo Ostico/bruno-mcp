@@ -164,7 +164,7 @@ describe('environment merge tools', () => {
       });
 
       expect(res.isError).toBeFalsy();
-      expect(mockSetEnvironmentVariable).toHaveBeenCalledWith('/col', 'dev', 'token', 'abc123', undefined);
+      expect(mockSetEnvironmentVariable).toHaveBeenCalledWith('/col', 'dev', 'token', 'abc123', undefined, undefined);
     });
 
     it('forwards the enabled flag so it can be persisted', async () => {
@@ -180,7 +180,66 @@ describe('environment merge tools', () => {
       });
 
       expect(res.isError).toBeFalsy();
-      expect(mockSetEnvironmentVariable).toHaveBeenCalledWith('/col', 'dev', 'FEATURE', 'off', false);
+      expect(mockSetEnvironmentVariable).toHaveBeenCalledWith('/col', 'dev', 'FEATURE', 'off', false, undefined);
+    });
+
+    it('forwards the secret flag so it can be persisted', async () => {
+      mockSetEnvironmentVariable.mockResolvedValue({ success: true, path: '/col/environments/dev.yml' });
+
+      const handler = getHandler(server, 'set_environment_variable');
+      const res = await handler({
+        collectionPath: '/col',
+        environment: 'dev',
+        name: 'API_KEY',
+        value: 'discarded',
+        secret: true,
+      });
+
+      expect(res.isError).toBeFalsy();
+      expect(mockSetEnvironmentVariable).toHaveBeenCalledWith(
+        '/col', 'dev', 'API_KEY', 'discarded', undefined, true,
+      );
+    });
+
+    it('tells the caller a secret variable stores the name but not the value', async () => {
+      mockSetEnvironmentVariable.mockResolvedValue({ success: true, path: '/col/environments/dev.yml' });
+
+      const handler = getHandler(server, 'set_environment_variable');
+      const res = await handler({
+        collectionPath: '/col',
+        environment: 'dev',
+        name: 'API_KEY',
+        value: 'discarded',
+        secret: true,
+      });
+
+      expect(res.content[0].text).toContain('the value is not stored in the file');
+      // The value must never be echoed back, secret or not.
+      expect(res.content[0].text).not.toContain('discarded');
+    });
+
+    it('does not claim a non-secret variable withheld its value', async () => {
+      mockSetEnvironmentVariable.mockResolvedValue({ success: true, path: '/col/environments/dev.yml' });
+
+      const handler = getHandler(server, 'set_environment_variable');
+      const res = await handler({
+        collectionPath: '/col', environment: 'dev', name: 'plain', value: 'v',
+      });
+
+      expect(res.content[0].text).not.toContain('not stored');
+    });
+
+    it('advertises the secret flag as persisted, not as ignored', () => {
+      // An agent picks `secret` on the strength of this description, so a
+      // description that says the flag is dropped is a security decision made
+      // on a false premise.
+      const { config } = getTool(server, 'set_environment_variable');
+      const description = config.inputSchema.secret.description as string;
+
+      expect(description).not.toMatch(/ignored/i);
+      expect(description).not.toMatch(/not representable/i);
+      expect(description).toMatch(/Persisted/);
+      expect(description).toMatch(/VALUE IS NOT SAVED/);
     });
 
     it('rejects an invalid collectionPath before setting', async () => {

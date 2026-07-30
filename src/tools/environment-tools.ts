@@ -153,7 +153,7 @@ export function registerSetEnvironmentVariableTool(ctx: ToolContext): void {
         name: z.string().min(1, 'Variable name is required').describe('Variable key to set.'),
         value: z.union([z.string(), z.number(), z.boolean()]).describe('Variable value.'),
         enabled: z.boolean().optional().describe('Whether the variable is enabled. Persisted: enabled=false is written as a disabled variable.'),
-        secret: z.boolean().optional().describe('Whether the variable is a secret. Ignored — not representable in the environment variable model (EnvVariable) or the YAML format.')
+        secret: z.boolean().optional().describe('Whether the variable is a secret. Persisted. IMPORTANT: marking a variable secret means its VALUE IS NOT SAVED — Bruno stores a secret variable as a name only (.bru lists it under vars:secret, .yml writes secret: true with no value) and keeps the value outside the collection, so `value` is discarded. Omit this to leave an existing variable\'s secret state untouched; pass false to convert a secret variable back to a plain one carrying `value`.')
       }
     },
     async (args) => {
@@ -172,14 +172,20 @@ export function registerSetEnvironmentVariableTool(ctx: ToolContext): void {
           args.name,
           args.value,
           args.enabled,
+          args.secret,
         );
 
         if (result.success) {
+          // Say so when the value was deliberately not written, so the caller
+          // does not assume the credential is now resolvable from the file.
+          const secretNote = args.secret === true
+            ? ' (marked secret — the name is recorded, the value is not stored in the file)'
+            : '';
           return {
             content: [
               {
                 type: 'text',
-                text: `✅ Variable "${args.name}" set in environment "${args.environment}" at: ${result.path}`
+                text: `✅ Variable "${args.name}" set in environment "${args.environment}"${secretNote} at: ${result.path}`
               }
             ]
           };

@@ -19,7 +19,62 @@ import {
 import { parse as parseYaml } from 'yaml';
 import { detectFormat } from './format-detector.js';
 import { generateYamlEnvironment } from './yaml-generator.js';
-import { parseBruEnvironment, parseBruEnvironmentRaw, generateBruEnvironmentFull } from './bru-parser.js';
+import { parseBruEnvironment, parseBruEnvironmentFile, generateBruEnvironmentFull } from './bru-parser.js';
+
+/** Top-level .yml environment keys represented by EnvFile's own fields. */
+const YAML_ENV_FILE_KEYS = new Set(['name', 'variables']);
+
+/** Per-variable .yml keys represented by EnvVariable's own fields. */
+const YAML_ENV_VARIABLE_KEYS = new Set(['name', 'value', 'disabled', 'secret']);
+
+/**
+ * Collect the keys the typed model does not name, so a read-modify-write can
+ * write them back instead of deleting them. Returns undefined when there are
+ * none, keeping the field absent rather than an empty object.
+ */
+function collectUnmodelledKeys(
+  source: Record<string, unknown>,
+  modelled: Set<string>,
+): Record<string, unknown> | undefined {
+  const extra: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (modelled.has(key)) continue;
+    extra[key] = value;
+  }
+  return Object.keys(extra).length > 0 ? extra : undefined;
+}
+
+/**
+ * Parse a .yml environment into the full file model.
+ *
+ * A secret variable has no `value` key on disk — Bruno keeps a secret's value
+ * in its own store, never in the file — so it reads back with an empty value
+ * and `secret: true`.
+ */
+function parseYamlEnvironmentFile(content: string, environmentName: string): EnvFile {
+  const parsed = (parseYaml(content) ?? {}) as Record<string, unknown>;
+
+  const variables: EnvVariable[] = [];
+  if (Array.isArray(parsed.variables)) {
+    for (const raw of parsed.variables as Array<Record<string, unknown>>) {
+      if (raw?.name == null || String(raw.name) === '') continue;
+      const item: EnvVariable = {
+        name: String(raw.name),
+        value: (raw.value as string | number | boolean) ?? '',
+      };
+      if (raw.disabled === true) item.disabled = true;
+      if (raw.secret === true) item.secret = true;
+      const varExtra = collectUnmodelledKeys(raw, YAML_ENV_VARIABLE_KEYS);
+      if (varExtra) item.extra = varExtra;
+      variables.push(item);
+    }
+  }
+
+  const envFile: EnvFile = { name: environmentName, variables };
+  const fileExtra = collectUnmodelledKeys(parsed, YAML_ENV_FILE_KEYS);
+  if (fileExtra) envFile.extra = fileExtra;
+  return envFile;
+}
 
 /**
  * Lock key identifying one environment.
@@ -117,6 +172,20 @@ export class EnvironmentManager {
    * read used by the merge/write path so disabled variables are never dropped.
    */
   async loadEnvironmentRaw(collectionPath: string, environmentName: string): Promise<EnvVariable[]> {
+    const envFile = await this.loadEnvironmentFile(collectionPath, environmentName);
+    return envFile.variables ?? [];
+  }
+
+  /**
+   * Load an environment as the full file model: every variable with its
+   * disabled and secret flags, plus every key the model does not name — both
+   * top-level (`color`) and per-variable (`type`, `description`).
+   *
+   * This is what the read-modify-write helpers read, because the generators
+   * rebuild the file from this model: a key that is not carried here is a key
+   * that gets deleted from the file on the next edit.
+   */
+  async loadEnvironmentFile(collectionPath: string, environmentName: string): Promise<EnvFile> {
     try {
       const detection = await detectFormat(collectionPath);
       const ext = detection.format === 'yaml' ? '.yml' : '.bru';
@@ -124,29 +193,36 @@ export class EnvironmentManager {
       const envContent = await fs.readFile(envFilePath, 'utf-8');
 
       if (detection.format === 'yaml') {
-        const parsed = parseYaml(envContent) as Record<string, unknown>;
-        const variables: EnvVariable[] = [];
-        if (Array.isArray(parsed?.variables)) {
-          for (const v of parsed.variables as Array<Record<string, unknown>>) {
-            if (v.name == null || String(v.name) === '') continue;
-            const item: EnvVariable = {
-              name: String(v.name),
-              value: (v.value as string | number | boolean) ?? '',
-            };
-            if (v.disabled === true) item.disabled = true;
-            variables.push(item);
-          }
-        }
-        return variables;
+        return parseYamlEnvironmentFile(envContent, environmentName);
       }
 
-      return parseBruEnvironmentRaw(envContent);
+      return { ...parseBruEnvironmentFile(envContent), name: environmentName };
 
     } catch (error) {
       throw new BruFileError(
         `Failed to load environment ${environmentName}`,
         { originalError: error }
       );
+    }
+  }
+
+  /**
+   * Read the unmodelled top-level keys off an environment that is about to be
+   * overwritten, yielding undefined when the file cannot be read or parsed.
+   *
+   * Swallowing the failure is deliberate: this only feeds key preservation, and
+   * the write that follows reports the real problem (a missing environment
+   * still fails with NOT_FOUND rather than a parse error from here).
+   */
+  private async loadFileExtra(
+    collectionPath: string,
+    environmentName: string,
+  ): Promise<Record<string, unknown> | undefined> {
+    try {
+      const envFile = await this.loadEnvironmentFile(collectionPath, environmentName);
+      return envFile.extra;
+    } catch {
+      return undefined;
     }
   }
 
@@ -160,9 +236,11 @@ export class EnvironmentManager {
     environmentName: string,
     variables: EnvVariable[]
   ): Promise<FileOperationResult> {
-    return withPathLock(environmentLockKey(collectionPath, environmentName), () =>
-      this.writeEnvironmentVariables(collectionPath, environmentName, variables),
-    );
+    return withPathLock(environmentLockKey(collectionPath, environmentName), async () => {
+      // Replacing the variable list must not delete the file's other keys.
+      const fileExtra = await this.loadFileExtra(collectionPath, environmentName);
+      return this.writeEnvironmentVariables(collectionPath, environmentName, variables, fileExtra);
+    });
   }
 
   /**
@@ -171,11 +249,16 @@ export class EnvironmentManager {
    * The read-modify-write helpers below already hold that lock across their own
    * read, so they must not re-enter it — the lock is not re-entrant and would
    * deadlock. Every other caller goes through updateEnvironmentVariables.
+   *
+   * @param fileExtra  Top-level keys read off the file being replaced, written
+   *   back verbatim. Omitting them deletes them, because both generators build
+   *   the document from the typed model alone.
    */
   private async writeEnvironmentVariables(
     collectionPath: string,
     environmentName: string,
-    variables: EnvVariable[]
+    variables: EnvVariable[],
+    fileExtra?: Record<string, unknown>
   ): Promise<FileOperationResult> {
     try {
       const detection = await detectFormat(collectionPath);
@@ -193,9 +276,10 @@ export class EnvironmentManager {
 
       if (detection.format === 'yaml') {
         const envFile: EnvFile = { name: environmentName, variables };
+        if (fileExtra) envFile.extra = fileExtra;
         await writeFileAtomic(envFilePath, generateYamlEnvironment(envFile));
       } else {
-        await writeFileAtomic(envFilePath, generateBruEnvironmentFull(variables));
+        await writeFileAtomic(envFilePath, generateBruEnvironmentFull(variables, fileExtra));
       }
 
       return { success: true, path: envFilePath };
@@ -218,23 +302,36 @@ export class EnvironmentManager {
     environmentName: string,
     overrides: Record<string, string | number | boolean>
   ): Promise<FileOperationResult> {
+    // Hold the lock across the read and the write so a concurrent edit is not lost.
+    return withPathLock(environmentLockKey(collectionPath, environmentName), () =>
+      this.mergeEnvironmentLocked(collectionPath, environmentName, overrides),
+    );
+  }
+
+  private async mergeEnvironmentLocked(
+    collectionPath: string,
+    environmentName: string,
+    overrides: Record<string, string | number | boolean>
+  ): Promise<FileOperationResult> {
     try {
-      const existing = await this.loadEnvironmentRaw(collectionPath, environmentName);
+      const envFile = await this.loadEnvironmentFile(collectionPath, environmentName);
       const byName = new Map<string, EnvVariable>();
-      for (const v of existing) byName.set(v.name, v);
+      for (const v of envFile.variables ?? []) byName.set(v.name, v);
 
       for (const [key, value] of Object.entries(overrides)) {
+        // Overlay the new value onto the existing variable rather than
+        // rebuilding it from name and value: rebuilding drops every other
+        // field, which is how an overridden secret variable used to come back
+        // as a plaintext one.
         const prev = byName.get(key);
-        const entry: EnvVariable = { name: key, value };
-        // Preserve the disabled flag of an existing variable being overridden.
-        if (prev?.disabled === true) entry.disabled = true;
-        byName.set(key, entry);
+        byName.set(key, { ...prev, name: key, value });
       }
 
       return await this.writeEnvironmentVariables(
         collectionPath,
         environmentName,
         [...byName.values()],
+        envFile.extra,
       );
 
     } catch (error) {
@@ -279,11 +376,15 @@ export class EnvironmentManager {
         );
       }
 
+      // Replacing the variable list must not delete the file's other keys.
+      const fileExtra = await this.loadFileExtra(collectionPath, environmentName);
+
       if (detection.format === 'yaml') {
         const envFile: EnvFile = {
           name: environmentName,
           variables: Object.entries(variables).map(([name, value]): EnvVariable => ({ name, value })),
         };
+        if (fileExtra) envFile.extra = fileExtra;
         await writeFileAtomic(envFilePath, generateYamlEnvironment(envFile));
       } else {
         const envContent = this.generateEnvironmentFile(environmentName, variables);
@@ -415,17 +516,23 @@ export class EnvironmentManager {
    *   enabled/disabled state (enabled === false → written as disabled).
    *   When omitted, an existing variable keeps its current state and a new
    *   variable defaults to enabled.
+   * @param secret   Optional. When provided, persists the variable's secret
+   *   state. When omitted, an existing variable keeps its current state and a
+   *   new variable defaults to non-secret. Marking a variable secret means its
+   *   VALUE IS NOT WRITTEN TO THE FILE — neither on-disk format stores one —
+   *   so `value` is only used to decide the non-secret case.
    */
   async setEnvironmentVariable(
     collectionPath: string,
     environmentName: string,
     key: string,
     value: string | number | boolean,
-    enabled?: boolean
+    enabled?: boolean,
+    secret?: boolean
   ): Promise<FileOperationResult> {
     // Hold the lock across the read and the write so a concurrent edit is not lost.
     return withPathLock(environmentLockKey(collectionPath, environmentName), () =>
-      this.setEnvironmentVariableLocked(collectionPath, environmentName, key, value, enabled),
+      this.setEnvironmentVariableLocked(collectionPath, environmentName, key, value, enabled, secret),
     );
   }
 
@@ -434,20 +541,27 @@ export class EnvironmentManager {
     environmentName: string,
     key: string,
     value: string | number | boolean,
-    enabled?: boolean
+    enabled?: boolean,
+    secret?: boolean
   ): Promise<FileOperationResult> {
     try {
-      const variables = await this.loadEnvironmentRaw(collectionPath, environmentName);
+      const envFile = await this.loadEnvironmentFile(collectionPath, environmentName);
+      const variables = envFile.variables ?? [];
       const idx = variables.findIndex(v => v.name === key);
+      const prev = idx >= 0 ? variables[idx] : undefined;
 
       // Resolve the disabled flag: explicit `enabled` wins; otherwise preserve
       // the existing variable's flag (undefined → enabled for a new variable).
-      const disabled = enabled === undefined
-        ? (idx >= 0 ? variables[idx].disabled : undefined)
-        : !enabled;
+      const disabled = enabled === undefined ? prev?.disabled : !enabled;
+      // Same rule for secret, so a plain value edit cannot silently demote an
+      // existing secret variable to plaintext.
+      const isSecret = secret === undefined ? prev?.secret === true : secret;
 
-      const entry: EnvVariable = { name: key, value };
-      if (disabled === true) entry.disabled = true;
+      // Start from the existing variable so fields neither this method nor the
+      // model names — a .yml `description`, say — survive the write.
+      const entry: EnvVariable = { ...prev, name: key, value };
+      if (disabled === true) entry.disabled = true; else delete entry.disabled;
+      if (isSecret) entry.secret = true; else delete entry.secret;
 
       if (idx >= 0) {
         variables[idx] = entry;
@@ -455,7 +569,12 @@ export class EnvironmentManager {
         variables.push(entry);
       }
 
-      return await this.writeEnvironmentVariables(collectionPath, environmentName, variables);
+      return await this.writeEnvironmentVariables(
+        collectionPath,
+        environmentName,
+        variables,
+        envFile.extra,
+      );
 
     } catch (error) {
       return {
@@ -486,10 +605,15 @@ export class EnvironmentManager {
     key: string
   ): Promise<FileOperationResult> {
     try {
-      const variables = await this.loadEnvironmentRaw(collectionPath, environmentName);
-      const filtered = variables.filter(v => v.name !== key);
+      const envFile = await this.loadEnvironmentFile(collectionPath, environmentName);
+      const filtered = (envFile.variables ?? []).filter(v => v.name !== key);
 
-      return await this.writeEnvironmentVariables(collectionPath, environmentName, filtered);
+      return await this.writeEnvironmentVariables(
+        collectionPath,
+        environmentName,
+        filtered,
+        envFile.extra,
+      );
 
     } catch (error) {
       return {
