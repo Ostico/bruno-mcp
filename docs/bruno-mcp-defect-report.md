@@ -1,0 +1,408 @@
+# bruno-mcp defect register
+
+**Status:** living document. This is the single list of known open defects.
+**Pinned at:** `main@4df3f16`. Every line number below was read at that commit — **re-verify before acting**, files move.
+**Last verified:** 2026-07-30.
+
+**Supersedes** `adversarial-review-2026-07-29.md` (findings pinned at `main@75b28ad`, most since fixed) and the
+standalone field-audit defect report it was merged from. The older review is kept for its refutation record —
+the items it got *wrong* are as useful as the ones it got right — but it is no longer the working list.
+`blind-discoverability-test.md` is methodology, not findings, and is unaffected.
+
+## Provenance
+
+Two independent sources, merged and de-duplicated:
+
+- **Field audit** — building a real authentication suite against a live application through the MCP surface.
+  Items were reproduced against a running server or traced through source to the `fetch()` call. This source
+  found the highest-severity items, because it exercised the tool the way a user does.
+- **Adversarial code review** — five parallel read-only reviewers over all of `src/` at `main@75b28ad`,
+  one lens each (TOCTOU, security, parse fidelity, DRY/KISS, execution semantics). ~56 candidates, ~25
+  re-verified by hand.
+
+Where the two disagreed, the disagreement is recorded rather than silently resolved. Two of the field audit's
+claims needed correcting against current code; see the notes under H3 and L3.
+
+## Legend
+
+- **CONFIRMED** — reproduced, or traced through source at the pinned commit.
+- **SUSPECTED** — read but not exercised.
+- Severity is user impact, not effort. A silent wrong result outranks a crash.
+
+---
+
+## Open — High
+
+### H1 — `form-urlencoded` bodies are impossible to author in a `.yml` collection. CONFIRMED, reproduced.
+
+`request.ts:892-900` (create) and `:555-561` (modify) build the YAML body as:
+
+- if `isMultipartBodyType(type)` → `data: toMultipartData(formData)`
+- else → `data: input.body.content` — **the raw string**
+
+`isMultipartBodyType` (`request.ts:43`) matches only `form-data` / `multipart-form`. So for `form-urlencoded`:
+
+- passing `content: "a=1&b=2"` writes `data: a=1&b=2`, a scalar where the executor iterates a list of
+  `{name, value}` pairs (`request-executor.ts:407-409`) → **the request goes out with an empty body**
+- passing `formData` writes `data: undefined` → the body is dropped entirely
+
+There is no input shape that produces a working `form-urlencoded` body. The normaliser that would fix this,
+`toFormUrlEncodedEntries` (`request.ts:143-161`), accepts *both* shapes and is correct — but at the pinned
+commit it still has exactly **one** call site, `request.ts:190`, inside `yamlBodyToBruBody`, i.e. the `.bru`
+path only.
+
+Failure mode is the worst this tool has: no error, no warning. The file looks right, the run reports a clean
+2xx/4xx, and the body was never sent. Any assertion on "the endpoint rejects bad input" passes for the wrong
+reason.
+
+**Fix both ends together.** The read path has the mirror-image defect: `parseYamlRequest` routes *every* array
+body through the multipart part mapper, stamping `type: 'text'` onto form-urlencoded parts, which Bruno does
+not do. Fixing only the write path leaves a file that round-trips through us but diverges from Bruno.
+Fix `toFormUrlEncodedEntries` routing and the parser in one change, and fix L2 while in the file.
+
+### H2 — No cookie jar, so no session can be exercised without hand-rolled relaying. CONFIRMED.
+
+`Set-Cookie` is captured per response into `MockResponseData.setCookies` (`response-wrapper.ts:194-195, 221`)
+and then never used: `executeSingleRequest` reads only `scriptResult.variables`
+(`request-executor.ts:975-1033`), and each hop builds a fresh dispatcher with no shared cookie state
+(`:835-859`). Nothing writes cookies into the outgoing headers of a later request.
+
+Consequence: every session-based flow — login, anything CSRF-protected, anything behind a session — requires
+each request to parse `set-cookie` in an `after-response` script, park it in a variable, and the next request
+to send it as an explicit `Cookie` header. That was six hand-written relays to test one login. Users testing a
+browser-facing application will all write the same boilerplate, and most will first conclude the tool is
+broken, because the symptom is a 403 with no explanation.
+
+A `cookieJar: true` option on `run_collection`, defaulting to on for a folder run, removes an entire class of
+user confusion. Couples to L1 — expose `res.getSetCookies()` in the same change.
+
+### H3 — Runtime variables cannot be injected into a run. CONFIRMED.
+
+`run_collection` (`tools/run-tools.ts:18-26`) accepts `collectionPath`, `requestPath`, `collectionRoot`,
+`environment`, `parallel`, `includeResponseBody`, `maxResponseBodyBytes` — and no way to pass variables in.
+Verified at the pinned commit: `variables` does not appear in the tool's input schema.
+
+So any value a run needs must be persisted into an environment file first, inside the collection's own git
+repository. For a credential, that means committing it.
+
+> **Correction to the field audit.** The audit attributed half of this to `set_environment_variable` with
+> `secret: true` "discarding the value", framing it as a bug. It is not one. **Neither Bruno format stores a
+> secret's value** — `.bru` writes `vars:secret [ NAME ]`, `.yml` writes `secret: true` with no `value` key.
+> Storing the value would be the defect. The tool description was corrected to say the name is recorded but
+> the value is not stored (`environment-tools.ts:181-182`), so the surface is now honest.
+>
+> This makes the `variables` input the *only* fix, not a nicety: there is no correct place on disk for a
+> secret, by design, so there must be an in-memory path. A `variables` input on `run_collection`, applied over
+> the environment for that run only, closes it.
+
+---
+
+## Open — Medium
+
+### M1 — Parse failures are counted, never identified. CONFIRMED.
+
+`discoverRequests` (`request-executor.ts:110-142`) wraps each file in `try { … } catch { parseErrors++ }`.
+The run result carries `parseErrors: <n>` and nothing else — not the path, not the message.
+
+A collection with one malformed file reports `parseErrors: 1` and silently runs a subset. The user can only
+learn which file by bisecting. Attach `{file, message}` per failure.
+
+This is the same shape as the zero-tests-reports-PASS gate that was closed earlier: an aggregate number that
+cannot distinguish "nothing was wrong" from "something was skipped".
+
+### M2 — Execution order is a flat global `seq` sort; folders do not scope it. CONFIRMED, contradicts the tool description.
+
+`discoverRequests` recursively collects every `.yml`/`.bru` under the path, then applies **one global**
+`Array.sort` on `yaml.info.seq` (`request-executor.ts:135-139`), with a missing `seq` becoming
+`Number.MAX_SAFE_INTEGER`. No folder-level ordering exists: `folder.bru` is excluded from being read as a
+request (`metadata-files.ts:21`) and its `meta.seq` — which is how Bruno orders folders — is never parsed.
+
+But `run_collection`'s own description claims "Requests within each folder still run sequentially by seq
+order", implying folder-scoped sequencing. Two requests numbered `seq: 1` in different folders are interleaved
+by readdir enumeration order, which is not stable across filesystems. A whole-collection run over a
+many-folder collection therefore has no predictable order — which matters precisely because there is no
+cookie jar (H2) and state must flow between requests in order.
+
+Either implement folder-scoped ordering (and parse `folder.bru` `meta.seq`, which needs M3) or correct the
+description. Shipping a description that overstates the guarantee is the worse half of this defect.
+
+### M3 — Collection-level and folder-level settings are silently ignored. CONFIRMED.
+
+`collection.ts` contains no handling of headers, auth, scripts or vars, and `request-executor.ts` never
+imports it. `metadata-files.ts` treats `collection.bru` / `folder.bru` purely as things to *exclude* from
+request discovery (`:15`, `:21`); their contents are never read. Verified: no read of either file anywhere in
+`src/`.
+
+Bruno supports collection- and folder-level headers, auth, scripts and vars, and real collections lean on them
+heavily — a collection-wide `Authorization` or `Content-Type` is the normal way to write one. Here they vanish
+without a word. Only auth is partially acknowledged, via the `auth: inherit` warning
+(`request-executor.ts:507-512`). Headers, scripts and vars get no warning at all.
+
+This is the prerequisite that would make `auth: inherit` actually *resolvable* instead of warn-and-skip, and
+it is what M2 needs for folder ordering.
+
+> **Correction to the adversarial review.** That review claimed collection-level unknown-key passthrough
+> "closes four criticals at once", including "silently unauthenticating every `auth: inherit` request". Three
+> of the four do not hold, and the premise is false:
+> - `auth: inherit` is never resolved at all — the executor pushes an explicit warning and sends no
+>   credential. Honest, not silent.
+> - Collection-level auth is not modelled anywhere, so there is nothing to lose on round-trip.
+>   `BrunoCollection` (`types.ts:89-96`) carries only version/name/type/ignore and two inert script fields.
+> - The lossy round-trip in `updateCollection` (`collection.ts:132-177`) has **no MCP tool entry point** —
+>   only tests call it.
+>
+> Do not implement passthrough on the "four criticals" premise. The real work is *reading* the root files,
+> which is additive, not a round-trip fix.
+
+Minimum viable step, if the full read is too large: warn per request when a collection/folder root file exists
+and declares something that is being dropped.
+
+### M4 — Generated YAML reflows code in script blocks. CONFIRMED.
+
+All six `yamlStringify` call sites in `yaml-generator.ts` pass `{ indent: 2 }` and nothing else. `lineWidth`
+appears **zero** times in `src/`. The `yaml` library therefore defaults to `lineWidth: 80` and selects folded
+style (`code: >`) for long multi-line strings.
+
+Folded style joins consecutive non-empty lines into one. A `//` comment immediately above a statement —
+utterly ordinary — folds into a single line and **comments out the code beneath it**, silently. Observed in
+generated request files; those scripts survived only because every comment paragraph happened to be followed
+by a blank line.
+
+Two changes, both needed:
+- `lineWidth: 0` to stop wrapping — this also closes the separate fidelity gap that Bruno's own emitter sets
+  `lineWidth: 0` and we do not, so our files differ from Bruno's byte-for-byte.
+- block-literal style for script bodies (`blockQuote: 'literal'`, or per-node `BLOCK_LITERAL`). `lineWidth: 0`
+  alone does **not** stop the library choosing `>` over `|`, so it does not fix the code-eating hazard by
+  itself. Fixing only `lineWidth` looks like a fix and is not one.
+
+### M5 — No tool to read a request or an environment. CONFIRMED. *(User-reported)*
+
+The surface is `list_collections`, `list_requests`, `run_collection`, `create_request`, `modify_request`,
+`delete_request`, `create_environment`, `update_environment`, `set_environment_variable`,
+`remove_environment_variable`, `get_collection_stats` — list, run and write, but never get.
+
+To learn a collection's conventions, or to check what `create_request` actually wrote, the client must fall
+back to shell (`cat`) or a raw file read, which defeats the point of the MCP boundary. It also makes
+`modify_request` unsafe to use: current state cannot be inspected before patching it. This omission is what
+made H1 hard to notice — the only way to see the bad `data:` scalar is to leave the tool.
+
+Two tools: `read_request(filePath)` and `read_environment(collectionPath, name)`, returning the parsed
+structure rather than raw text, so the `.bru` / `.yml` difference stays hidden.
+
+Three traps when implementing:
+- A read tool is the first place the `.bru` / `.yml` parse asymmetries become user-visible. The readers
+  currently drop oauth2/digest config and settings blocks; a read tool makes those omissions look like data
+  loss. Decide whether to surface them as `unsupported` rather than omit them.
+- Secret env vars are name-only in both formats (see H3). The tool must not imply it is returning a value that
+  was never stored.
+- The writer lowercases request filenames — `create_request({name: 'Bodied'})` writes `bodied.bru`. The tool
+  must accept the path the writer returned, not a rebuilt one. A rebuilt path passes on macOS and `ENOENT`s on
+  Linux CI.
+
+### M6 — `get_collection_stats` withholds every environment value. CONFIRMED.
+
+Environment *names* are listed, values withheld by design. Combined with M5 there is no in-protocol way to
+confirm what a variable holds — discovering which host a `url` variable pointed at required reading the
+environment file off disk.
+
+Withholding secrets is reasonable; withholding every value is not. Return non-secret values, or add a
+`revealValues` flag. Best folded into `read_environment` (M5) rather than solved twice.
+
+### M7 — Request-level unknown-key passthrough. CONFIRMED.
+
+Both generators rebuild the document from scratch with no unknown-key passthrough, so any unmodelled key is
+**deleted** on read-modify-write, not ignored. The environment-level case was closed; the request level was
+not. A request authored in Bruno with a feature we do not model loses it the first time `modify_request`
+touches it.
+
+---
+
+## Open — Low
+
+### L1 — `setCookies` is captured but never exposed under a name. CONFIRMED.
+
+`response-wrapper.ts:194-195, 221` populates `setCookies`, but nothing in `sandbox-worker.ts` exposes it —
+verified, `getSetCookies` has zero occurrences there. It is reachable only incidentally as
+`res.getHeader("set-cookie")`, which returns the joined header and has to be regex-parsed. Given H2, this is
+the one field a user in that situation actually wants. Either expose it or drop it.
+
+### L2 — Orphaned docblock in `request.ts:97-108`. CONFIRMED.
+
+The comment describing the `form-urlencoded` normalisation — including "Handing it the raw `content` string
+wrote no block at all, so an authored body was silently dropped and the request went out empty" — sits
+immediately above a *different* function's docblock (`yamlBodyToBruBody`, `:109-119`). The prose documents a
+fix that the `.yml` path never received (H1). Anyone reading the file top-down concludes the bug is fixed.
+It is not. Fix with H1.
+
+### L3 — Auth types advertised but not applied. CONFIRMED, handled honestly.
+
+`UNAPPLIED_AUTH_TYPES` is `['oauth2', 'digest']` (`request-executor.ts:474`); those emit an explicit
+"auth type X is not applied automatically" warning. The warning is honest, so this is a schema-versus-reality
+mismatch rather than a silent failure.
+
+> **Correction to the field audit.** That audit listed `api-key` as unimplemented and flagged the
+> `api-key` / `apikey` spelling split as a Bruno-incompatibility. Both are now closed: api-key is applied,
+> and the `.yml` write vocabulary was corrected to Bruno's `apikey` with `placement` / `query`. The MCP-facing
+> union keeps `api-key` as the accepted input spelling; the on-disk spelling is Bruno's.
+
+What remains under this heading:
+- oauth2 and digest are still parsed and persisted but never applied. Their *config* is additionally dropped
+  by the readers — a partial block may be worse than none, so decide before implementing.
+- The third auth enum, at `request-tools.ts:355` (`create_crud_requests`), lists neither `digest` nor
+  `inherit`, so it disagrees with the other two enums. Pure drift; cheap to fix.
+
+### L4 — `seq` is omitted when `sequence` is not passed. CONFIRMED.
+
+`create_request` without `sequence` writes no `seq` at all, which the sort treats as `MAX_SAFE_INTEGER` (M2)
+and silently places last. Defaulting to "one past the current maximum in the folder" matches what a user means
+by "add a request".
+
+### L5 — Allowlisted hostnames bypass private-address protection by name. CONFIRMED, by design, document it.
+
+The SSRF allowlist is matched on the hostname string, so an allowlisted name that resolves to a loopback or
+private address is permitted. That is the correct behaviour for a local development host and is what makes
+local testing possible at all.
+
+The caveat deserves saying out loud in the operator documentation: **allowlisting a name disables the
+loopback / private-range checks for that name permanently, including if DNS later points it somewhere else.**
+Allowlist entries are hostnames, not pinned addresses. Note also that any `*` wildcard in an allowlist entry
+is silently ignored rather than expanded.
+
+### L6 — `.yaml` is not recognised as a request extension. CONFIRMED.
+
+Bruno accepts `.yaml`; we recognise only `.yml` and `.bru`. A collection using `.yaml` is enumerated as empty.
+
+### L7 — Environment authoring gaps. CONFIRMED.
+
+- `create_environment` cannot author a secret at all.
+- `generateBruEnvironment` writes `secret: false` unconditionally; the real fix is in `format-factory.ts`.
+- `dataType` and `disabled` on environment variables are parsed and persisted but unwired.
+
+### L8 — `.bru` generator catch-all crashes on a well-typed file body. CONFIRMED.
+
+The `.bru` generator's body chain is presence-based, not type-based (graphql → formUrlEncoded → file →
+`content` catch-all at ~`bru-parser.ts:467`). The catch-all `json.body = { [mode]: content }` is still live and
+throws `items.filter is not a function` for any caller passing a well-typed `BruBody {type: 'file', content}`.
+Upstream expects `body.file` to be an **array** of `{filePath, contentType?, selected?}`.
+
+Not reachable from the current tool surface — the authoring path populates the structured field and bypasses
+the catch-all — but it is a live trap for the next caller.
+
+### L9 — graphql body with no query falls back to `''`. SUSPECTED.
+
+Decide whether an empty query should be an error rather than an empty string sent to the server.
+
+---
+
+## Engineering debt — separate PR
+
+**Tests are neither linted nor type-checked.** `npm run lint` is `eslint src/ --ext .ts` — `src` only — and
+`tsconfig` excludes `tests/`, with `ts-jest` diagnostics off. Consequences:
+
+- 223 ESLint errors in `tests/`, dominated by `@typescript-eslint/ban-types` (the `Function` type in test
+  harnesses).
+- A separately-recorded 237 type errors across 77 files, likely an overlapping population.
+- **A type-only fix has no test that can go red.** This is the load-bearing half: it silently weakens the
+  red-before-green step for any change that is purely about types.
+
+Large, mechanical and noisy. Keep it off feature PRs.
+
+---
+
+## Needs a decision — not defects until someone chooses
+
+1. **`options?.scriptRunner ?? TestRunner`** — should the in-process runner stay the **default**? `TestRunner`
+   is public API. The MCP path is saved only by `process.send`'s JSON codec; any other embedder gets the
+   weaker isolation by default and will not know it.
+2. **`env-loader.ts` binds a secret variable to `''`** — so a request templated on a secret sends an empty
+   string rather than reporting the variable unresolved. This matches Bruno's contract, so it may be correct.
+   Decide; do not assume.
+
+---
+
+## Deliberately not doing
+
+Recorded so they are not rediscovered as findings:
+
+- **oauth2 / digest full config round-trip** — a partially-populated auth block may be worse than none.
+  Gated on the L3 decision.
+- **`body: file` authoring** — the upload surface is gated by `confineUploadPath`. This is our deliberate
+  containment, *not* an upstream limitation; an earlier note claiming otherwise was wrong.
+- **`tls` / `proxy` settings** — operator-gated per host by design.
+
+---
+
+## Verified working — do not spend time here
+
+Checked directly, several because they had been recorded as broken. That record was wrong or has been
+overtaken.
+
+- **Query params reach the wire.** Proved end to end: credentials sent *only* as query params, empty body,
+  application returned 200 (`applyParams`, `request-executor.ts:264-267`).
+- **Declared `assert` blocks are evaluated and reported.** A declared `res.status eq 200` appeared in run
+  output as a passing test alongside scripted ones. The `droppedAssertions` guard (`:1022-1026`) exists
+  specifically to prevent silent drops.
+- **`vars:pre-request` / `vars:post-response` are implemented**, via `applyPreRequestVars`
+  (`request-vars.ts:40`) and `postResponseVars` threaded through `sandbox-host.ts:354` and
+  `sandbox-worker.ts:610-617`.
+- **`bruFileToYamlRequest` no longer drops features** — params, assertions, vars, settings and auth are all
+  forwarded, including the `apikey` spelling.
+- **Request headers are applied**, through pre-request mutation and per redirect hop
+  (`:269-307, 337, 823, 874-878, 947`).
+- **`bru.setVar` → `{{var}}` works across requests** in a serial run, substituting into URL, query, header
+  names *and* values, auth fields and every body shape. One `VariableStore` per run (`:1217-1220`);
+  `parallel: true` deliberately gives each folder its own (`:1171`).
+- **Redirect handling is careful** — SSRF re-validated per hop, method downgraded on 301/302/303, credentials
+  stripped cross-origin (`authorization`, `cookie` and `proxy-authorization` all included,
+  `request-redaction.ts:89`), with a DNS-pinned dispatcher per hop.
+- **Secret redaction in reported output works** — a password sent as a query param came back as
+  `password=REDACTED` in the result URL.
+- **The `.bru` write path is byte-clean** — 8 body modes, 10 auth modes, all flag polarity round-trip
+  identical through upstream. Nearly every remaining fidelity defect is in `.yml`, which is the *default*
+  format. Read `bruno-filestore/src/formats/yml/` before touching it; that path was originally written from
+  inference rather than from Bruno's source, and that is the root cause of most of this list.
+- **The assert engine matches upstream** — all 28 operators and 12 unary matchers follow upstream's chain,
+  `guardChain` throws on unknown matchers, the assertion-template wrapper escape is blocked, and script
+  vacuity is handled honestly (a never-settling promise FAILs).
+
+---
+
+## Recently closed
+
+For orientation only — full detail is in the superseded review and in the PRs.
+
+- Zero registered tests reporting as an unqualified PASS.
+- Environment secret values written in plaintext, both ends, both formats.
+- Environment unknown-key passthrough, and the missing `mergeEnvironment` lock.
+- IPv6 transitional SSRF bypasses (NAT64, 6to4, RFC 2765) plus three missing IPv4 ranges.
+- Sandbox semaphore leak, and a live sandbox object crossing the realm boundary.
+- api-key `queryparams` placement, query-param redaction, header-name substitution.
+- `modify_request({headers})` on both formats; `.bru` graphql and file bodies; `.yml` graphql body parse.
+- `followRedirects` / `maxRedirects`; the `.yml` `tests` slot **with** its read-side fold.
+- Assert operand interpolation ordering (was interpolating before the list/range split and the regex-delimiter
+  strip; upstream does both after, per element).
+- Bruno's own metadata files being enumerated as runnable requests.
+- `inherit` treated as an auth mode rather than as absent auth.
+- The body payload being dropped when loading a `.yml` request.
+- Lock asymmetry on all five unlocked create/delete write paths — `createRequest`, `createEnvironment`,
+  `deleteEnvironment`, `createCollection`, and the `delete_request` unlink.
+
+---
+
+## Suggested order of work
+
+1. **H1 + L2** — one call site plus the read-path mirror. Silent wrong-body is the worst failure this tool can
+   have, and the misleading docblock actively hides it.
+2. **M5 + M6** — `read_request` and `read_environment`. Small, and it is what makes every other defect
+   *visible* to the user who hits it. H1 went unnoticed for exactly this reason.
+3. **H3** — a `variables` input on `run_collection`. Small, and it stops the tool pushing users to commit
+   credentials into the collection repository.
+4. **M1** — name the file and the reason in `parseErrors`. Cheap, and it turns a dead end into a fix.
+5. **M4** — `lineWidth: 0` **and** block-literal for scripts. Small, removes a silent code-eating hazard, and
+   closes a Bruno byte-fidelity gap at the same time.
+6. **H2 + L1** — an opt-in cookie jar, exposing `getSetCookies()` alongside. Larger, but it is the difference
+   between "can test a login" and "can test a login if you already know the internals".
+7. **M3** — read collection and folder root files. Unblocks M2's folder ordering and makes `auth: inherit`
+   resolvable. Start with the warn-on-dropped-settings step if the full read is too large for one change.
+8. **M2** — folder-scoped ordering, or an honest description. Do not ship the current description unchanged.
+9. **M7**, then the remaining **L** items, then the test lint/typecheck debt in its own PR.
