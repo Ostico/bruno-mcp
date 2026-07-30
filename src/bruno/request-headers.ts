@@ -106,6 +106,12 @@ export const BODY_TYPE_CONTENT_TYPES: Readonly<Record<string, string>> = {
   json: 'application/json',
   xml: 'application/xml',
   sparql: 'application/sparql-query',
+  // A form-urlencoded body normally arrives as a list of pairs and is encoded by
+  // the branch that sets this header itself. It reaches the verbatim-string
+  // branch only from a hand-written file, and a form post with no Content-Type
+  // is rejected by every server that parses one, so the type belongs here too
+  // (RFC 1866 §8.2.1, retained by the URL Standard §5).
+  'form-urlencoded': 'application/x-www-form-urlencoded',
 };
 
 /**

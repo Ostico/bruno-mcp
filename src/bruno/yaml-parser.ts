@@ -16,6 +16,7 @@ import {
   type YamlScript,
   type YamlInfo,
   type MultipartFormPart,
+  type FormUrlEncodedPart,
   type TlsSettings,
   type YamlParam,
   type YamlAssertion,
@@ -144,7 +145,22 @@ function parseBody(raw: unknown): YamlBody | undefined {
   const type = toBodyType(obj.type);
 
   let data: YamlBody['data'];
-  if (Array.isArray(obj.data)) {
+  if (Array.isArray(obj.data) && type === 'form-urlencoded') {
+    // A form-urlencoded pair, which is not a multipart part. Bruno writes it
+    // with no `type` key at all — that key is what marks a part as `file` — so
+    // reading one through the multipart mapper below stamped `type: text` onto
+    // every pair, and writing the request back out then put a key in the file
+    // that Bruno had never written there.
+    data = obj.data.map((entry) => {
+      const pair = (entry ?? {}) as Record<string, unknown>;
+      const item: FormUrlEncodedPart = {
+        name: String(pair.name ?? ''),
+        value: String(pair.value ?? ''),
+      };
+      if (pair.disabled === true) item.enabled = false;
+      return item;
+    });
+  } else if (Array.isArray(obj.data)) {
     // multipart/form-data parts
     data = obj.data.map((entry) => {
       const part = (entry ?? {}) as Record<string, unknown>;

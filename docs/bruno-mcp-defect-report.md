@@ -37,7 +37,7 @@ claims needed correcting against current code; see the notes under H3 and L3.
 
 ## Open — High
 
-### H1 — a `.yml` body whose `data` is not a string is silently dropped. CONFIRMED.
+### H1 — a `.yml` body whose `data` is not a string is silently dropped. CONFIRMED. FIXED.
 
 Two separately-reported symptoms, one root cause. The executor's body chain
 (`request-executor.ts:392-435`) is, in order:
@@ -79,6 +79,31 @@ was never sent. Any assertion on "the endpoint rejects bad input" passes for the
 body through the multipart part mapper, stamping `type: 'text'` onto form-urlencoded parts, which Bruno does
 not do. Fixing only the write path leaves a file that round-trips through us but diverges from Bruno. Route
 `toFormUrlEncodedEntries`, add the missing fallback branch, fix the parser, and fix L2, in one change.
+
+> **What measurement actually found, before the fix was written.** Probing `buildFetchOptions` directly (it
+> is exported, so the wire-level body needs no mocked fetch) moved three of this item's claims:
+>
+> - The `content: "a=1&b=2"` symptom **reproduces, but for a different reason than either the audit or the
+>   correction above gave**: the string went out verbatim and correct, with *no* `Content-Type`, because
+>   `BODY_TYPE_CONTENT_TYPES` had no `form-urlencoded` entry. A form post with no content type is rejected by
+>   every server that parses one. Fixed by adding the entry, not by touching the body chain.
+> - The `type: json` **mapping case was already closed** by `parseBodyData`, which serialises a YAML mapping
+>   under `type: json` to a JSON string and throws on anything else. It is not reachable through the parser.
+>   The fallback branch is still warranted — a caller that builds the request itself can reach it — but it
+>   guards a narrower hole than this entry claimed.
+> - **A defect this entry never listed:** the plain-string branch sat *above* the graphql branch, so a graphql
+>   query authored through this tool (stored as bare query text, unlike Bruno's `{query, variables}` mapping)
+>   went on the wire as naked query text with no JSON envelope. Every graphql server rejects that. Fixed in
+>   the same change by moving the graphql branch above the string branch and teaching it both stored shapes.
+>
+> The `formData` case was confirmed by reading and is what the entry describes.
+
+**Fixed** by: routing both list-shaped body types through a shared `toYamlBody` builder in `request.ts` (the
+create and modify paths had built the body inline and identically, which is how one defect existed twice);
+adding the form-urlencoded read branch to `yaml-parser.ts`; reordering the executor's body chain and adding
+the fallback branch, which **warns rather than throws** — `buildFetchOptions`'s first call site sits outside
+`executeSingleRequest`'s try block, so a throw would abort an entire sequential run. Guarded by
+`tests/unit/bruno/yml-body-fidelity.test.ts`, including a byte-exact round-trip of a Bruno-written file.
 
 ### H2 — No cookie jar, so no session can be exercised without hand-rolled relaying. CONFIRMED.
 
@@ -256,13 +281,15 @@ verified, `getSetCookies` has zero occurrences there. It is reachable only incid
 `res.getHeader("set-cookie")`, which returns the joined header and has to be regex-parsed. Given H2, this is
 the one field a user in that situation actually wants. Either expose it or drop it.
 
-### L2 — Orphaned docblock in `request.ts:97-108`. CONFIRMED.
+### L2 — Orphaned docblock in `request.ts:97-108`. CONFIRMED. FIXED.
 
 The comment describing the `form-urlencoded` normalisation — including "Handing it the raw `content` string
 wrote no block at all, so an authored body was silently dropped and the request went out empty" — sits
 immediately above a *different* function's docblock (`yamlBodyToBruBody`, `:109-119`). The prose documents a
 fix that the `.yml` path never received (H1). Anyone reading the file top-down concludes the bug is fixed.
 It is not. Fix with H1.
+
+**Fixed** with H1: the docblock was deleted and rewritten above the function it actually describes.
 
 ### L3 — Auth types advertised but not applied. CONFIRMED, handled honestly.
 
@@ -321,6 +348,27 @@ the catch-all — but it is a live trap for the next caller.
 ### L9 — graphql body with no query falls back to `''`. SUSPECTED.
 
 Decide whether an empty query should be an error rather than an empty string sent to the server.
+
+### L10 — a `.yml` graphql request is written under `http:`, not in its own `graphql:` block. CONFIRMED.
+
+Found while fixing H1, and deliberately left out of that change so the body-chain fix stayed one thing.
+
+Upstream writes a graphql request into a top-level `graphql:` block, not `http:`, and that block carries its
+own `headers`, `params` and `auth` alongside `body: { query, variables }` — verified by reading
+`packages/bruno-filestore/src/formats/yml/items/stringifyGraphQLRequest.ts` in
+`/Volumes/Projects/tools/working_dir/bruno-tool`, where the function ends `ocRequest.graphql = graphql`. This
+tool writes the whole request under `http:` and puts the query in `http.body` with `type: graphql`, the same
+place it puts every other body.
+
+Both halves of this codebase agree with each other, so such a request round-trips here and executes correctly
+— the envelope fix under H1 makes sure of that. What it does not do is match what Bruno writes, so a request
+authored here and opened in Bruno is not the file Bruno would have produced.
+
+Same class as M4: byte-parity with upstream, read from the source rather than inferred. Scope is larger than
+"move the body": it is a second top-level request block with its own field set, so it needs a writer change,
+a reader that accepts both placements (every graphql `.yml` this tool has already written uses `http:`), and
+a round-trip test against a Bruno-authored file. `info.type: graphql` is already written correctly and is
+what a reader should switch on.
 
 ---
 
@@ -463,9 +511,11 @@ What an agent needs and does not have. Direct field feedback first.
    corruption claim that did not survive measurement: folded style round-trips losslessly, so no script was
    ever silently commented out. It kept the slot only because it is the cheapest fix on the list; on its
    real merits — byte-fidelity with Bruno, and removing a hand-edit trap — it belongs below M1.
-3. **H1 + L2** — the missing `else` in the body chain, the `.yml` `toFormUrlEncodedEntries` routing, and the
+3. ~~**H1 + L2** — the missing `else` in the body chain, the `.yml` `toFormUrlEncodedEntries` routing, and the
    read-path mirror, in one change. The run reports a clean 2xx/4xx and the body was never sent, so
-   assertions pass for the wrong reason. Fix the orphaned docblock while in the file — it actively hides this.
+   assertions pass for the wrong reason. Fix the orphaned docblock while in the file — it actively hides
+   this.~~ **Done.** Measurement moved three of H1's claims and turned up one defect it never listed — see
+   the note under H1. Filed L10 out of it.
 4. **M1** — name the file and the reason in `parseErrors`. A bare count is a dead end for an autonomous
    agent: it cannot bisect, so it cannot recover. Cheap.
 5. **H2 + L1** — an opt-in cookie jar, exposing `getSetCookies()` alongside. Without it, every session-based
@@ -506,6 +556,7 @@ posture decisions.
 15. **L3** — the third auth enum at `request-tools.ts:355`. Pure drift.
 16. **L8** — the `.bru` file-body catch-all. Unreachable from the tool surface today; a live trap for the
     next caller.
-17. **L9** — decide whether a graphql body with no query should error.
+17. **L9 + L10** — the two graphql items, together: decide whether a body with no query should error, and
+    move the request into the top-level `graphql:` block upstream writes. Same file, same round-trip test.
 18. **Test lint and typecheck debt**, in its own PR. The load-bearing part is not the error count — it is that
     `tests/` is neither linted nor type-checked, so **a type-only fix has no test that can go red**.

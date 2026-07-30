@@ -95,18 +95,6 @@ function replaceQueryParams<T extends { type?: string }>(existing: T[] | undefin
 }
 
 /**
- * Turn a form-urlencoded body into the entries upstream's serializer reads.
- *
- * Upstream expects `body.formUrlEncoded` to be an array of {name, value,
- * enabled}. Handing it the raw `content` string wrote no block at all, so an
- * authored body was silently dropped and the request went out empty.
- *
- * Both shapes a caller might reasonably send are accepted: explicit entries via
- * `formData`, or an encoded string via `content`. The string is parsed with
- * URLSearchParams, so percent-escapes and `+` resolve the way they would on the
- * wire rather than being stored literally.
- */
-/**
  * Move a parsed `.yml` body onto the BruBody field that matches its payload.
  *
  * `YamlBody.data` is a union: payload text for the text-ish types, a
@@ -140,6 +128,23 @@ function yamlBodyToBruBody(body: YamlBody): BruBody {
   return { type };
 }
 
+/**
+ * Turn a form-urlencoded body into entries a serializer can write.
+ *
+ * Both storage formats keep this body as a list of pairs, never as the raw
+ * string a caller supplies. Handing a serializer the `content` string wrote no
+ * block at all, so an authored body was silently dropped and the request went
+ * out empty.
+ *
+ * Both shapes a caller might reasonably send are accepted: explicit entries via
+ * `formData`, or an encoded string via `content`. The string is parsed with
+ * URLSearchParams, so percent-escapes and `+` resolve the way they would on the
+ * wire rather than being stored literally.
+ *
+ * The `enabled` flag here is the in-memory spelling, used by both formats. It
+ * is inverted on the way to a `.yml` file, which stores `disabled: true` and
+ * nothing at all for an enabled pair — see serialiseBody in yaml-generator.ts.
+ */
 function toFormUrlEncodedEntries(
   body: NonNullable<CreateRequestInput['body']>,
 ): Array<{ name: string; value: string; enabled: boolean }> | undefined {
@@ -158,6 +163,33 @@ function toFormUrlEncodedEntries(
     }));
   }
   return undefined;
+}
+
+/**
+ * Build the stored body for a `.yml` request from what a caller supplied.
+ *
+ * Only the text-ish types are stored as the `content` string they arrive as.
+ * The two list-shaped types are not, and routing them through `content` wrote
+ * `data: undefined` — a body block naming a type with no payload under it. The
+ * executor has no encoder for that, so the request went out with no body at
+ * all, and the run reported whatever status the server returns for an empty
+ * request as though it were the answer to the body the author wrote.
+ *
+ * Create and modify both call this. They previously built the body inline and
+ * identically, which is how the same defect came to exist twice.
+ */
+function toYamlBody(source: NonNullable<CreateRequestInput['body']>): YamlBody {
+  if (isMultipartBodyType(source.type) && source.formData) {
+    return { type: 'multipart-form', data: toMultipartData(source.formData) };
+  }
+  if (source.type === 'form-urlencoded') {
+    // The entries carry `enabled`, which is the in-memory spelling; the
+    // generator inverts it to the `disabled` key Bruno writes. They carry no
+    // `type` key, which is what distinguishes a form-urlencoded pair from a
+    // multipart part on disk.
+    return { type: 'form-urlencoded', data: toFormUrlEncodedEntries(source) };
+  }
+  return { type: source.type, data: source.content };
 }
 
 /**
@@ -552,14 +584,7 @@ export class RequestBuilder {
           yamlReq.http.headers = mergeYamlHeaderList(yamlReq.http.headers, updates.headers);
         }
         if (updates.body && updates.body.type !== 'none') {
-          if (isMultipartBodyType(updates.body.type) && updates.body.formData) {
-            yamlReq.http.body = {
-              type: 'multipart-form',
-              data: toMultipartData(updates.body.formData),
-            };
-          } else {
-            yamlReq.http.body = { type: updates.body.type, data: updates.body.content };
-          }
+          yamlReq.http.body = toYamlBody(updates.body);
         }
         if (updates.auth?.type === 'inherit') {
           // The bare token, not a mapping: see the same branch on the create path.
@@ -906,17 +931,7 @@ export class RequestBuilder {
 
     // Add body
     if (input.body && input.body.type !== 'none') {
-      if (isMultipartBodyType(input.body.type) && input.body.formData) {
-        yamlRequest.http.body = {
-          type: 'multipart-form',
-          data: toMultipartData(input.body.formData),
-        };
-      } else {
-        yamlRequest.http.body = {
-          type: input.body.type,
-          data: input.body.content,
-        };
-      }
+      yamlRequest.http.body = toYamlBody(input.body);
     }
 
     // Add query params
