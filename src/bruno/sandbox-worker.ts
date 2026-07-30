@@ -158,6 +158,23 @@ function buildPreRequestSandboxScript(requestData: MockRequestData): string {
 var __reqData = JSON.parse(${JSON.stringify(reqJson)});
 var __reqMutations = {};
 
+// Serialised INSIDE the context, for the same reason the results accumulator and
+// the variable store are: __reqMutations is a plain global, so sandboxed code can
+// replace it with an object carrying getters, or with a Proxy. Handing that to
+// the host means those traps run on the host stack after runInContext has
+// returned, where the V8 interrupt implementing the timeout is no longer armed,
+// and a spinning getter hangs the process with no timeout able to stop it.
+// Stringifying here runs them under the timeout instead, and the host receives
+// only inert JSON. An unserialisable tracker degrades to no mutations rather
+// than taking the run down.
+function __reqMutationsJson() {
+  try {
+    return JSON.stringify(__reqMutations);
+  } catch (e) {
+    return '{}';
+  }
+}
+
 var req = Object.create(null);
 req.getUrl = function() { return __reqMutations.url !== undefined ? __reqMutations.url : __reqData.url; };
 req.getMethod = function() { return __reqData.method; };
@@ -332,6 +349,79 @@ function extractBruVars(
 }
 
 /**
+ * A url or header value as text, or undefined if it has no sensible text form.
+ * Numbers and booleans are stringified the way the transport would stringify
+ * them; objects and arrays are refused, since "[object Object]" on the wire is
+ * never what the script meant.
+ */
+function asTextValue(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return undefined;
+}
+
+/**
+ * Best-effort read of the request mutations a pre-request script recorded.
+ *
+ * The sibling of extractBruVars, and security-critical for the same reason:
+ * __reqMutations is an ordinary sandbox global, so a script can replace it with
+ * an object whose `url` is a getter, or with a Proxy. Reading the object out and
+ * touching its properties on the host would run that code on the HOST stack,
+ * after runInContext returned and the V8 interrupt behind the timeout was
+ * disarmed — a spinning getter would then hang the process with nothing able to
+ * stop it. So the serialisation happens in-context, under the timeout, and only
+ * a JSON string crosses back.
+ *
+ * Only the three fields the caller acts on are copied across. A url or header
+ * value given as a non-string primitive is stringified, which is what the
+ * transport would do with it anyway; anything else is dropped, since it could
+ * only reach the wire as "[object Object]". So a script that hands back a
+ * hostile shape loses those mutations rather than passing something unexpected
+ * to the request builder. Same on every failure path: no tracker, an
+ * unserialisable tracker, or a throw all yield no mutations.
+ */
+function extractReqMutations(context: vm.Context, timeout: number): RequestMutations {
+  try {
+    const json = vm.runInContext(
+      'typeof __reqMutationsJson === "function" ? __reqMutationsJson() : null',
+      context,
+      { timeout },
+    );
+    if (typeof json !== 'string') {
+      return {};
+    }
+    const parsed: unknown = JSON.parse(json);
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {};
+    }
+    const raw = parsed as Record<string, unknown>;
+    const mutations: RequestMutations = {};
+    const url = asTextValue(raw.url);
+    if (url !== undefined) {
+      mutations.url = url;
+    }
+    if (raw.headers !== null && typeof raw.headers === 'object' && !Array.isArray(raw.headers)) {
+      // Rebuilt key by key, skipping __proto__, so the header map handed onward
+      // cannot carry a prototype into whatever the caller merges it with.
+      const headers: Record<string, string> = {};
+      for (const [key, value] of Object.entries(raw.headers as Record<string, unknown>)) {
+        const text = asTextValue(value);
+        if (key !== '__proto__' && text !== undefined) {
+          headers[key] = text;
+        }
+      }
+      mutations.headers = headers;
+    }
+    if ('body' in raw) {
+      mutations.body = raw.body;
+    }
+    return mutations;
+  } catch {
+    return {};
+  }
+}
+
+/**
  * A unit of sandbox work, shaped so it survives a JSON / structured-clone round
  * trip. This is what will cross the process boundary to the forked worker in the
  * child-process migration (PR-b); the shape is frozen in
@@ -429,12 +519,9 @@ export function runPreRequestJob(
       const remaining = Math.max(1, timeout - (Date.now() - started));
       userScript.runInContext(context, { timeout: remaining });
 
-      const mutations = vm.runInContext('__reqMutations', context, {
-        timeout: Math.max(1, timeout - (Date.now() - started)),
-      }) as RequestMutations;
       return {
         variables: extractBruVars(context, timeout),
-        mutations: mutations || {},
+        mutations: extractReqMutations(context, Math.max(1, timeout - (Date.now() - started))),
       };
     } catch (error: unknown) {
       const { label, message } = describeSandboxError(error);

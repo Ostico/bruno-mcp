@@ -301,9 +301,12 @@ function checkIPv4(hostname: string): UrlValidationResult | null {
 
   const [a, b, c, d] = octets;
 
-  // 0.0.0.0
-  if (a === 0 && b === 0 && c === 0 && d === 0) {
-    return { valid: false, reason: 'Blocked IP: 0.0.0.0 (unspecified address)' };
+  // 0.0.0.0/8 — "this host on this network" (RFC 1122). The whole /8 is
+  // blocked, not just 0.0.0.0: Linux routes any 0.x.y.z to the local host, so
+  // http://0.0.0.1/ reaches loopback while looking like an ordinary address.
+  if (a === 0) {
+    const label = b === 0 && c === 0 && d === 0 ? '0.0.0.0 (unspecified address)' : 'this-host range (0.0.0.0/8)';
+    return { valid: false, reason: `Blocked IP: ${label}` };
   }
 
   // 127.0.0.0/8 — loopback
@@ -347,6 +350,13 @@ function checkIPv4(hostname: string): UrlValidationResult | null {
     return { valid: false, reason: 'Blocked IP: documentation range TEST-NET-1 (192.0.2.0/24)' };
   }
 
+  // 192.88.99.0/24 — 6to4 relay anycast (RFC 3068, deprecated by RFC 7526).
+  // A packet sent here is handed to whichever relay is nearest, so the operator
+  // of the destination is not knowable from the address.
+  if (a === 192 && b === 88 && c === 99) {
+    return { valid: false, reason: 'Blocked IP: 6to4 relay anycast (192.88.99.0/24)' };
+  }
+
   // 198.18.0.0/15 — benchmarking (RFC 2544); 198.18.0.0 - 198.19.255.255.
   if (a === 198 && (b === 18 || b === 19)) {
     return { valid: false, reason: 'Blocked IP: benchmarking range (198.18.0.0/15)' };
@@ -368,9 +378,16 @@ function checkIPv4(hostname: string): UrlValidationResult | null {
     return { valid: false, reason: 'Blocked IP: multicast address (224.0.0.0/4)' };
   }
 
-  // 255.255.255.255 — limited broadcast (RFC 919).
+  // 255.255.255.255 — limited broadcast (RFC 919). Checked before 240.0.0.0/4,
+  // which also contains it, so the more specific reason is the one reported.
   if (a === 255 && b === 255 && c === 255 && d === 255) {
     return { valid: false, reason: 'Blocked IP: limited broadcast address (255.255.255.255)' };
+  }
+
+  // 240.0.0.0/4 — reserved for future use, formerly class E (RFC 1112).
+  // Not globally routable, and stacks disagree on how they treat it.
+  if (a >= 240) {
+    return { valid: false, reason: 'Blocked IP: reserved range (240.0.0.0/4)' };
   }
 
   return null;
@@ -485,36 +502,116 @@ function checkIPv6(hostname: string): UrlValidationResult | null {
     return { valid: false, reason: 'Blocked IPv6: link-local address (fe80::/10)' };
   }
 
-  // ::/96 embeddings of an IPv4 address (groups[0-4]=0):
-  //  - IPv4-mapped:     0:0:0:0:0:ffff:a.b.c.d  (groups[5]=0xffff)
-  //  - IPv4-compatible: 0:0:0:0:0:0:a.b.c.d     (groups[5]=0, deprecated per RFC 4291)
-  // Both can embed a private/reserved IPv4 address and would otherwise bypass
-  // the IPv4 checks.
-  if (
-    groups[0] === 0 &&
-    groups[1] === 0 &&
-    groups[2] === 0 &&
-    groups[3] === 0 &&
-    groups[4] === 0 &&
-    (groups[5] === 0xffff || groups[5] === 0)
-  ) {
-    // Reconstruct the embedded IPv4 address from groups[6] and groups[7]
-    const a = (groups[6] >> 8) & 0xff;
-    const b =  groups[6]       & 0xff;
-    const c = (groups[7] >> 8) & 0xff;
-    const d =  groups[7]       & 0xff;
-    const embeddedIPv4 = `${a}.${b}.${c}.${d}`;
-    const ipv4Result = checkIPv4(embeddedIPv4);
-    if (ipv4Result) {
-      const form = groups[5] === 0xffff ? `::ffff:${embeddedIPv4}` : `::${embeddedIPv4}`;
+  // 64:ff9b:1::/48 — the local-use NAT64 prefix (RFC 8215). Blocked wholesale
+  // rather than decoded: deployments carve their own /96 out of this range, so
+  // where the IPv4 address sits inside it is a site-local convention rather
+  // than something the address itself states. Reserved for local use means any
+  // address here is inside the site, which is what makes it unreachable-by-policy
+  // whatever IPv4 it turns out to carry.
+  if (groups[0] === 0x0064 && groups[1] === 0xff9b && groups[2] === 1) {
+    return { valid: false, reason: 'Blocked IPv6: local-use NAT64 range (64:ff9b:1::/48)' };
+  }
+
+  // Every transitional encoding that carries an IPv4 address inside an IPv6
+  // one has to be un-embedded before the address is called clean, or the IPv4
+  // denylist never sees the address that is actually reached.
+  for (const candidate of embeddedIPv4Candidates(groups)) {
+    if (checkIPv4(candidate.ipv4)) {
       return {
         valid: false,
-        reason: `Blocked IPv6: IPv4-embedded address (${form}) embeds a private/reserved IPv4 address`,
+        reason:
+          `Blocked IPv6: ${candidate.mechanism} address (${candidate.form}) ` +
+          'embeds a private/reserved IPv4 address',
       };
     }
   }
 
   return null;
+}
+
+/** One IPv4 address recovered from an IPv6 transitional encoding. */
+interface EmbeddedIPv4 {
+  /** The recovered IPv4 address in dotted-quad form. */
+  ipv4: string;
+  /** Name of the transition mechanism that defines this encoding. */
+  mechanism: string;
+  /** How the address reads once the embedded IPv4 is spelled out. */
+  form: string;
+}
+
+/** Join two 16-bit groups into a dotted-quad IPv4 address. */
+function dottedQuad(high: number, low: number): string {
+  return `${(high >> 8) & 0xff}.${high & 0xff}.${(low >> 8) & 0xff}.${low & 0xff}`;
+}
+
+/**
+ * Recover every IPv4 address embedded in an IPv6 address by a transition
+ * mechanism. Returns one entry per encoding that applies — usually zero (an
+ * ordinary IPv6 address embeds nothing) or one.
+ *
+ * Each recognised prefix is either IANA-reserved for translation or, in the
+ * 6to4 case, defined so that the embedded IPv4 fully determines the
+ * destination. So an entry here is never a guess about an ordinary global
+ * address: if the encoding matches, the IPv4 it yields is genuinely where the
+ * packet ends up, and it belongs in front of the IPv4 denylist.
+ */
+function embeddedIPv4Candidates(groups: number[]): EmbeddedIPv4[] {
+  const found: EmbeddedIPv4[] = [];
+  const zeroThrough = (upTo: number): boolean => groups.slice(0, upTo + 1).every((g) => g === 0);
+
+  // ::ffff:a.b.c.d — IPv4-mapped (RFC 4291), and ::a.b.c.d — IPv4-compatible,
+  // deprecated by the same RFC but still routed by most stacks.
+  if (zeroThrough(4) && (groups[5] === 0xffff || groups[5] === 0)) {
+    const ipv4 = dottedQuad(groups[6], groups[7]);
+    found.push({
+      ipv4,
+      mechanism: groups[5] === 0xffff ? 'IPv4-mapped' : 'IPv4-compatible',
+      form: groups[5] === 0xffff ? `::ffff:${ipv4}` : `::${ipv4}`,
+    });
+  }
+
+  // ::ffff:0:a.b.c.d — IPv4-translated (RFC 2765). One group further left than
+  // the mapped form above, which is exactly what let it through unnoticed.
+  if (zeroThrough(3) && groups[4] === 0xffff && groups[5] === 0) {
+    const ipv4 = dottedQuad(groups[6], groups[7]);
+    found.push({ ipv4, mechanism: 'IPv4-translated (RFC 2765)', form: `::ffff:0:${ipv4}` });
+  }
+
+  // 64:ff9b::/96 — the NAT64 well-known prefix (RFC 6052), which that RFC
+  // permits only at /96, so the IPv4 address is always the low 32 bits.
+  if (
+    groups[0] === 0x0064 && groups[1] === 0xff9b &&
+    groups[2] === 0 && groups[3] === 0 && groups[4] === 0 && groups[5] === 0
+  ) {
+    const ipv4 = dottedQuad(groups[6], groups[7]);
+    found.push({ ipv4, mechanism: 'NAT64 (RFC 6052)', form: `64:ff9b::${ipv4}` });
+  }
+
+  // 2002::/16 — 6to4 (RFC 3056). The IPv4 address of the tunnel endpoint sits
+  // in the 32 bits after the prefix and decides where the traffic surfaces.
+  if (groups[0] === 0x2002) {
+    const ipv4 = dottedQuad(groups[1], groups[2]);
+    found.push({ ipv4, mechanism: '6to4 (RFC 3056)', form: `2002:${ipv4}::` });
+  }
+
+  // 2001::/32 — Teredo (RFC 4380). Two IPv4 addresses are embedded: the relay
+  // server plainly, and the client obfuscated by a bitwise complement.
+  if (groups[0] === 0x2001 && groups[1] === 0) {
+    const server = dottedQuad(groups[2], groups[3]);
+    found.push({ ipv4: server, mechanism: 'Teredo server (RFC 4380)', form: `2001:0:${server}::` });
+    const client = dottedQuad(~groups[6] & 0xffff, ~groups[7] & 0xffff);
+    found.push({ ipv4: client, mechanism: 'Teredo client (RFC 4380)', form: `2001:0:: -> ${client}` });
+  }
+
+  // ::0:5efe:a.b.c.d / ::200:5efe:a.b.c.d — ISATAP interface identifiers
+  // (RFC 5214) under any routing prefix. The tunnel terminates at the embedded
+  // IPv4 address, so a public prefix is no assurance about the destination.
+  if (groups[5] === 0x5efe && (groups[4] === 0 || groups[4] === 0x0200)) {
+    const ipv4 = dottedQuad(groups[6], groups[7]);
+    found.push({ ipv4, mechanism: 'ISATAP (RFC 5214)', form: `::${groups[4] === 0 ? '0' : '200'}:5efe:${ipv4}` });
+  }
+
+  return found;
 }
 
 // ---------------------------------------------------------------------------
