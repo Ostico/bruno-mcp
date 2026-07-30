@@ -12,7 +12,13 @@ import { VariableStore } from './variable-store.js';
 import { buildDispatcher, type DispatcherResult } from './fetch-dispatcher.js';
 import { describeNetworkError } from './network-error.js';
 import { applyParams } from './request-params.js';
-import { applyPreRequestVars, bruVarSetsToYamlVars } from './request-vars.js';
+import { applyPreRequestVars } from './request-vars.js';
+import { bruFileToYamlRequest, bruAuthToYamlAuth } from './bru-to-yaml.js';
+import {
+  redactUrl,
+  stripCredentialHeaders,
+  appendQueryCredential,
+} from './request-redaction.js';
 import { encodeRequestUrl, shouldEncodeUrl, hasExplicitScheme } from './url-encoder.js';
 import {
   SINGLE_VALUE_HEADERS,
@@ -21,17 +27,24 @@ import {
   setDefaultContentType,
 } from './request-headers.js';
 import type {
-  BruFile,
   YamlRequest,
   YamlAuth,
   MockRequestData,
   CollectionRunResult,
+  CollectionRunSummary,
   RequestExecutionResult,
   TestResult,
   MultipartFormPart,
   FormUrlEncodedPart,
   BruGraphql,
+  UnappliedAuthType,
 } from './types.js';
+
+// The .bru -> YamlRequest translation and the credential-redaction helpers moved
+// to their own modules when this file hit the repo-wide max-lines ceiling.
+// Re-exported because tests (and any future caller) import these names from here.
+export { bruFileToYamlRequest, bruAuthToYamlAuth };
+export { redactUrl, stripCredentialHeaders };
 
 interface ExecutionOptions {
   environment?: string;
@@ -95,165 +108,6 @@ async function findYmlFilesRecursive(dirPath: string, results: string[]): Promis
         results.push(fullPath);
       }
     }
-  }
-}
-
-/**
- * Translate a parsed .bru file into the YamlRequest the executor works in.
- * Exported for tests, matching bruAuthToYamlAuth alongside it; the executor is
- * still the only production caller.
- */
-export function bruFileToYamlRequest(bru: BruFile): YamlRequest {
-  const scripts: YamlRequest['runtime'] = { scripts: [] };
-  if (bru.script?.['pre-request']?.exec) {
-    scripts.scripts.push({ type: 'before-request', code: bru.script['pre-request'].exec.join('\n') });
-  }
-  if (bru.script?.['post-response']?.exec) {
-    scripts.scripts.push({ type: 'after-response', code: bru.script['post-response'].exec.join('\n') });
-  }
-  if (bru.tests?.exec) {
-    scripts.scripts.push({ type: 'after-response', code: bru.tests.exec.join('\n') });
-  }
-
-  // Prefer headersList: it is the parser's order-preserving record of every
-  // authored header, duplicates and disabled flags included. `bru.headers` is
-  // the flat Record kept for lookups, so building from it collapsed repeated
-  // names before the model even existed and dropped the disabled
-  // flag that buildFetchOptions needs to honour. Fall back to the Record
-  // only for a BruFile that carries no headersList.
-  const headers = bru.headersList
-    ? bru.headersList.map((h) => ({
-        name: h.name,
-        value: h.value,
-        ...(h.enabled === false ? { disabled: true } : {}),
-      }))
-    : bru.headers
-      ? Object.entries(bru.headers).map(([name, value]) => ({ name, value }))
-      : undefined;
-
-  // The two formats spell the switched-off flag with opposite polarity: a
-  // BruParam carries `enabled`, a YamlParam carries `disabled`. Forwarding these
-  // without inverting would send exactly the parameters the author turned off.
-  const params = bru.params?.map((param) => ({
-    name: param.name,
-    value: param.value,
-    type: param.type,
-    ...(param.enabled === false ? { disabled: true } : {}),
-  }));
-
-  // Same opposite-polarity trap as params, and worse here: forwarding `enabled`
-  // straight through would evaluate the assertions the author switched off and
-  // report their failures as the request's.
-  const assertions = bru.assertions?.map((assertion) => ({
-    name: assertion.name,
-    value: assertion.value,
-    ...(assertion.enabled === false ? { disabled: true } : {}),
-  }));
-
-  // Third occurrence of the same inversion, and the .bru names differ too:
-  // varSets.req/.res carry `enabled`, YamlVars.preRequest/.postResponse carry
-  // `disabled`. Getting it wrong here means applying a variable the author
-  // switched off — silently, since a variable leaves no trace in the report the
-  // way a failed assertion does. `local` is carried through unchanged.
-  const vars = bruVarSetsToYamlVars(bru.varSets);
-
-  let body: YamlRequest['http']['body'];
-  if (bru.body?.formData && bru.body.formData.length > 0) {
-    body = {
-      type: 'multipart-form',
-      data: bru.body.formData.map((part): MultipartFormPart => {
-        const item: MultipartFormPart = {
-          name: part.name,
-          value: part.value,
-          type: part.type ?? 'text',
-        };
-        if (part.contentType) item.contentType = part.contentType;
-        // Carry the enabled flag through so a part disabled in the .bru file is
-        // not silently re-enabled by the converter. Only an
-        // explicit `false` is recorded; `undefined`/`true` stay enabled.
-        if (part.enabled === false) item.enabled = false;
-        return item;
-      }),
-    };
-  } else if (bru.body?.content) {
-    body = { type: bru.body.type, data: bru.body.content };
-  } else if (bru.body?.formUrlEncoded && bru.body.formUrlEncoded.length > 0) {
-    // Carried as pairs, not as a pre-encoded string: buildFetchOptions
-    // substitutes variables and only then encodes, so a value containing `&` or
-    // `=` cannot forge extra fields.
-    body = { type: 'form-urlencoded', data: bru.body.formUrlEncoded };
-  } else if (bru.body?.graphql) {
-    body = { type: 'graphql', data: bru.body.graphql };
-  }
-  // `file` bodies are deliberately not handled. @usebruno/lang 0.36.0 has no
-  // `body:file` block, so such a block parses as generic name/value pairs and
-  // the filePath the parser looks for is never present — sending one would mean
-  // resolving an empty path against the collection root and reading a
-  // directory. Supporting it needs the block to exist upstream first.
-
-  return {
-    info: { name: bru.meta.name, type: bru.meta.type, seq: bru.meta.seq },
-    http: {
-      method: bru.http.method,
-      url: bru.http.url,
-      headers,
-      params,
-      body,
-      auth: bruAuthToYamlAuth(bru.auth),
-    },
-    runtime: scripts.scripts.length > 0 ? scripts : undefined,
-    // buildFetchOptions reads the timeout, redirect policy, TLS options and proxy
-    // off `settings`. Without forwarding it, every one of those was unreachable
-    // from a .bru request: the .bru format declares `timeout`, the parser read it
-    // and the writer preserved it, and it then had no effect whatsoever.
-    settings: bru.settings,
-    assert: assertions,
-    // Without this the .bru side stayed inert whatever the executor did: the
-    // format declares vars, the parser read them and the writer preserved them,
-    // and they stopped here.
-    vars,
-    docs: bru.docs,
-  };
-}
-
-
-/**
- * Flatten a parsed .bru auth block into the shape the executor applies.
- *
- * .bru stores auth nested by scheme (auth.bearer.token, auth.basic.username);
- * the executor and the .yml path both consume the flat form ({type, token} /
- * {type, username, password} / {type, key, value, in}). Without this, auth
- * authored in a .bru file was dropped here — before the request even reached
- * buildFetchOptions.
- */
-export function bruAuthToYamlAuth(auth: BruFile['auth']): YamlAuth | undefined {
-  if (!auth || auth.type === 'none') {
-    return undefined;
-  }
-  switch (auth.type) {
-    case 'bearer':
-      return { type: 'bearer', token: auth.bearer?.token ?? '' };
-    case 'basic':
-      return {
-        type: 'basic',
-        username: auth.basic?.username ?? '',
-        password: auth.basic?.password ?? '',
-      };
-    // `apikey` is how Bruno itself spells the mode, so a file authored in Bruno
-    // arrives under that name. Matching only the hyphenated one dropped the key
-    // and value here and the request went out with no credential at all.
-    case 'api-key':
-    case 'apikey':
-      return {
-        type: 'api-key',
-        key: auth.apikey?.key ?? '',
-        value: auth.apikey?.value ?? '',
-        in: auth.apikey?.placement === 'queryparams' ? 'query' : 'header',
-      };
-    default:
-      // oauth2, digest: carried by type only so buildFetchOptions can warn
-      // rather than have the scheme vanish silently.
-      return { type: auth.type };
   }
 }
 
@@ -375,76 +229,21 @@ function confineUploadPath(filePath: string, collectionRoot: string | undefined)
   return resolved;
 }
 
-/** Query-parameter names whose values are masked before a URL is shown to the caller. */
-const SECRET_QUERY_PARAMS = new Set([
-  'key', 'api-key', 'apikey', 'api_key', 'x-api-key',
-  'token', 'access_token', 'refresh_token', 'id_token', 'api_token', 'apitoken',
-  'secret', 'client_secret', 'password', 'pwd', 'passwd',
-  'auth', 'authorization', 'sig', 'signature', 'session', 'sessionid',
-]);
-
-/**
- * Redact secrets from a URL before it is returned to the caller or embedded in
- * an error message. A query api-key or userinfo
- * (`https://user:pass@host`) substituted from an env file must not cross back
- * over the MCP boundary. Userinfo is always stripped; the values of known
- * secret-bearing query parameters are masked. When there is nothing sensitive
- * the input is returned byte-for-byte (so ordinary reported URLs are unchanged),
- * and a URL that cannot be parsed is returned as-is (it already passed SSRF
- * validation, which parses it).
- */
-export function redactUrl(raw: string): string {
-  let u: URL;
-  try {
-    u = new URL(raw);
-  } catch {
-    return raw;
-  }
-  const secretNames = [...u.searchParams.keys()].filter(n =>
-    SECRET_QUERY_PARAMS.has(n.toLowerCase()),
-  );
-  if (!u.username && !u.password && secretNames.length === 0) {
-    return raw;
-  }
-  u.username = '';
-  u.password = '';
-  for (const name of secretNames) {
-    u.searchParams.set(name, 'REDACTED');
-  }
-  return u.toString();
-}
-
-/** Credential headers always dropped on a cross-origin redirect, in addition to the request's own auth headers. */
-const CROSS_ORIGIN_STRIP_HEADERS = ['authorization', 'cookie', 'proxy-authorization'];
-
-/**
- * Drop credential-bearing headers when a redirect crosses to a different origin
- *. Real fetch() strips these on a cross-origin redirect; the
- * manual redirect loop must do the same, or a target that 302s to an attacker
- * hands it the caller's Authorization / api-key / cookies. `authHeaderNames`
- * are the header names auth was actually applied to, so a caller-named api-key
- * header (e.g. X-Api-Key) is stripped too — not just the standard set.
- */
-export function stripCredentialHeaders(
-  headers: Record<string, string>,
-  authHeaderNames: string[],
-): Record<string, string> {
-  const deny = new Set([
-    ...CROSS_ORIGIN_STRIP_HEADERS,
-    ...authHeaderNames.map(n => n.toLowerCase()),
-  ]);
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(headers)) {
-    if (!deny.has(k.toLowerCase())) out[k] = v;
-  }
-  return out;
-}
-
 export async function buildFetchOptions(
   yaml: YamlRequest,
   vars: Map<string, string>,
   collectionRoot?: string,
-): Promise<{ url: string; options: RequestInit; warnings?: string[]; authHeaderNames?: string[] }> {
+): Promise<{
+  url: string;
+  options: RequestInit;
+  warnings?: string[];
+  authHeaderNames?: string[];
+  /**
+   * Query-parameter names a credential was placed under. Feeds redactUrl, whose
+   * built-in list cannot know a collection-chosen parameter name.
+   */
+  authQueryNames?: string[];
+}> {
   // Surface any {{var}} that substitution could not resolve so an
   // unsubstituted placeholder can no longer reach the wire silently. The
   // failure mode is starkest under parallel per-folder isolation — a variable
@@ -487,17 +286,27 @@ export async function buildFetchOptions(
       // reported as unresolved either.
       if (h.disabled === true) continue;
       trackUnresolved(h.value);
-      const lower = h.name.toLowerCase();
+      // The NAME is substituted and tracked too. A header authored as
+      // `{{tokenHeader}}: abc` otherwise went out with the literal
+      // `{{tokenHeader}}` as its field name, and the unresolved-variable report
+      // — the mechanism that stops an unsubstituted placeholder reaching the
+      // wire silently — never mentioned it.
+      trackUnresolved(h.name);
+      const headerName = substitute(h.name, vars);
+      // Keyed off the SUBSTITUTED name: the duplicate and single-value
+      // bookkeeping is about the field actually sent, so two different templates
+      // resolving to the same field have to collapse onto one entry.
+      const lower = headerName.toLowerCase();
       const occurrence = (headerCounts.get(lower) ?? 0) + 1;
       headerCounts.set(lower, occurrence);
       if (occurrence === 2 && SINGLE_VALUE_HEADERS.has(lower)) {
         // Name only, never the value: a repeated Authorization or Cookie
         // carries a credential, and warnings surface to the caller.
         headerWarnings.push(
-          `Header "${headerKeys.get(lower) ?? h.name}" is defined by HTTP as a single-value field but is set more than once; the values were combined into one and the server may reject the request. Remove the duplicate.`,
+          `Header "${headerKeys.get(lower) ?? headerName}" is defined by HTTP as a single-value field but is set more than once; the values were combined into one and the server may reject the request. Remove the duplicate.`,
         );
       }
-      appendHeader(headers, headerKeys, h.name, substitute(h.value, vars));
+      appendHeader(headers, headerKeys, headerName, substitute(h.value, vars));
     }
   }
 
@@ -507,6 +316,7 @@ export async function buildFetchOptions(
   // automatically is surfaced as a warning rather than dropped in silence.
   const authWarnings: string[] = [];
   const authHeaderNames: string[] = [];
+  const authQueryNames: string[] = [];
   const queryAuth = applyAuth(
     yaml.http.auth,
     headers,
@@ -518,9 +328,12 @@ export async function buildFetchOptions(
     authHeaderNames,
   );
   if (queryAuth) {
-    url +=
-      (url.includes('?') ? '&' : '?') +
-      `${encodeURIComponent(queryAuth.key)}=${encodeURIComponent(queryAuth.value)}`;
+    url = appendQueryCredential(url, queryAuth.key, queryAuth.value);
+    // Registered so the redactor can mask this value on the way back out. The
+    // header path registers its names for the same reason; a query-placed
+    // credential skipping registration meant it was the one credential that
+    // reached the caller in the clear, because the reported URL contains it.
+    authQueryNames.push(queryAuth.key);
   }
 
   const options: RequestInit = {
@@ -639,7 +452,35 @@ export async function buildFetchOptions(
     options,
     ...(warnings.length > 0 ? { warnings } : {}),
     ...(authHeaderNames.length > 0 ? { authHeaderNames } : {}),
+    ...(authQueryNames.length > 0 ? { authQueryNames } : {}),
   };
+}
+
+/**
+ * Placement values that put an api-key credential in the query string.
+ *
+ * Bruno writes `queryparams` (its schema allows only `'header' | 'queryparams'`)
+ * while this tool's own surface says `query`, and the field is spelled `in` on
+ * one path and `placement` on the other. Reading a single spelling and letting
+ * everything else fall through to the header branch meant a request authored in
+ * Bruno sent its credential as a HEADER NAMED AFTER THE QUERY PARAMETER — to a
+ * server that was never going to look there, while the header went out anyway.
+ */
+const QUERY_PLACEMENTS = new Set(['query', 'queryparams']);
+
+/**
+ * Auth modes the type surface accepts that this executor cannot perform.
+ *
+ * Typed as UnappliedAuthType so the list cannot drift from the declared split:
+ * moving a mode out of UnappliedAuthType (because it was implemented) makes this
+ * array fail to type-check until the entry is removed here too.
+ */
+const UNAPPLIED_AUTH_TYPES: readonly UnappliedAuthType[] = ['oauth2', 'digest'];
+
+/** True when an api-key auth block asks for the credential in the query string. */
+function isQueryPlacement(auth: Exclude<YamlAuth, 'inherit'>): boolean {
+  const placement = auth.in ?? auth.placement;
+  return typeof placement === 'string' && QUERY_PLACEMENTS.has(placement.toLowerCase());
 }
 
 /**
@@ -702,7 +543,7 @@ function applyAuth(
         warnings.push('api-key auth has no key name; no credential was sent');
         return undefined;
       }
-      if (auth.in === 'query') {
+      if (isQueryPlacement(auth)) {
         return { key, value };
       }
       headers[key] = value;
@@ -710,11 +551,19 @@ function applyAuth(
       return undefined;
     }
 
-    default:
+    default: {
+      const type = String(auth.type);
+      // A KNOWN-but-unimplemented scheme and an unrecognised one are different
+      // situations for whoever reads the warning: the first needs a workaround,
+      // the second is probably a typo or a Bruno feature this tool has not
+      // learned yet.
       warnings.push(
-        `auth type "${String(auth.type)}" is not applied automatically; send the credential via a header or a pre-request script`,
+        (UNAPPLIED_AUTH_TYPES as readonly string[]).includes(type)
+          ? `auth type "${type}" is not applied: it needs a multi-step exchange with the server that this tool does not perform, so no credential was sent. Obtain the credential in a pre-request script and set the header there.`
+          : `auth type "${type}" is not applied because it is not recognised; no credential was sent. Send the credential via a header or a pre-request script.`,
       );
       return undefined;
+    }
   }
 }
 
@@ -736,6 +585,58 @@ function getAfterResponseScript(yaml: YamlRequest): string | null {
     .map(s => s.code);
 
   return afterScripts.length > 0 ? afterScripts.join('\n') : null;
+}
+
+const DEFAULT_TIMEOUT_MS = 30000;
+
+/**
+ * The largest delay a timer honours. Above this Node does not refuse the value:
+ * it emits a TimeoutOverflowWarning and silently uses 1 ms instead, which turns
+ * "wait a very long time" into "fail immediately" — the opposite of what was
+ * asked for.
+ */
+const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+
+/**
+ * Reduce an authored `settings.timeout` to a delay AbortSignal.timeout will
+ * accept, plus a warning when the authored value could not be honoured.
+ *
+ * The value comes straight from a collection file and nothing upstream of here
+ * validates it, while AbortSignal.timeout accepts only a non-negative integer
+ * below the timer ceiling. A fractional value, NaN, Infinity or anything past
+ * the ceiling makes it throw, and it throws synchronously — so the construction
+ * also has to happen inside the request's try/catch, or the RangeError escapes
+ * as a rejected run instead of a failed request.
+ *
+ * Returning 0 means "send no signal": that is already Bruno's meaning for
+ * `timeout: 0`, and it is the only honest reading of a delay too large for the
+ * platform to represent.
+ */
+function resolveTimeout(raw: number | undefined): { timeoutMs: number; warning?: string } {
+  if (raw === undefined) {
+    return { timeoutMs: DEFAULT_TIMEOUT_MS };
+  }
+  const n = Number(raw);
+  if (Number.isNaN(n)) {
+    return {
+      timeoutMs: DEFAULT_TIMEOUT_MS,
+      warning: `settings.timeout is not a number; the default ${DEFAULT_TIMEOUT_MS}ms was used instead`,
+    };
+  }
+  if (n <= 0) {
+    return { timeoutMs: 0 };
+  }
+  if (n > MAX_TIMEOUT_MS) {
+    return {
+      timeoutMs: 0,
+      warning:
+        `settings.timeout (${n}) is above the maximum supported ${MAX_TIMEOUT_MS}ms; ` +
+        'the request was sent with no timeout',
+    };
+  }
+  // AbortSignal.timeout rejects a fractional delay outright, so truncate rather
+  // than let a `timeout: 1500.7` fail the request.
+  return { timeoutMs: Math.floor(n) };
 }
 
 /** Truncate a response body to a maximum byte length (UTF-8). */
@@ -777,6 +678,7 @@ async function executeSingleRequest(
   // applied auth-header names from the merged vars so they stay consistent.
   let authWarnings = built.warnings;
   let authHeaderNames = built.authHeaderNames ?? [];
+  let authQueryNames = built.authQueryNames ?? [];
   const name = yaml.info.name;
   const method = yaml.http.method;
 
@@ -828,6 +730,7 @@ async function executeSingleRequest(
       options = rebuilt.options;
       authWarnings = rebuilt.warnings;
       authHeaderNames = rebuilt.authHeaderNames ?? [];
+      authQueryNames = rebuilt.authQueryNames ?? [];
     }
 
     // Apply the script's req.set* mutations LAST so their precedence over
@@ -865,7 +768,10 @@ async function executeSingleRequest(
   // substituted secrets and is what we actually fetch; `shownUrl` is the
   // redacted form used everywhere a URL crosses back to the caller — results
   // and error messages.
-  const shownUrl = redactUrl(url);
+  // authQueryNames carries the parameter name a query-placed credential was
+  // written under, which redactUrl's built-in list cannot know: the collection
+  // chooses that name.
+  const shownUrl = redactUrl(url, authQueryNames);
 
   // A failing pre-request script must HALT the request: the HTTP
   // call must not fire. Return a failed result carrying the script error before
@@ -900,12 +806,8 @@ async function executeSingleRequest(
     };
   }
 
-  // timeout: 0 means "no timeout" in Bruno; omit signal entirely
-  const timeout = yaml.settings?.timeout ?? 30000;
+  const { timeoutMs, warning: timeoutWarning } = resolveTimeout(yaml.settings?.timeout);
   const fetchOpts: RequestInit = { ...options, redirect: 'manual' as RequestRedirect };
-  if (timeout > 0) {
-    fetchOpts.signal = AbortSignal.timeout(timeout);
-  }
 
   // Build a custom dispatcher for TLS/proxy settings and, above all, to pin the
   // addresses validateUrl just approved. The target host gates the operator
@@ -952,7 +854,14 @@ async function executeSingleRequest(
   const maxRedirects = yaml.settings?.maxRedirects ?? 10;
 
   try {
+    // Built inside the try on purpose. AbortSignal.timeout throws synchronously
+    // for a delay it cannot represent, and resolveTimeout above cannot rule out
+    // every future platform limit; a throw here has to surface as this request's
+    // error, not as a rejection escaping the whole run.
     let currentOpts = fetchOpts;
+    if (timeoutMs > 0) {
+      currentOpts = { ...fetchOpts, signal: AbortSignal.timeout(timeoutMs) };
+    }
     let response = await fetchFn(url, currentOpts);
     let currentUrl = url;
     let redirectCount = 0;
@@ -979,7 +888,9 @@ async function executeSingleRequest(
           status: 0,
           duration_ms: Date.now() - startTime,
           tests: [],
-          error: `Redirect to ${redactUrl(redirectUrl)} blocked: ${redirectCheck.reason}`,
+          error:
+            `Redirect to ${redactUrl(redirectUrl, authQueryNames)} blocked: ` +
+            redirectCheck.reason,
         };
       }
 
@@ -1052,6 +963,7 @@ async function executeSingleRequest(
 
     let tests: TestResult[] = [];
     let scriptWarnings: string[] | undefined;
+    let droppedAssertions: string | undefined;
     const testScript = getAfterResponseScript(yaml);
     // Assertions the author switched off are dropped here rather than carried
     // with a flag, so nothing downstream can evaluate one or report it.
@@ -1089,6 +1001,17 @@ async function executeSingleRequest(
         scriptWarnings = scriptResult.warnings;
       }
 
+      // An enabled assertion always yields one result. Handing the sandbox N of
+      // them and getting nothing back therefore means the evaluation was lost
+      // somewhere between here and the result, and the caller must not be told
+      // the request was fine: with no results to fail, the request would
+      // otherwise be counted as passed precisely because nothing was checked.
+      if (assertions.length > 0 && tests.length === 0) {
+        droppedAssertions =
+          `${assertions.length} declared assertion(s) produced no result; ` +
+          'they were not evaluated, so this request was not verified';
+      }
+
       // Feed extracted variables into the store for cross-request propagation
       if (variableStore) {
         for (const [k, v] of Object.entries(scriptResult.variables)) {
@@ -1097,7 +1020,11 @@ async function executeSingleRequest(
       }
     }
 
-    const combinedWarnings = [...(authWarnings ?? []), ...(scriptWarnings ?? [])];
+    const combinedWarnings = [
+      ...(authWarnings ?? []),
+      ...(timeoutWarning ? [timeoutWarning] : []),
+      ...(scriptWarnings ?? []),
+    ];
     const result: RequestExecutionResult = {
       name,
       method,
@@ -1106,7 +1033,9 @@ async function executeSingleRequest(
       duration_ms: durationMs,
       tests,
       ...(combinedWarnings.length > 0 ? { warnings: combinedWarnings } : {}),
-      error: preScriptError,
+      // preScriptError first: a pre-request failure is the earlier and more
+      // specific cause, and it is also why the assertions never ran.
+      error: preScriptError ?? droppedAssertions,
     };
 
     if (bodyCapture?.includeResponseBody) {
@@ -1128,7 +1057,7 @@ async function executeSingleRequest(
       status: 0,
       duration_ms: durationMs,
       tests: [],
-      error: describeNetworkError(error, { url: shownUrl, timeoutMs: timeout, elapsedMs: durationMs }),
+      error: describeNetworkError(error, { url: shownUrl, timeoutMs, elapsedMs: durationMs }),
     };
   } finally {
     // The response body is fully materialised by wrapFetchResponse above, so
@@ -1150,9 +1079,14 @@ export class RequestExecutor {
       maxResponseBodyBytes: options?.maxResponseBodyBytes ?? DEFAULT_MAX_RESPONSE_BODY_BYTES,
     };
 
-    // In-process by default (the test suite runs without forking); server.ts
-    // injects the forking runner so production executes scripts behind a
-    // process boundary.
+    // The default runs collection scripts IN THIS PROCESS, with no sandbox
+    // boundary. That is a deliberate choice for the test suite, which would
+    // otherwise fork a child per script, and it is safe only because a caller
+    // reaching this function directly already controls the process. Every
+    // production entry point must inject the forking runner instead — server.ts
+    // does — because there a script comes from a collection the operator did not
+    // write. A new caller that omits scriptRunner silently opts out of that
+    // boundary, so the omission is the thing to check in review.
     const scriptRunner = options?.scriptRunner ?? TestRunner;
 
     let vars = new Map<string, string>();
@@ -1276,19 +1210,56 @@ export class RequestExecutor {
     }
 
     const totalDuration = Date.now() - startTime;
-    const failed = results.filter(
-      r => r.error !== undefined || r.tests.some(t => t.status === 'fail'),
-    ).length;
 
     return {
-      summary: {
-        total: results.length,
-        passed: results.length - failed,
-        failed,
-        duration_ms: totalDuration,
-      },
+      summary: summarise(results, totalDuration),
       results,
       parseErrors,
     };
   }
+}
+
+/**
+ * Reduce per-request results to the run summary.
+ *
+ * Both the request-level and the test-level counts are tallied from the results
+ * themselves. `passed` in particular is COUNTED, not derived as
+ * `total - failed`: that subtraction made a run in which nothing was ever
+ * evaluated arithmetically identical to a run in which everything passed, so a
+ * dropped script or an inert feature left the summary green. `tests.total` and
+ * `requestsWithoutTests` are what tell those two runs apart.
+ */
+function summarise(
+  results: RequestExecutionResult[],
+  durationMs: number,
+): CollectionRunSummary {
+  let passed = 0;
+  let failed = 0;
+  const tests = { total: 0, passed: 0, failed: 0 };
+  let requestsWithoutTests = 0;
+
+  for (const r of results) {
+    let requestFailed = r.error !== undefined;
+    for (const t of r.tests) {
+      tests.total++;
+      if (t.status === 'fail') {
+        tests.failed++;
+        requestFailed = true;
+      } else {
+        tests.passed++;
+      }
+    }
+    if (r.tests.length === 0) requestsWithoutTests++;
+    if (requestFailed) failed++;
+    else passed++;
+  }
+
+  return {
+    total: results.length,
+    passed,
+    failed,
+    duration_ms: durationMs,
+    tests,
+    requestsWithoutTests,
+  };
 }

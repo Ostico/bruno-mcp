@@ -5,7 +5,49 @@
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS';
 
+/**
+ * Every auth mode this tool can READ, WRITE and REPRESENT.
+ *
+ * Membership here is not a claim that the executor can perform the scheme —
+ * `AppliedAuthType` below is the set it actually puts on the wire. The
+ * difference matters because a mode that parses and round-trips faithfully but
+ * never authenticates looks identical to a working one until the server answers
+ * 401, so the split is written down rather than left to be discovered.
+ */
 export type AuthType = 'none' | 'bearer' | 'basic' | 'oauth2' | 'api-key' | 'digest';
+
+/**
+ * Auth modes the executor applies to the outgoing request itself.
+ *
+ * `bearer` and `basic` become an Authorization header; `api-key` becomes either a
+ * caller-named header or a query parameter, per its placement.
+ */
+export type AppliedAuthType = Extract<AuthType, 'bearer' | 'basic' | 'api-key'>;
+
+/**
+ * Auth modes `AuthType` accepts that the executor CANNOT perform.
+ *
+ * Both need a multi-step exchange with the server — an OAuth2 token grant, a
+ * digest challenge/response — that this tool does not run. A request configured
+ * with one of these is sent with NO credential and carries a warning saying so,
+ * rather than appearing to be authenticated. Their nested configuration is also
+ * currently dropped on write, so a round-trip does not preserve them.
+ */
+export type UnappliedAuthType = Extract<AuthType, 'oauth2' | 'digest'>;
+
+/**
+ * Compile-time proof that every AuthType member is classified as applied,
+ * unapplied, or `none`.
+ *
+ * This is what keeps the split honest. Adding a mode to AuthType without
+ * deciding whether the executor can perform it makes this alias resolve to
+ * `never` and fail to type-check, so the next person cannot quietly widen the
+ * promise the way `api-key`, `oauth2` and `digest` were widened before.
+ */
+type _EveryAuthTypeIsClassified =
+  AuthType extends AppliedAuthType | UnappliedAuthType | 'none' ? true : never;
+const _authTypesAreClassified: _EveryAuthTypeIsClassified = true;
+void _authTypesAreClassified;
 
 /**
  * An auth mode as it appears in a `.bru` file on disk.
@@ -744,15 +786,25 @@ export interface EnvVariable {
   name: string;
   value?: string | number | boolean;
   disabled?: boolean;
-  /** Whether the .bru `secret` flag is set on this variable. Preserved across
-   * parse/generate/merge so an edit does not downgrade a secret var to
-   * plaintext. */
+  /** Whether the variable is a secret. In BOTH on-disk formats a secret's
+   * VALUE is never persisted (.bru lists the bare name in `vars:secret [...]`,
+   * .yml writes `secret: true` with no `value` key) — the value lives in
+   * Bruno's secret store. Preserved across parse/generate/merge so an edit
+   * does not downgrade a secret var to plaintext. */
   secret?: boolean;
+  /** Keys present on this variable in the file that the fields above do not
+   * model (.yml `type`, `description`). Carried verbatim so a
+   * read-modify-write does not delete them. Never holds a modelled key. */
+  extra?: Record<string, unknown>;
 }
 
 export interface EnvFile {
   name?: string;
   variables?: EnvVariable[];
+  /** Top-level keys present in the file that the fields above do not model
+   * (`color`, `externalSecrets`). Carried verbatim so a read-modify-write does
+   * not delete them. Never holds `name` or `variables`. */
+  extra?: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -809,11 +861,40 @@ export interface RequestExecutionResult {
   response_content_type?: string;
 }
 
-export interface CollectionRunSummary {
+/**
+ * Test/assertion results actually registered by a run, counted at TEST level.
+ *
+ * This exists because the request-level counts alone cannot express "nothing
+ * was verified". A run of five requests whose scripts were all silently dropped
+ * reports the same `total`/`passed`/`failed` as a run in which every assertion
+ * passed, so a dropped-script bug leaves the summary green. `total: 0` is the
+ * distinguishing signal.
+ */
+export interface TestLevelCounts {
   total: number;
   passed: number;
   failed: number;
+}
+
+export interface CollectionRunSummary {
+  /** Requests executed. */
+  total: number;
+  /**
+   * Requests that finished with no error and no failing test. Counted by
+   * predicate, never derived as `total - failed`: the subtraction is what let a
+   * run that evaluated nothing present as a run in which everything passed.
+   */
+  passed: number;
+  /** Requests that errored or registered at least one failing test. */
+  failed: number;
   duration_ms: number;
+  /** Test-level counts across the run. */
+  tests: TestLevelCounts;
+  /**
+   * Requests that registered no test result whatsoever. Read alongside
+   * `tests.total` to tell "verified and green" from "never verified".
+   */
+  requestsWithoutTests: number;
 }
 
 export interface CollectionRunResult {
@@ -829,7 +910,10 @@ export type BrunoCollectionConfig = Omit<BrunoCollection, 'type'> & {
 
 export type HttpRequestMethod = Extract<HttpMethod, 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH'>;
 
-export type AuthenticationMethod = Extract<AuthType, 'bearer' | 'basic' | 'oauth2' | 'api-key'>;
+// `AuthenticationMethod` used to live here, listing bearer/basic/oauth2/api-key
+// as the "authentication methods". Nothing imported it and it was wrong anyway —
+// oauth2 is never applied. AppliedAuthType / UnappliedAuthType, declared beside
+// AuthType, carry that distinction correctly and are used by the executor.
 
 // ---------------------------------------------------------------------------
 // Path validation types
