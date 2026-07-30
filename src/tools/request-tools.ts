@@ -6,7 +6,7 @@
 
 import { z } from 'zod';
 import path from 'path';
-import { unlink } from 'node:fs/promises';
+import { readFile, unlink } from 'node:fs/promises';
 import { findCollectionRoot, detectFormat } from '../bruno/format-detector.js';
 import {
   CreateRequestInput,
@@ -14,6 +14,8 @@ import {
   AuthType,
   BodyType,
 } from '../bruno/types.js';
+import { createReader } from '../bruno/format-factory.js';
+import { toRequestView } from '../bruno/request-view.js';
 import { validateToolPath, resolveRequestFile } from './tool-path.js';
 import { withPathLock } from '../bruno/path-mutex.js';
 import { topologicalSort } from './topological-sort.js';
@@ -553,6 +555,53 @@ export function registerListRequestsTool(ctx: ToolContext): void {
             {
               type: 'text',
               text: `Error listing requests: ${error instanceof Error ? error.message : 'Unknown error'}`
+            }
+          ],
+          isError: true
+        };
+      }
+    }
+  );
+}
+
+export function registerReadRequestTool(ctx: ToolContext): void {
+  ctx.server.registerTool(
+    'read_request',
+    {
+      title: 'Read Bruno Request',
+      description: 'Read a single request file back as structured JSON: method, url, headers, query and path params, body, auth mode, scripts, assertions, vars, settings and docs. Works on both .bru and .yml and returns the same shape for each, so the on-disk format stays invisible. Use this before modify_request to see current state, and after create_request to confirm what was written. A "notes" array reports anything the file declares that the runner will not act on.',
+      inputSchema: {
+        filePath: z.string().min(1, 'File path is required')
+          .describe('Absolute path to the .bru or .yml request file. Use the path returned by create_request or list_requests rather than rebuilding it: request filenames are lowercased on write.'),
+      },
+    },
+    async (args) => {
+      try {
+        const resolved = await resolveRequestFile(args.filePath, 'filePath');
+        if (!resolved.ok) {
+          return {
+            content: [{ type: 'text', text: resolved.message }],
+            isError: true,
+          };
+        }
+
+        // Deliberately unlocked. Writes land through atomic-write, so a reader
+        // sees either the old file or the new one and never a partial one;
+        // taking the path lock here would make a read wait behind a write for
+        // no gain in what it can observe.
+        const content = await readFile(args.filePath, 'utf-8');
+        const parsed = createReader(resolved.format).parseRequest(content);
+        const view = toRequestView(parsed, resolved.format, args.filePath);
+
+        return {
+          content: [{ type: 'text', text: JSON.stringify(view, null, 2) }],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `❌ Error reading request: ${error instanceof Error ? error.message : 'Unknown error'}`
             }
           ],
           isError: true

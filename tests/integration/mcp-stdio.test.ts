@@ -54,6 +54,8 @@ const EXPECTED_TOOLS = [
   'list_requests',
   'get_collection_stats',
   'run_collection',
+  'read_request',
+  'read_environment',
 ];
 
 interface Session {

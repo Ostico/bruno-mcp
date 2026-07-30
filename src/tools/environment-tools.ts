@@ -8,6 +8,7 @@ import { z } from 'zod';
 import {
   CreateEnvironmentInput,
 } from '../bruno/types.js';
+import { toEnvironmentView } from '../bruno/request-view.js';
 import { validateToolPath } from './tool-path.js';
 import type { ToolContext } from './context.js';
 
@@ -269,6 +270,65 @@ export function registerRemoveEnvironmentVariableTool(ctx: ToolContext): void {
             {
               type: 'text',
               text: `❌ Error removing variable: ${error instanceof Error ? error.message : 'Unknown error'}`
+            }
+          ],
+          isError: true
+        };
+      }
+    }
+  );
+}
+
+export function registerReadEnvironmentTool(ctx: ToolContext): void {
+  ctx.server.registerTool(
+    'read_environment',
+    {
+      title: 'Read Bruno Environment',
+      description: 'Read an environment back as structured JSON: every variable with its value, plus its disabled and secret flags. Omit "name" to list the collection\'s environments instead. Secret variables are returned by name only — Bruno stores no value for a secret in either file format, so there is none to return.',
+      inputSchema: {
+        collectionPath: z.string().min(1, 'Collection path is required')
+          .describe('Absolute path to the collection directory.'),
+        name: z.string().min(1).optional()
+          .describe('Environment name, without extension. Omit to list the available environment names.'),
+      },
+    },
+    async (args) => {
+      try {
+        const pathCheck = validateToolPath(args.collectionPath);
+        if (!pathCheck.valid) {
+          return {
+            content: [{ type: 'text', text: `Invalid collectionPath: ${pathCheck.reason}` }],
+            isError: true,
+          };
+        }
+
+        if (!args.name) {
+          const environments = await ctx.environmentManager.listEnvironments(args.collectionPath);
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({ collectionPath: args.collectionPath, environments }, null, 2)
+              }
+            ],
+          };
+        }
+
+        const envFile = await ctx.environmentManager.loadEnvironmentFile(
+          args.collectionPath,
+          args.name,
+        );
+        const view = toEnvironmentView(envFile, args.collectionPath, args.name);
+
+        return {
+          content: [{ type: 'text', text: JSON.stringify(view, null, 2) }],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `❌ Error reading environment: ${error instanceof Error ? error.message : 'Unknown error'}`
             }
           ],
           isError: true
