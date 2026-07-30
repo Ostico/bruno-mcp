@@ -394,6 +394,78 @@ describe('declared assertions — operand interpolation', () => {
   });
 });
 
+describe('declared assertions — the operand is split before it is interpolated', () => {
+  // Bruno strips the `/.../` delimiters and splits the comma list on the operand
+  // string the AUTHOR wrote, and only then interpolates each element. Doing it
+  // the other way round lets a variable's own text be re-read as list
+  // punctuation, as brackets, or as regex delimiters — and every one of those
+  // misreadings turns an assertion Bruno FAILS into a pass, which is the one
+  // outcome a collection runner must never invent.
+
+  it('does not split a list on a comma that came from a variable', () => {
+    // Upstream sees the single element `{{csv}}`, so the whole "200,404" text is
+    // one candidate value and a status of 200 is not among them.
+    const { results } = runTestJob('', response(), 5000, { csv: '200,404' }, [
+      { name: 'res.status', value: 'in {{csv}}' },
+    ]);
+    expect(results[0].status).toBe('fail');
+  });
+
+  it('splits only the author-written commas of a mixed list', () => {
+    // The literal comma is a separator and the variable's own comma is not, so
+    // this is two elements — "404" and the whole "500,200" text — not three.
+    const { results } = runTestJob('', response(), 5000, { b: '500,200' }, [
+      { name: 'res.status', value: 'in 404,{{b}}' },
+    ]);
+    expect(results[0].status).toBe('fail');
+  });
+
+  it('does not read brackets that came from a variable as list brackets', () => {
+    // The bracket strip applies to `in [a, b]` as written. A variable holding
+    // "[200,404]" is one value whose text happens to start with a bracket.
+    const { results } = runTestJob('', response(), 5000, { arr: '[200,404]' }, [
+      { name: 'res.status', value: 'in {{arr}}' },
+    ]);
+    expect(results[0].status).toBe('fail');
+  });
+
+  it('does not split a range on a comma that came from a variable', () => {
+    // One element means one bound: upstream destructures [lhs, rhs] and hands
+    // chai an undefined upper bound, which it rejects as a non-number.
+    const { results } = runTestJob('', response(), 5000, { range: '200,299' }, [
+      { name: 'res.status', value: 'between {{range}}' },
+    ]);
+    expect(results[0].status).toBe('fail');
+  });
+
+  it('does not strip regex delimiters that came from a variable', () => {
+    // The worst case: stripping after interpolation rewrites a regular
+    // expression the VARIABLE supplied rather than one the author wrote. A value
+    // of "/^2/" is the four-character pattern including its slashes, which
+    // cannot match "200".
+    const { results } = runTestJob('', response(), 5000, { pattern: '/^2/' }, [
+      { name: 'res.status', value: 'matches {{pattern}}' },
+    ]);
+    expect(results[0].status).toBe('fail');
+  });
+
+  it('still strips regex delimiters the author wrote around a variable', () => {
+    // The other side of the same ordering: the delimiters here ARE the author's,
+    // so they come off and the variable supplies only the pattern body.
+    const { results } = runTestJob('', response(), 5000, { body: '^2' }, [
+      { name: 'res.status', value: 'matches /{{body}}/' },
+    ]);
+    expect(results[0].status).toBe('pass');
+  });
+
+  it('still splits a list on the commas the author wrote', () => {
+    const { results } = runTestJob('', response(), 5000, { ok: 404, alt: 200 }, [
+      { name: 'res.status', value: 'in {{ok}}, {{alt}}' },
+    ]);
+    expect(results[0].status).toBe('pass');
+  });
+});
+
 describe('declared assertions — order relative to the post-response script', () => {
   // Bruno's bruno-cli finishes the post-response script and only then calls
   // runAssertions, so an assertion can observe what the script wrote.

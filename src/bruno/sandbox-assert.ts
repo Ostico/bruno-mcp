@@ -96,26 +96,32 @@ export function planAssertion(
 ): AssertionPlan {
   const { operator, operand } = parseAssertionOperator(assertion.value);
   const chain = chainForOperator(operator);
-  const resolved = interpolateOperand(operand, variables);
+  const resolve = (raw: string): string => interpolateOperand(raw, variables);
 
+  // Split and strip the operand as the AUTHOR wrote it, then interpolate each
+  // resulting element. Bruno's order, and not interchangeable with resolving
+  // first: a variable holding "200,404" would become two list elements, one
+  // holding "[a,b]" would have its brackets eaten, and one holding "/^2/" would
+  // have its slashes read as regex delimiters and stripped. Each of those
+  // rewrites the check into a weaker one that passes where Bruno fails.
   let operands: readonly string[];
   switch (chain.operandKind) {
     case 'none':
       operands = [];
       break;
     case 'list':
-      operands = splitOperandList(resolved);
+      operands = splitOperandList(operand).map(resolve);
       break;
     case 'range':
       // Not splitOperandList: the bracket strip is Bruno's `in`/`notIn` branch
       // only, and applying it here turns a Bruno failure into a pass.
-      operands = splitOperandRange(resolved);
+      operands = splitOperandRange(operand).map(resolve);
       break;
     case 'regexSource':
-      operands = [stripRegexDelimiters(resolved)];
+      operands = [resolve(stripRegexDelimiters(operand))];
       break;
     default:
-      operands = [resolved];
+      operands = [resolve(operand)];
   }
 
   return {
