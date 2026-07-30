@@ -258,10 +258,19 @@ export interface BruAssertion {
   enabled: boolean;
 }
 
-/** The request-level `settings` block. */
+/**
+ * The request-level `settings` block.
+ *
+ * These are the keys Bruno's own .bru writer emits. `keepAliveInterval` is
+ * websocket-only and `timeout: 'inherit'` is not modelled, so neither is
+ * authorable here yet.
+ */
 export interface BruRequestSettings {
   encodeUrl?: boolean;
   timeout?: number;
+  /** The executor honours this; leaving it out of the model dropped it. */
+  followRedirects?: boolean;
+  maxRedirects?: number;
 }
 
 /** A `vars:pre-request` / `vars:post-response` entry. */
@@ -569,8 +578,13 @@ export interface YamlParam {
   disabled?: boolean;
 }
 
+/**
+ * A `runtime.scripts` entry. Bruno's .yml dialect has three slots, not two:
+ * 'tests' is its own entry type and is read back into the request's `tests`
+ * block, whereas 'after-response' becomes `script.res`.
+ */
 export interface YamlScript {
-  type: 'before-request' | 'after-response';
+  type: 'before-request' | 'after-response' | 'tests';
   code: string;
 }
 
