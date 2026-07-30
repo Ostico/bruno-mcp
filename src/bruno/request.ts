@@ -561,7 +561,10 @@ export class RequestBuilder {
             yamlReq.http.body = { type: updates.body.type, data: updates.body.content };
           }
         }
-        if (updates.auth && updates.auth.type !== 'none') {
+        if (updates.auth?.type === 'inherit') {
+          // The bare token, not a mapping: see the same branch on the create path.
+          yamlReq.http.auth = 'inherit';
+        } else if (updates.auth && updates.auth.type !== 'none') {
           const authObj: Record<string, unknown> = { type: updates.auth.type };
           if (updates.auth.config) Object.assign(authObj, updates.auth.config);
           yamlReq.http.auth = authObj as YamlAuth;
@@ -732,7 +735,12 @@ export class RequestBuilder {
         url: `${baseUrl}/auth/profile`,
         auth: authType !== 'none' ? {
           type: authType,
-          config: authType === 'bearer' ? { token: '{{token}}' } : { username: '{{username}}', password: '{{password}}' }
+          // inherit takes no credential of its own; the basic-style fallback below
+          // would attach a username and password to a mode that has nowhere to put
+          // them, describing the request as something it is not.
+          config: authType === 'inherit' ? {}
+            : authType === 'bearer' ? { token: '{{token}}' }
+              : { username: '{{username}}', password: '{{password}}' }
         } as { type: AuthType; config: Record<string, string> } : undefined,
         sequence: 2
       },
@@ -757,7 +765,12 @@ export class RequestBuilder {
         url: `${baseUrl}/auth/logout`,
         auth: authType !== 'none' ? {
           type: authType,
-          config: authType === 'bearer' ? { token: '{{token}}' } : { username: '{{username}}', password: '{{password}}' }
+          // inherit takes no credential of its own; the basic-style fallback below
+          // would attach a username and password to a mode that has nowhere to put
+          // them, describing the request as something it is not.
+          config: authType === 'inherit' ? {}
+            : authType === 'bearer' ? { token: '{{token}}' }
+              : { username: '{{username}}', password: '{{password}}' }
         } as { type: AuthType; config: Record<string, string> } : undefined,
         sequence: 4
       }
@@ -832,8 +845,12 @@ export class RequestBuilder {
       bruFile.body = toBruBody(input.body);
     }
 
-    // Add authentication if provided
-    if (input.auth && input.auth.type !== 'none') {
+    // Add authentication if provided. inherit is deliberately absent: it is
+    // declared by the `auth: inherit` line in the http block above, and has no
+    // local credential to put in a block of its own. The generator would also
+    // drop a config-less block on its way out, so this is the intent stated where
+    // the decision is rather than left to fall out of an emptiness check.
+    if (input.auth && input.auth.type !== 'none' && input.auth.type !== 'inherit') {
       bruFile.auth = {
         type: input.auth.type
       };
@@ -924,7 +941,12 @@ export class RequestBuilder {
     }
 
     // Add auth
-    if (input.auth && input.auth.type !== 'none') {
+    if (input.auth?.type === 'inherit') {
+      // Bruno writes inherit as the bare token, not as a mapping with a type key:
+      // there is no local credential to carry, only the instruction to look up the
+      // tree. A `{ type: inherit }` mapping is not what its reader matches.
+      yamlRequest.http.auth = 'inherit';
+    } else if (input.auth && input.auth.type !== 'none') {
       const authObj: Record<string, unknown> = { type: toBrunoAuthMode(input.auth.type) };
       if (input.auth.type === 'bearer' && input.auth.config.token) {
         authObj.token = input.auth.config.token;
@@ -947,14 +969,23 @@ export class RequestBuilder {
   }
 
   /**
-   * Get file path for request
+   * The declared auth mode of a parsed `.yml` request.
+   *
+   * `inherit` is reported as itself, not folded into `none`. The two are
+   * different instructions — `none` sends no credential, `inherit` sends whatever
+   * the enclosing folder or collection declares — so collapsing them left a
+   * caller unable to tell an inheriting request from an unauthenticated one, and
+   * unable to write back the mode it had just read.
    */
   private resolveAuthType(auth: YamlAuth | undefined): AuthType {
     if (!auth) return 'none';
-    if (typeof auth === 'string') return auth === 'inherit' ? 'none' : auth as AuthType;
+    if (typeof auth === 'string') return auth as AuthType;
     return (auth.type as AuthType) ?? 'none';
   }
 
+  /**
+   * Get file path for request
+   */
   private getRequestFilePath(input: CreateRequestInput, extension: string): string {
     const fileName = this.sanitizeFileName(input.name) + extension;
 
@@ -1062,7 +1093,13 @@ export class RequestBuilder {
       updated.body = toBruBody(updates.body);
     }
 
-    if (updates.auth) {
+    if (updates.auth?.type === 'inherit') {
+      // Switching to inherit leaves no local credential, so the block goes with
+      // the mode instead of being replaced by a typed-but-empty one. A file that
+      // says inherit in the http block must not carry a credential underneath it.
+      updated.http.auth = 'inherit';
+      delete updated.auth;
+    } else if (updates.auth) {
       updated.http.auth = toBrunoAuthMode(updates.auth.type);
       updated.auth = {
         type: updates.auth.type

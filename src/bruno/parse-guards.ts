@@ -13,7 +13,7 @@
  *
  * There is deliberately no auth guard, and no body guard for the .bru path: a
  * .bru file carries Bruno's own vocabulary (`multipartForm`, `formUrlEncoded`,
- * `sparql`, `inherit`), which is a different set from BodyType/AuthType.
+ * `sparql`, `awsv4`, `ntlm`), which is a different set from BodyType/AuthType.
  * Validating those against these unions was tried and rejected six suites'
  * worth of real fixtures. That mismodelling is left alone here: correcting it
  * means retyping BruHttpRequest.body/auth to Bruno's own vocabulary and

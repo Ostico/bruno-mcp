@@ -295,7 +295,10 @@ describe('RequestBuilder', () => {
       expect(result.docs).toBe('Some docs');
     });
 
-    it('should load .yml with auth string inherit', async () => {
+    it('should report .yml auth string inherit as inherit, not none', async () => {
+      // `none` and `inherit` are different instructions to Bruno — send nothing
+      // versus send whatever the folder or collection declares — so a reader that
+      // answers `none` here cannot write back the request it just read.
       parseYamlRequest.mockReturnValue({
         info: { name: 'Test', type: 'http' },
         http: { method: 'GET', url: 'https://example.com', auth: 'inherit' },
@@ -303,7 +306,7 @@ describe('RequestBuilder', () => {
       fs.readFile.mockResolvedValue('');
 
       const result = await builder.loadRequest('/col/test.yml');
-      expect(result.http.auth).toBe('none');
+      expect(result.http.auth).toBe('inherit');
     });
 
     it('should load .yml with no auth', async () => {

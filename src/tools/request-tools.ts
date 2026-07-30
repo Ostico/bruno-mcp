@@ -42,7 +42,8 @@ export function registerCreateRequestTool(ctx: ToolContext): void {
           })).optional()
         }).optional(),
         auth: z.object({
-          type: z.enum(['none', 'bearer', 'basic', 'oauth2', 'api-key', 'digest']),
+          type: z.enum(['none', 'bearer', 'basic', 'oauth2', 'api-key', 'digest', 'inherit'])
+            .describe('Auth mode. "inherit" defers to the folder or collection auth block and takes no config; pass {} for it.'),
           config: z.record(z.string())
         }).optional(),
         query: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
@@ -150,7 +151,8 @@ export function registerModifyRequestTool(ctx: ToolContext): void {
           })).optional()
         }).optional(),
         auth: z.object({
-          type: z.enum(['none', 'bearer', 'basic', 'oauth2', 'api-key', 'digest']),
+          type: z.enum(['none', 'bearer', 'basic', 'oauth2', 'api-key', 'digest', 'inherit'])
+            .describe('Auth mode. "inherit" defers to the folder or collection auth block and takes no config; pass {} for it.'),
           config: z.record(z.string())
         }).optional(),
         query: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),

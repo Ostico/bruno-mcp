@@ -126,7 +126,7 @@ export function bruFileToYamlRequest(bru: BruFile): YamlRequest {
       headers,
       params,
       body,
-      auth: bruAuthToYamlAuth(bru.auth),
+      auth: bruAuthToYamlAuth(bru.auth, bru.http.auth),
     },
     runtime: scripts.scripts.length > 0 ? scripts : undefined,
     // buildFetchOptions reads the timeout, redirect policy, TLS options and proxy
@@ -152,7 +152,18 @@ export function bruFileToYamlRequest(bru: BruFile): YamlRequest {
  * authored in a .bru file was dropped here — before the request even reached
  * buildFetchOptions.
  */
-export function bruAuthToYamlAuth(auth: BruFile['auth']): YamlAuth | undefined {
+export function bruAuthToYamlAuth(
+  auth: BruFile['auth'],
+  mode?: BruFile['http']['auth']
+): YamlAuth | undefined {
+  // `inherit` is declared in the http block and has no auth block of its own —
+  // there is no local credential to carry, only the instruction to look up the
+  // tree. Reading the block alone therefore made it indistinguishable from no
+  // auth at all, so a .bru request set to inherit was sent with no credential and
+  // none of the warning the .yml path emits for exactly the same request.
+  if (mode === 'inherit') {
+    return 'inherit';
+  }
   if (!auth || auth.type === 'none') {
     return undefined;
   }
