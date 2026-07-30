@@ -29,6 +29,9 @@ claims needed correcting against current code; see the notes under H3 and L3.
 - **CONFIRMED** — reproduced, or traced through source at the pinned commit.
 - **SUSPECTED** — read but not exercised.
 - Severity is user impact, not effort. A silent wrong result outranks a crash.
+- Severity and work order are **separate axes**. The H/M/L labels are stable identifiers — cite them, do not
+  renumber them. What to do next is [Order of work](#order-of-work) at the end, which ranks by how much each
+  defect blocks an agent. The two lists deliberately disagree.
 
 ---
 
@@ -428,20 +431,70 @@ right, recorded so it is not re-derived.
   are separate code, and closing one silently leaves the hole open. See H1, M4, and the note under M5. A test
   that passes because our own parser tolerates our own malformed output proves nothing — read the bytes.
 
-## Suggested order of work
+## Order of work
 
-1. **H1 + L2** — one call site plus the read-path mirror. Silent wrong-body is the worst failure this tool can
-   have, and the misleading docblock actively hides it.
-2. **M5 + M6** — `read_request` and `read_environment`. Small, and it is what makes every other defect
-   *visible* to the user who hits it. H1 went unnoticed for exactly this reason.
-3. **H3** — a `variables` input on `run_collection`. Small, and it stops the tool pushing users to commit
-   credentials into the collection repository.
-4. **M1** — name the file and the reason in `parseErrors`. Cheap, and it turns a dead end into a fix.
-5. **M4** — `lineWidth: 0` **and** block-literal for scripts. Small, removes a silent code-eating hazard, and
-   closes a Bruno byte-fidelity gap at the same time.
-6. **H2 + L1** — an opt-in cookie jar, exposing `getSetCookies()` alongside. Larger, but it is the difference
-   between "can test a login" and "can test a login if you already know the internals".
-7. **M3** — read collection and folder root files. Unblocks M2's folder ordering and makes `auth: inherit`
-   resolvable. Start with the warn-on-dropped-settings step if the full read is too large for one change.
-8. **M2** — folder-scoped ordering, or an honest description. Do not ship the current description unchanged.
-9. **M7**, then the remaining **L** items, then the test lint/typecheck debt in its own PR.
+**Ordered by how much each defect blocks an agent, not by severity.** The two rankings disagree, and this one
+wins. The primary consumer of this server is an agent reading tool schemas, and the defects that hurt it most
+are the ones it cannot see: output silently corrupted, or a failure it has no way to diagnose. A missing
+feature an agent can detect is less costly than a wrong result it cannot.
+
+Severity labels on the findings above are unchanged and still mean user impact. Use them to judge a single
+defect; use this list to decide what to do next.
+
+### Tier 1 — agent blockers
+
+What an agent needs and does not have. Direct field feedback first.
+
+1. **M5 + M6** — `read_request` and `read_environment`. Reported twice by users. The agent must leave the MCP
+   boundary and `cat` files to see what it just wrote. This is also the meta-blocker: H1 survived precisely
+   because there was no in-protocol way to look at the generated `data:` scalar. Fixing this makes every
+   remaining defect on this list *visible* to whoever hits it, so it goes first even though H1 is more severe.
+2. **M4** — `lineWidth: 0` **and** block-literal for script bodies. An agent writes a script with a `//`
+   comment above a statement; folded style joins the lines and comments the statement out. The agent's own
+   output is corrupted silently. Cheapest fix on the list, and it closes a Bruno byte-fidelity gap too.
+3. **H1 + L2** — the missing `else` in the body chain, the `.yml` `toFormUrlEncodedEntries` routing, and the
+   read-path mirror, in one change. The run reports a clean 2xx/4xx and the body was never sent, so
+   assertions pass for the wrong reason. Fix the orphaned docblock while in the file — it actively hides this.
+4. **M1** — name the file and the reason in `parseErrors`. A bare count is a dead end for an autonomous
+   agent: it cannot bisect, so it cannot recover. Cheap.
+5. **H2 + L1** — an opt-in cookie jar, exposing `getSetCookies()` alongside. Without it, every session-based
+   flow needs the same hand-rolled `set-cookie` relay, and the symptom of getting it wrong is an unexplained
+   403. Larger, but it is the difference between "can test a login" and "can test a login if you already know
+   the internals".
+6. **M2 (description half, now)** — the tool description promises folder-scoped `seq` ordering that does not
+   exist. An agent planning around a false guarantee is worse off than one told the limit. Correct the wording
+   in whichever PR is open; the real ordering fix needs 7.
+7. **M3** — read the collection and folder root files. A collection-wide `Authorization` or `Content-Type` is
+   the normal way to write a collection, and here it vanishes without a word, so the agent duplicates it per
+   request or gets 401s it cannot explain. Unblocks M2's real fix and makes `auth: inherit` resolvable. Start
+   with warn-on-dropped-settings if the full read is too large for one change.
+8. **L4 + L6** — `seq` defaulting to "one past the folder maximum", and recognising `.yaml`. Papercuts, one
+   PR. A Bruno collection using `.yaml` currently enumerates as empty.
+
+### Tier 2 — security
+
+Thin, and that is accurate rather than an oversight: the substantive work already landed — IPv6 transitional
+SSRF bypasses and three missing IPv4 ranges, query-param credential redaction, the sandbox semaphore leak, the
+realm-boundary escape, and plaintext environment secrets. What remains is one documentation gap and two
+posture decisions.
+
+9. **H3** — a `variables` input on `run_collection`. Also a tier-1 blocker by impact; listed here because the
+   driver is security. Any value a run needs must currently be persisted into the collection's own git
+   repository, and there is no correct on-disk place for a secret **by design**, so an in-memory path is the
+   only fix. Verify the variable resolves at the wire *and* appears in no written file.
+10. **L5** — document the allowlist caveat. Allowlisting a hostname disables the loopback and private-range
+    checks for that name permanently, including if DNS later moves it. Correct behaviour, but an operator has
+    to be told. Ride along with any PR.
+11. **Decision** — should the in-process runner stay the default for `options?.scriptRunner ?? TestRunner`?
+12. **Decision** — is `env-loader.ts` binding a secret to `''` a bug or the contract?
+
+### Tier 3 — the rest
+
+13. **M7** — request-level unknown-key passthrough.
+14. **L7** — environment authoring: secrets, and the unwired `dataType` / `disabled`.
+15. **L3** — the third auth enum at `request-tools.ts:355`. Pure drift.
+16. **L8** — the `.bru` file-body catch-all. Unreachable from the tool surface today; a live trap for the
+    next caller.
+17. **L9** — decide whether a graphql body with no query should error.
+18. **Test lint and typecheck debt**, in its own PR. The load-bearing part is not the error count — it is that
+    `tests/` is neither linted nor type-checked, so **a type-only fix has no test that can go red**.
