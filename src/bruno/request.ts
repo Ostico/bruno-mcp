@@ -13,6 +13,7 @@ import {
   BruAuth,
   YamlRequest,
   YamlHeader,
+  BruHeader,
   YamlAuth,
   BruParam,
   YamlParam,
@@ -33,7 +34,7 @@ import {
   BruAuthMode,
   BodyType
 } from './types.js';
-import { MultipartFormPart } from './types.js';
+import { MultipartFormPart, BruBody } from './types.js';
 import { detectFormat } from './format-detector.js';
 import type { CollectionFormat } from './format-detector.js';
 import { createWriter, normalizeScriptType } from './format-factory.js';
@@ -126,13 +127,69 @@ function toFormUrlEncodedEntries(
 }
 
 /**
- * The auth mode token as Bruno spells it in the method block.
+ * Build the stored body for a .bru request from what a caller supplied.
  *
- * Only api-key differs: the block is `auth:apikey`, so the mode has to be
- * `apikey` too or the two do not agree and Bruno applies no auth at all. The
+ * Two of Bruno's body modes are not plain strings, and every write path here
+ * used to treat them as one. `graphql` is stored as `{ query, variables? }`, and
+ * a bare string makes upstream's `body.graphql.query` test fail, so the block is
+ * skipped and the query text is lost while the method header still claims
+ * `body: graphql`. `file` is stored as a list of parts and upstream filters it,
+ * so a bare string throws outright. Both are translated here from `content`,
+ * which is the only field the tool surface offers for them.
+ *
+ * Create and modify both call this. They previously built the body separately
+ * and had already drifted — create handled multipart parts and modify did not —
+ * so keeping one builder is the point rather than an incidental tidy-up.
+ *
+ * Not expressible through `content` alone, and so not authorable: a graphql
+ * `variables` block, and a file body's per-part `contentType` or disabled flag.
+ * Those survive a round-trip when Bruno wrote them, but nothing here can add
+ * them.
+ */
+function toBruBody(source: NonNullable<CreateRequestInput['body']>): BruBody {
+  const body: BruBody = {
+    type: source.type,
+    content: source.content,
+  };
+
+  if (source.type === 'form-urlencoded') {
+    body.formUrlEncoded = toFormUrlEncodedEntries(source);
+  }
+
+  if (source.formData) {
+    body.formData = source.formData.map((field) => {
+      const part: MultipartFormPart = {
+        name: field.name,
+        value: field.value,
+        type: field.type || 'text',
+        enabled: true,
+      };
+      if (field.contentType) part.contentType = field.contentType;
+      return part;
+    });
+  }
+
+  if (source.type === 'graphql' && source.content) {
+    body.graphql = { query: source.content };
+  }
+
+  if (source.type === 'file' && source.content) {
+    body.file = [{ filePath: source.content }];
+  }
+
+  return body;
+}
+
+/**
+ * The auth mode token as Bruno spells it, in either file format.
+ *
+ * Only api-key differs: Bruno writes `apikey` in both the `.bru` `auth:apikey`
+ * block and the `.yml` `auth.type`, and its readers match that one spelling
+ * exactly. Emitting the hyphenated `api-key` makes Bruno match nothing and
+ * discard the whole auth block, so the request goes out unauthenticated. The
  * tool surface keeps the hyphenated name, which is only ours.
  */
-function toBruAuthMode(type: AuthType | undefined): BruAuthMode {
+function toBrunoAuthMode(type: AuthType | undefined): BruAuthMode {
   if (!type) return 'none';
   return type === 'api-key' ? 'apikey' : type;
 }
@@ -147,6 +204,84 @@ function toBruAuthMode(type: AuthType | undefined): BruAuthMode {
 function toBruApiKeyPlacement(config: Record<string, string>): 'header' | 'queryparams' {
   const raw = config.placement ?? config.in;
   return raw === 'queryparams' || raw === 'query' ? 'queryparams' : 'header';
+}
+
+/**
+ * Bruno's api-key placement as the `.yml` format spells it on disk.
+ *
+ * The two formats do NOT share this vocabulary: `.bru` stores `queryparams`
+ * while `.yml` stores `query` for the same placement. Bruno's yml writer maps
+ * its internal `queryparams` down to `query`, and its yml reader maps `query`
+ * back up again, so writing `queryparams` into a `.yml` file matches neither
+ * branch and the placement is dropped. `.yml` also names the key `placement`,
+ * not `in`.
+ */
+function toYamlApiKeyPlacement(config: Record<string, string>): 'header' | 'query' {
+  const raw = config.placement ?? config.in;
+  return raw === 'queryparams' || raw === 'query' ? 'query' : 'header';
+}
+
+/**
+ * Fold a partial name/value map into a .bru request's full header list.
+ *
+ * The generator writes headers from `headersList` whenever that list is
+ * populated and only falls back to the `headers` map when it is empty, so
+ * merging into the map alone is discarded for any request that already has at
+ * least one header. Both views have to move together.
+ *
+ * A name present in the map is set and armed, because `headers` is the
+ * enabled-only view of the request. Headers the caller did not mention keep
+ * their current value and flag. Note BruHeader spells the flag `enabled`, the
+ * opposite polarity from YamlHeader's `disabled`.
+ *
+ * Arming drops the flag rather than setting it to true, matching how the parser
+ * records state: only `enabled: false` is ever stored, and an absent flag means
+ * enabled.
+ */
+function mergeBruHeaderList(
+  existing: BruHeader[] | undefined,
+  updates: Record<string, string>,
+): BruHeader[] {
+  const merged: BruHeader[] = [...(existing ?? [])];
+  for (const [name, value] of Object.entries(updates)) {
+    const at = merged.findIndex((header) => header.name === name);
+    if (at >= 0) {
+      const { enabled: _wasEnabled, ...rest } = merged[at];
+      merged[at] = { ...rest, value };
+    } else {
+      merged.push({ name, value });
+    }
+  }
+  return merged;
+}
+
+/**
+ * Fold a partial name/value map into a .yml request's header list.
+ *
+ * Rebuilding the list from the map alone deleted every header the caller did
+ * not mention, and rebuilding each entry as a bare name/value pair cleared the
+ * `disabled` flag on the ones it did — silently re-arming a header the author
+ * had switched off, a credential header included.
+ *
+ * A name present in the map is set and armed, matching the .bru behaviour. The
+ * flag is removed rather than set to undefined, because an explicit
+ * `disabled: undefined` is still a present key and would be written out.
+ */
+function mergeYamlHeaderList(
+  existing: YamlHeader[] | undefined,
+  updates: Record<string, string>,
+): YamlHeader[] {
+  const merged: YamlHeader[] = [...(existing ?? [])];
+  for (const [name, value] of Object.entries(updates)) {
+    const at = merged.findIndex((header) => header.name === name);
+    if (at >= 0) {
+      const { disabled: _wasDisabled, ...rest } = merged[at];
+      merged[at] = { ...rest, value };
+    } else {
+      merged.push({ name, value });
+    }
+  }
+  return merged;
 }
 
 /** The mirror of replaceQueryParams: swap the path entries, keep the query ones. */
@@ -383,9 +518,7 @@ export class RequestBuilder {
         if (updates.method) yamlReq.http.method = updates.method;
         if (updates.url) yamlReq.http.url = updates.url;
         if (updates.headers) {
-          yamlReq.http.headers = Object.entries(updates.headers).map(
-            ([name, value]): YamlHeader => ({ name, value }),
-          );
+          yamlReq.http.headers = mergeYamlHeaderList(yamlReq.http.headers, updates.headers);
         }
         if (updates.body && updates.body.type !== 'none') {
           if (isMultipartBodyType(updates.body.type) && updates.body.formData) {
@@ -628,7 +761,7 @@ export class RequestBuilder {
         method: input.method,
         url: input.url,
         body: input.body?.type || 'none',
-        auth: toBruAuthMode(input.auth?.type)
+        auth: toBrunoAuthMode(input.auth?.type)
       }
     };
 
@@ -665,28 +798,7 @@ export class RequestBuilder {
 
     // Add body if provided
     if (input.body && input.body.type !== 'none') {
-      bruFile.body = {
-        type: input.body.type,
-        content: input.body.content
-      };
-
-      if (input.body.type === 'form-urlencoded') {
-        bruFile.body.formUrlEncoded = toFormUrlEncodedEntries(input.body);
-      }
-
-      // Handle form data
-      if (input.body.formData) {
-        bruFile.body.formData = input.body.formData.map(field => {
-          const part: MultipartFormPart = {
-            name: field.name,
-            value: field.value,
-            type: field.type || 'text',
-            enabled: true,
-          };
-          if (field.contentType) part.contentType = field.contentType;
-          return part;
-        });
-      }
+      bruFile.body = toBruBody(input.body);
     }
 
     // Add authentication if provided
@@ -782,7 +894,7 @@ export class RequestBuilder {
 
     // Add auth
     if (input.auth && input.auth.type !== 'none') {
-      const authObj: Record<string, unknown> = { type: input.auth.type };
+      const authObj: Record<string, unknown> = { type: toBrunoAuthMode(input.auth.type) };
       if (input.auth.type === 'bearer' && input.auth.config.token) {
         authObj.token = input.auth.config.token;
       } else if (input.auth.type === 'basic') {
@@ -791,7 +903,11 @@ export class RequestBuilder {
       } else if (input.auth.type === 'api-key') {
         if (input.auth.config.key) authObj.key = input.auth.config.key;
         if (input.auth.config.value) authObj.value = input.auth.config.value;
-        if (input.auth.config.in) authObj.in = input.auth.config.in;
+        // Bruno omits the key entirely when no placement was expressed, so only
+        // write it when the caller actually asked for one.
+        if (input.auth.config.placement ?? input.auth.config.in) {
+          authObj.placement = toYamlApiKeyPlacement(input.auth.config);
+        }
       }
       yamlRequest.http.auth = authObj as YamlAuth;
     }
@@ -888,6 +1004,7 @@ export class RequestBuilder {
 
     if (updates.headers) {
       updated.headers = { ...updated.headers, ...updates.headers };
+      updated.headersList = mergeBruHeaderList(updated.headersList, updates.headers);
     }
 
     if (updates.query) {
@@ -911,18 +1028,11 @@ export class RequestBuilder {
 
     if (updates.body) {
       updated.http.body = updates.body.type;
-      updated.body = {
-        type: updates.body.type,
-        content: updates.body.content
-      };
-
-      if (updates.body.type === 'form-urlencoded') {
-        updated.body.formUrlEncoded = toFormUrlEncodedEntries(updates.body);
-      }
+      updated.body = toBruBody(updates.body);
     }
 
     if (updates.auth) {
-      updated.http.auth = toBruAuthMode(updates.auth.type);
+      updated.http.auth = toBrunoAuthMode(updates.auth.type);
       updated.auth = {
         type: updates.auth.type
       };
