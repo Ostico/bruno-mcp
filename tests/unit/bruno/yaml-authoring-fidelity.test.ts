@@ -71,7 +71,12 @@ async function writeApiKeyRequest(
     auth: { type: 'api-key', config },
   });
   if (!created.success) throw new Error(`create failed: ${created.error}`);
-  const source = await fs.readFile(join(collectionPath, 'Keyed.yml'), 'utf-8');
+  // Read back the path the writer reports rather than rebuilding it from the
+  // request name: the writer lowercases that name, so a hardcoded `Keyed.yml`
+  // resolves on a case-insensitive filesystem and fails on a case-sensitive one.
+  const filePath = created.path;
+  if (!filePath) throw new Error('create reported success but returned no path');
+  const source = await fs.readFile(filePath, 'utf-8');
   return { source, collectionPath };
 }
 

@@ -82,7 +82,11 @@ async function create(
     body: body as any,
   });
   if (!created.success) throw new Error(`create failed: ${created.error}`);
-  const filePath = join(collectionPath, 'Bodied.bru');
+  // Read back the path the writer reports rather than rebuilding it from the
+  // request name: the writer lowercases that name, so a hardcoded `Bodied.bru`
+  // resolves on a case-insensitive filesystem and fails on a case-sensitive one.
+  const filePath = created.path;
+  if (!filePath) throw new Error('create reported success but returned no path');
   return { source: await fs.readFile(filePath, 'utf-8'), filePath, collectionPath };
 }
 
