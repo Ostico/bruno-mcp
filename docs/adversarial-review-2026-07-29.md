@@ -1,5 +1,15 @@
 # Adversarial code review — 2026-07-29
 
+> **SUPERSEDED — historical record, not the working list.**
+>
+> Open findings from this review have been merged into **[`bruno-mcp-defect-report.md`](./bruno-mcp-defect-report.md)**,
+> which is the single living defect register. Most items here are fixed; several were later **refuted** against
+> the code (notably the collection-level "four criticals" claim, which rests on a false premise — see M3 in the
+> register). Do not plan work from this document.
+>
+> It is kept because the refutations are the useful part: §9 records what this review got *wrong* and why,
+> which is worth more than re-deriving those dead ends.
+
 **Scope:** whole codebase (`src/`), not a single diff.
 **Pinned at:** `main@75b28ad`. Every line number below was read at that commit — **re-verify before acting**, the file will have moved.
 **Method:** five parallel read-only reviewers, one lens each, each with its own file slice. Every reviewer was given a prior of guilt ("a reviewer who returns *looks fine* has FAILED"), required to quote `file:line` plus a concrete failure scenario, and required to return a non-empty TRIED-BUT-SOUND list (an empty one means they did not actually try).
