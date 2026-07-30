@@ -129,6 +129,24 @@ describe('loadRequest keeps the body payload of a .yml request', () => {
     expect(bru.body?.content).toBe('{"a":1}');
   });
 
+  it('keeps a declared body type that carries no payload', async () => {
+    // `body: { type: json }` with no data is a body whose type is set but whose
+    // payload has not been written yet. The type has to survive on its own, or
+    // writing the request back would silently downgrade it to no body at all.
+    const bru = await load('empty.yml', `info:
+  name: Empty
+  type: http
+  seq: 1
+http:
+  method: post
+  url: https://example.test/empty
+  body:
+    type: json
+`);
+
+    expect(bru.body).toEqual({ type: 'json' });
+  });
+
   it('does not put a form list on the graphql field, or the reverse', async () => {
     // The payload only lands on the field its type calls for, so a caller can
     // trust the field it reads rather than having to sniff the shape.
