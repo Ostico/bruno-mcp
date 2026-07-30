@@ -14,6 +14,7 @@ import { describeNetworkError } from './network-error.js';
 import { applyParams } from './request-params.js';
 import { applyPreRequestVars } from './request-vars.js';
 import { bruFileToYamlRequest, bruAuthToYamlAuth } from './bru-to-yaml.js';
+import { isMetadataFile } from './metadata-files.js';
 import {
   redactUrl,
   stripCredentialHeaders,
@@ -79,19 +80,13 @@ interface DiscoveryResult {
   parseErrors: number;
 }
 
-const EXCLUDED_FILES = new Set([
-  'folder.yml',
-  'opencollection.yml',
-  'bruno.json',
-]);
-
 const EXCLUDED_DIRS = new Set([
   'node_modules',
   '.git',
   'environments',
 ]);
 
-async function findYmlFilesRecursive(dirPath: string, results: string[]): Promise<void> {
+async function findYmlFilesRecursive(dirPath: string, results: string[], collectionPath: string): Promise<void> {
   let entries;
   try {
     entries = await readdir(dirPath, { withFileTypes: true });
@@ -103,9 +98,9 @@ async function findYmlFilesRecursive(dirPath: string, results: string[]): Promis
     const fullPath = join(dirPath, entry.name);
 
     if (entry.isDirectory() && !EXCLUDED_DIRS.has(entry.name)) {
-      await findYmlFilesRecursive(fullPath, results);
+      await findYmlFilesRecursive(fullPath, results, collectionPath);
     } else if (entry.isFile() && (entry.name.endsWith('.yml') || entry.name.endsWith('.bru'))) {
-      if (!EXCLUDED_FILES.has(entry.name.toLowerCase())) {
+      if (!isMetadataFile(fullPath, collectionPath)) {
         results.push(fullPath);
       }
     }
@@ -114,7 +109,7 @@ async function findYmlFilesRecursive(dirPath: string, results: string[]): Promis
 
 async function discoverRequests(dirPath: string): Promise<DiscoveryResult> {
   const requestFiles: string[] = [];
-  await findYmlFilesRecursive(dirPath, requestFiles);
+  await findYmlFilesRecursive(dirPath, requestFiles, dirPath);
 
   const requests: ParsedRequest[] = [];
   let parseErrors = 0;

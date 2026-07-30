@@ -1,17 +1,12 @@
 import { promises as fs } from 'fs';
 import type { Dirent } from 'fs';
-import { join, basename, relative, dirname } from 'path';
+import { join, relative, dirname } from 'path';
 import { parse as parseYaml } from 'yaml';
 import { parseYamlRequest } from './yaml-parser.js';
 import { parseBruRequest, parseBruEnvironmentRaw } from './bru-parser.js';
+import { isMetadataFile } from './metadata-files.js';
 import { BrunoError } from './types.js';
 import type { CollectionStats, EnvironmentDetail, EnvFile, RequestDetail } from './types.js';
-
-const EXCLUDED_FILENAMES = new Set([
-  'folder.yml',
-  'opencollection.yml',
-  'bruno.json',
-]);
 
 function isEnvironmentFile(filePath: string, collectionPath: string): boolean {
   const rel = relative(collectionPath, filePath);
@@ -147,8 +142,7 @@ export async function getCollectionStats(collectionPath: string): Promise<Collec
   await findRequestFiles(collectionPath, allFiles);
 
   const requestFiles = allFiles.filter((filePath) => {
-    const name = basename(filePath);
-    if (EXCLUDED_FILENAMES.has(name)) return false;
+    if (isMetadataFile(filePath, collectionPath)) return false;
     if (isEnvironmentFile(filePath, collectionPath)) return false;
     return true;
   });
