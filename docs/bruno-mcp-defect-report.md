@@ -4,10 +4,11 @@
 **Pinned at:** `main@4df3f16`. Every line number below was read at that commit — **re-verify before acting**, files move.
 **Last verified:** 2026-07-30.
 
-**Supersedes** `adversarial-review-2026-07-29.md` (findings pinned at `main@75b28ad`, most since fixed) and the
-standalone field-audit defect report it was merged from. The older review is kept for its refutation record —
-the items it got *wrong* are as useful as the ones it got right — but it is no longer the working list.
-`blind-discoverability-test.md` is methodology, not findings, and is unaffected.
+**Supersedes and replaces** `adversarial-review-2026-07-29.md` (findings pinned at `main@75b28ad`, most since
+fixed) and the standalone field-audit defect report it was merged from. Both files were removed once their
+open findings, their corrections and their reusable lessons had been folded in here; the review remains in git
+history if the full original text is ever wanted. `blind-discoverability-test.md` is methodology, not findings, and is
+unaffected.
 
 ## Provenance
 
@@ -28,37 +29,56 @@ claims needed correcting against current code; see the notes under H3 and L3.
 - **CONFIRMED** — reproduced, or traced through source at the pinned commit.
 - **SUSPECTED** — read but not exercised.
 - Severity is user impact, not effort. A silent wrong result outranks a crash.
+- Severity and work order are **separate axes**. The H/M/L labels are stable identifiers — cite them, do not
+  renumber them. What to do next is [Order of work](#order-of-work) at the end, which ranks by how much each
+  defect blocks an agent. The two lists deliberately disagree.
 
 ---
 
 ## Open — High
 
-### H1 — `form-urlencoded` bodies are impossible to author in a `.yml` collection. CONFIRMED, reproduced.
+### H1 — a `.yml` body whose `data` is not a string is silently dropped. CONFIRMED.
 
-`request.ts:892-900` (create) and `:555-561` (modify) build the YAML body as:
+Two separately-reported symptoms, one root cause. The executor's body chain
+(`request-executor.ts:392-435`) is, in order:
 
-- if `isMultipartBodyType(type)` → `data: toMultipartData(formData)`
-- else → `data: input.body.content` — **the raw string**
+1. multipart → `FormData`
+2. `typeof body?.data === 'string'` → send verbatim, and set the implied content-type from
+   `BODY_TYPE_CONTENT_TYPES[body.type]` (`:397-398`)
+3. `body?.type === 'form-urlencoded' && Array.isArray(body.data)` → proper `URLSearchParams` encode
+4. `body?.type === 'graphql' && !Array.isArray(body.data)` → JSON envelope
 
-`isMultipartBodyType` (`request.ts:43`) matches only `form-data` / `multipart-form`. So for `form-urlencoded`:
+**There is no final `else`.** Any `data` that is an object and is neither a graphql body nor a
+form-urlencoded array matches nothing, `options.body` is never assigned, and **the request goes out with no
+body at all** — no error, no warning. Two known ways in:
 
-- passing `content: "a=1&b=2"` writes `data: a=1&b=2`, a scalar where the executor iterates a list of
-  `{name, value}` pairs (`request-executor.ts:407-409`) → **the request goes out with an empty body**
-- passing `formData` writes `data: undefined` → the body is dropped entirely
+- **`form-urlencoded` authored with `formData`.** `request.ts:892-900` (create) and `:555-561` (modify) build
+  the YAML body as `isMultipartBodyType(type) ? toMultipartData(formData) : input.body.content`.
+  `isMultipartBodyType` (`request.ts:43`) matches only `form-data` / `multipart-form`, so `form-urlencoded`
+  takes the else and writes `data: undefined`.
+- **`type: json` with a YAML mapping** rather than a JSON string. Reaches no branch. (Previously this
+  stringified to a literal `[object Object]` on the wire; the `String()` catch-all is gone, so it is now a
+  silent drop instead — quieter, and worse.)
 
-There is no input shape that produces a working `form-urlencoded` body. The normaliser that would fix this,
-`toFormUrlEncodedEntries` (`request.ts:143-161`), accepts *both* shapes and is correct — but at the pinned
-commit it still has exactly **one** call site, `request.ts:190`, inside `yamlBodyToBruBody`, i.e. the `.bru`
-path only.
+The normaliser that fixes the first case, `toFormUrlEncodedEntries` (`request.ts:143-161`), accepts *both*
+shapes and is correct — but at the pinned commit it still has exactly **one** call site, `request.ts:190`,
+inside `yamlBodyToBruBody`, i.e. the `.bru` path only. Routing the `.yml` path through it moves
+form-urlencoded into branch 3. The `json` case needs a real fallback branch, not a `String()` cast.
 
-Failure mode is the worst this tool has: no error, no warning. The file looks right, the run reports a clean
-2xx/4xx, and the body was never sent. Any assertion on "the endpoint rejects bad input" passes for the wrong
-reason.
+Failure mode is the worst this tool has. The file looks right, the run reports a clean 2xx/4xx, and the body
+was never sent. Any assertion on "the endpoint rejects bad input" passes for the wrong reason.
 
-**Fix both ends together.** The read path has the mirror-image defect: `parseYamlRequest` routes *every* array
+> **Partial correction to the field audit.** It also reported that authoring with `content: "a=1&b=2"` sends
+> an empty body, citing the executor iterating `{name, value}` pairs at `:407-409`. That mechanism does not
+> hold: `:407-409` is inside branch 3, which a string never reaches. A string `data` hits branch 2 and is sent
+> verbatim *with* the correct implied content-type. The audit did reproduce a live rejection, so something on
+> that path is still wrong — but **re-reproduce before fixing it**, because the cited cause is unreachable.
+> The `formData` case above is confirmed by reading and is sufficient on its own to justify the fix.
+
+**Fix both ends together.** The read path has a mirror-image defect: `parseYamlRequest` routes *every* array
 body through the multipart part mapper, stamping `type: 'text'` onto form-urlencoded parts, which Bruno does
-not do. Fixing only the write path leaves a file that round-trips through us but diverges from Bruno.
-Fix `toFormUrlEncodedEntries` routing and the parser in one change, and fix L2 while in the file.
+not do. Fixing only the write path leaves a file that round-trips through us but diverges from Bruno. Route
+`toFormUrlEncodedEntries`, add the missing fallback branch, fix the parser, and fix L2, in one change.
 
 ### H2 — No cookie jar, so no session can be exercised without hand-rolled relaying. CONFIRMED.
 
@@ -389,20 +409,92 @@ For orientation only — full detail is in the superseded review and in the PRs.
 
 ---
 
-## Suggested order of work
+## Reading notes — dead ends already walked
 
-1. **H1 + L2** — one call site plus the read-path mirror. Silent wrong-body is the worst failure this tool can
-   have, and the misleading docblock actively hides it.
-2. **M5 + M6** — `read_request` and `read_environment`. Small, and it is what makes every other defect
-   *visible* to the user who hits it. H1 went unnoticed for exactly this reason.
-3. **H3** — a `variables` input on `run_collection`. Small, and it stops the tool pushing users to commit
-   credentials into the collection repository.
-4. **M1** — name the file and the reason in `parseErrors`. Cheap, and it turns a dead end into a fix.
-5. **M4** — `lineWidth: 0` **and** block-literal for scripts. Small, removes a silent code-eating hazard, and
-   closes a Bruno byte-fidelity gap at the same time.
-6. **H2 + L1** — an opt-in cookie jar, exposing `getSetCookies()` alongside. Larger, but it is the difference
-   between "can test a login" and "can test a login if you already know the internals".
-7. **M3** — read collection and folder root files. Unblocks M2's folder ordering and makes `auth: inherit`
-   resolvable. Start with the warn-on-dropped-settings step if the full read is too large for one change.
-8. **M2** — folder-scoped ordering, or an honest description. Do not ship the current description unchanged.
-9. **M7**, then the remaining **L** items, then the test lint/typecheck debt in its own PR.
+Carried over from the superseded review's refutation section. Each of these is a wrong reading that looked
+right, recorded so it is not re-derived.
+
+- **Audit at the layer that matters, not the convenient one.** Upstream's `JSON.parse(request.data.variables)`
+  was once offered as evidence about `.yml` on-disk shape. That line lives in Bruno's **runner**, not its
+  filestore, so it says nothing about the file format. Check the wire, or check the file — not the layer that
+  happens to be open. The same error produced H1's unreachable `:407-409` citation.
+- **`format-factory.ts`'s two script maps are per-format, not per-direction.** The maps around `:104` and
+  `:110` are the **yaml** and **bru** maps. Reading them as an asymmetric write-map/read-map pair leads to the
+  conclusion that `.yml` tests never execute, which is false — `request-executor.ts:115` folds `.bru`'s
+  `tests` block into `after-response`, and scripts run on both formats. Two adjacent constants are not a
+  before/after pair just because they look like one.
+- **Auth is not an inert feature.** Tempting to group with the parsed-persisted-never-applied class, but it
+  does not belong: unapplied auth types warn explicitly, and `inherit` warns about unsupported inheritance.
+  Auth is honest about its limits. Its problem is a type surface that over-promises (L3), which is a different
+  defect with a different fix.
+- **Fixing one end of a data path is not a fix.** Recurring across this list: the write side and the read side
+  are separate code, and closing one silently leaves the hole open. See H1, M4, and the note under M5. A test
+  that passes because our own parser tolerates our own malformed output proves nothing — read the bytes.
+
+## Order of work
+
+**Ordered by how much each defect blocks an agent, not by severity.** The two rankings disagree, and this one
+wins. The primary consumer of this server is an agent reading tool schemas, and the defects that hurt it most
+are the ones it cannot see: output silently corrupted, or a failure it has no way to diagnose. A missing
+feature an agent can detect is less costly than a wrong result it cannot.
+
+Severity labels on the findings above are unchanged and still mean user impact. Use them to judge a single
+defect; use this list to decide what to do next.
+
+### Tier 1 — agent blockers
+
+What an agent needs and does not have. Direct field feedback first.
+
+1. **M5 + M6** — `read_request` and `read_environment`. Reported twice by users. The agent must leave the MCP
+   boundary and `cat` files to see what it just wrote. This is also the meta-blocker: H1 survived precisely
+   because there was no in-protocol way to look at the generated `data:` scalar. Fixing this makes every
+   remaining defect on this list *visible* to whoever hits it, so it goes first even though H1 is more severe.
+2. **M4** — `lineWidth: 0` **and** block-literal for script bodies. An agent writes a script with a `//`
+   comment above a statement; folded style joins the lines and comments the statement out. The agent's own
+   output is corrupted silently. Cheapest fix on the list, and it closes a Bruno byte-fidelity gap too.
+3. **H1 + L2** — the missing `else` in the body chain, the `.yml` `toFormUrlEncodedEntries` routing, and the
+   read-path mirror, in one change. The run reports a clean 2xx/4xx and the body was never sent, so
+   assertions pass for the wrong reason. Fix the orphaned docblock while in the file — it actively hides this.
+4. **M1** — name the file and the reason in `parseErrors`. A bare count is a dead end for an autonomous
+   agent: it cannot bisect, so it cannot recover. Cheap.
+5. **H2 + L1** — an opt-in cookie jar, exposing `getSetCookies()` alongside. Without it, every session-based
+   flow needs the same hand-rolled `set-cookie` relay, and the symptom of getting it wrong is an unexplained
+   403. Larger, but it is the difference between "can test a login" and "can test a login if you already know
+   the internals".
+6. **M2 (description half, now)** — the tool description promises folder-scoped `seq` ordering that does not
+   exist. An agent planning around a false guarantee is worse off than one told the limit. Correct the wording
+   in whichever PR is open; the real ordering fix needs 7.
+7. **M3** — read the collection and folder root files. A collection-wide `Authorization` or `Content-Type` is
+   the normal way to write a collection, and here it vanishes without a word, so the agent duplicates it per
+   request or gets 401s it cannot explain. Unblocks M2's real fix and makes `auth: inherit` resolvable. Start
+   with warn-on-dropped-settings if the full read is too large for one change.
+8. **L4 + L6** — `seq` defaulting to "one past the folder maximum", and recognising `.yaml`. Papercuts, one
+   PR. A Bruno collection using `.yaml` currently enumerates as empty.
+
+### Tier 2 — security
+
+Thin, and that is accurate rather than an oversight: the substantive work already landed — IPv6 transitional
+SSRF bypasses and three missing IPv4 ranges, query-param credential redaction, the sandbox semaphore leak, the
+realm-boundary escape, and plaintext environment secrets. What remains is one documentation gap and two
+posture decisions.
+
+9. **H3** — a `variables` input on `run_collection`. Also a tier-1 blocker by impact; listed here because the
+   driver is security. Any value a run needs must currently be persisted into the collection's own git
+   repository, and there is no correct on-disk place for a secret **by design**, so an in-memory path is the
+   only fix. Verify the variable resolves at the wire *and* appears in no written file.
+10. **L5** — document the allowlist caveat. Allowlisting a hostname disables the loopback and private-range
+    checks for that name permanently, including if DNS later moves it. Correct behaviour, but an operator has
+    to be told. Ride along with any PR.
+11. **Decision** — should the in-process runner stay the default for `options?.scriptRunner ?? TestRunner`?
+12. **Decision** — is `env-loader.ts` binding a secret to `''` a bug or the contract?
+
+### Tier 3 — the rest
+
+13. **M7** — request-level unknown-key passthrough.
+14. **L7** — environment authoring: secrets, and the unwired `dataType` / `disabled`.
+15. **L3** — the third auth enum at `request-tools.ts:355`. Pure drift.
+16. **L8** — the `.bru` file-body catch-all. Unreachable from the tool surface today; a live trap for the
+    next caller.
+17. **L9** — decide whether a graphql body with no query should error.
+18. **Test lint and typecheck debt**, in its own PR. The load-bearing part is not the error count — it is that
+    `tests/` is neither linted nor type-checked, so **a type-only fix has no test that can go red**.
