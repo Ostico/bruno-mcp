@@ -16,6 +16,63 @@ import {
   type MultipartFormPart,
 } from './types.js';
 
+/**
+ * Top-level keys Bruno separates with a blank line. Mirrors the list Bruno's own
+ * writer uses, so a file we generate and a file Bruno generates for the same
+ * request differ in no bytes.
+ */
+const BLOCK_KEYS = [
+  'info',
+  'http',
+  'graphql',
+  'grpc',
+  'websocket',
+  'runtime',
+  'settings',
+  'examples',
+  'docs',
+  'items',
+  'request',
+];
+
+/**
+ * Serialise a whole document the way Bruno serialises it.
+ *
+ * The options are Bruno's, not defaults. Two of them matter for anything
+ * multi-line — a script body, a long description:
+ *
+ * - `lineWidth: 0` disables wrapping, so a long line stays one line.
+ * - `defaultStringType: 'PLAIN'` makes the library reach for a literal block
+ *   (`|-`) rather than a folded one (`>-`) when a string has to be a block.
+ *
+ * Folded output does round-trip correctly — the library encodes each newline as
+ * a blank line and any conforming parser restores it — so this is not a fix for
+ * corrupted scripts. It is byte-parity with Bruno, and it stops a hand-edit of
+ * the file from being a trap: in a folded block the blank lines are load-bearing,
+ * and a human who tidies them away silently joins the lines, at which point a
+ * `//` comment really does swallow the statement beneath it.
+ */
+function stringifyYamlDocument(obj: unknown): string {
+  const yaml = yamlStringify(obj, {
+    lineWidth: 0,
+    indent: 2,
+    minContentWidth: 0,
+    defaultStringType: 'PLAIN',
+  });
+
+  const lines = yaml.split('\n');
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const topLevel = i > 0 && !line.startsWith(' ') && !line.startsWith('\t');
+    if (topLevel && BLOCK_KEYS.includes(line.split(':')[0])) {
+      if (out.length > 0 && out[out.length - 1].trim() !== '') out.push('');
+    }
+    out.push(line);
+  }
+  return out.join('\n');
+}
+
 /** The three `runtime.scripts` entry types a .yml request can carry. */
 export type YamlScriptType = YamlScript['type'];
 
@@ -170,7 +227,7 @@ export function generateYamlRequest(request: YamlRequest): string {
   }
 
   const cleaned = stripEmpty(doc) as Record<string, unknown>;
-  return yamlStringify(cleaned, { indent: 2 });
+  return stringifyYamlDocument(cleaned);
 }
 
 /**
@@ -191,7 +248,7 @@ export function generateYamlCollection(collection: YamlCollection): string {
   }
 
   const cleaned = stripEmpty(doc) as Record<string, unknown>;
-  return yamlStringify(cleaned, { indent: 2 });
+  return stringifyYamlDocument(cleaned);
 }
 
 /**
@@ -233,7 +290,7 @@ export function generateYamlEnvironment(env: EnvFile): string {
   }
 
   const cleaned = stripEmpty(doc) as Record<string, unknown>;
-  return yamlStringify(cleaned, { indent: 2 });
+  return stringifyYamlDocument(cleaned);
 }
 
 /** Fields of EnvFile that generateYamlEnvironment writes itself. */
@@ -279,7 +336,7 @@ export function removeYamlScript(
 
   const runtime = parsed.runtime as Record<string, unknown> | undefined;
   if (!runtime || typeof runtime !== 'object' || !Array.isArray(runtime.scripts)) {
-    return yamlStringify(parsed, { indent: 2 });
+    return stringifyYamlDocument(parsed);
   }
 
   const scripts = runtime.scripts as Array<{ type: string; code: string }>;
@@ -295,7 +352,7 @@ export function removeYamlScript(
     runtime.scripts = kept;
   }
 
-  return yamlStringify(parsed, { indent: 2 });
+  return stringifyYamlDocument(parsed);
 }
 
 /**
@@ -351,5 +408,5 @@ export function injectYamlScript(
     scripts.push(newEntry);
   }
 
-  return yamlStringify(parsed, { indent: 2 });
+  return stringifyYamlDocument(parsed);
 }

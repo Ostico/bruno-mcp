@@ -177,23 +177,33 @@ it is what M2 needs for folder ordering.
 Minimum viable step, if the full read is too large: warn per request when a collection/folder root file exists
 and declares something that is being dropped.
 
-### M4 — Generated YAML reflows code in script blocks. CONFIRMED.
+### M4 — Generated YAML does not match Bruno's writer. CONFIRMED, but not as originally described. FIXED.
 
-All six `yamlStringify` call sites in `yaml-generator.ts` pass `{ indent: 2 }` and nothing else. `lineWidth`
-appears **zero** times in `src/`. The `yaml` library therefore defaults to `lineWidth: 80` and selects folded
-style (`code: >`) for long multi-line strings.
+The observation was right: all six `yamlStringify` call sites in `yaml-generator.ts` passed `{ indent: 2 }`
+and nothing else, `lineWidth` appeared **zero** times in `src/`, and the library therefore defaulted to
+`lineWidth: 80` and folded style (`code: >-`) for multi-line strings.
 
-Folded style joins consecutive non-empty lines into one. A `//` comment immediately above a statement —
-utterly ordinary — folds into a single line and **comments out the code beneath it**, silently. Observed in
-generated request files; those scripts survived only because every comment paragraph happened to be followed
-by a blank line.
+**The severity was wrong.** The claim above — that folding joins a `//` comment with the statement below it
+and silently comments the statement out — does not reproduce. Measured against the `yaml` library directly
+and end-to-end through this server's own generator and parser, on eight script shapes (short lines, a long
+comment, long code, indented lines, trailing whitespace, blank lines, CRLF, tabs): every one round-tripped
+byte-identical. Folded style encodes each source newline as a blank line in the block, and any conforming
+parser restores it. The blank lines in the emitted `>-` block are the encoding, not an accident of the
+scripts happening to be paragraph-separated.
 
-Two changes, both needed:
-- `lineWidth: 0` to stop wrapping — this also closes the separate fidelity gap that Bruno's own emitter sets
-  `lineWidth: 0` and we do not, so our files differ from Bruno's byte-for-byte.
-- block-literal style for script bodies (`blockQuote: 'literal'`, or per-node `BLOCK_LITERAL`). `lineWidth: 0`
-  alone does **not** stop the library choosing `>` over `|`, so it does not fix the code-eating hazard by
-  itself. Fixing only `lineWidth` looks like a fix and is not one.
+What is real, and what the fix delivers:
+
+- **Byte-fidelity.** Bruno's writer (`bruno-filestore/src/formats/yml/utils.ts`) uses
+  `{ lineWidth: 0, indent: 2, minContentWidth: 0, defaultStringType: 'PLAIN' }` and a post-pass inserting a
+  blank line before each top-level block key. Ours used none of it, so every file we wrote differed from the
+  file Bruno writes for the same request, and Bruno rewrites it on first save.
+- **Hand-edit hazard.** In a folded block the blank lines are load-bearing. A human tidying them out of a
+  `>-` script joins the lines — and *then* the `//` comment does swallow the statement beneath it. Literal
+  style removes the trap rather than relying on nobody touching the file.
+
+Fixed by routing all six call sites through one helper that mirrors Bruno's options and blank-line pass.
+`defaultStringType: 'PLAIN'` is what selects `|-` over `>-`; the original note that `lineWidth: 0` alone
+would not do it is correct.
 
 ### M5 — No tool to read a request or an environment. CONFIRMED. *(User-reported)*
 
@@ -449,9 +459,10 @@ What an agent needs and does not have. Direct field feedback first.
    boundary and `cat` files to see what it just wrote. This is also the meta-blocker: H1 survived precisely
    because there was no in-protocol way to look at the generated `data:` scalar. Fixing this makes every
    remaining defect on this list *visible* to whoever hits it, so it goes first even though H1 is more severe.
-2. **M4** — `lineWidth: 0` **and** block-literal for script bodies. An agent writes a script with a `//`
-   comment above a statement; folded style joins the lines and comments the statement out. The agent's own
-   output is corrupted silently. Cheapest fix on the list, and it closes a Bruno byte-fidelity gap too.
+2. **M4** — match Bruno's writer options and its blank-line pass. Ranked here on the strength of a
+   corruption claim that did not survive measurement: folded style round-trips losslessly, so no script was
+   ever silently commented out. It kept the slot only because it is the cheapest fix on the list; on its
+   real merits — byte-fidelity with Bruno, and removing a hand-edit trap — it belongs below M1.
 3. **H1 + L2** — the missing `else` in the body chain, the `.yml` `toFormUrlEncodedEntries` routing, and the
    read-path mirror, in one change. The run reports a clean 2xx/4xx and the body was never sent, so
    assertions pass for the wrong reason. Fix the orphaned docblock while in the file — it actively hides this.
