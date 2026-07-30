@@ -94,9 +94,30 @@ export class EnvironmentManager {
    */
   async createEnvironment(input: CreateEnvironmentInput): Promise<FileOperationResult> {
     try {
-      // Validate input
+      // Validate before deriving the lock key, not after: the key is built from
+      // the same fields the validator requires, so a missing one would leave
+      // path.join to raise a TypeError where callers expect a failed result.
       this.validateEnvironmentInput(input);
 
+      // Same key the variable mutators use, so this write is ordered against them
+      // rather than racing them. It has to be environmentLockKey and not the
+      // `.yml`/`.bru` path: the mutators queue on the extension-less key, and a
+      // second queue keyed by filename would serialize nothing against them.
+      return await withPathLock(environmentLockKey(input.collectionPath, input.name), () =>
+        this.createEnvironmentLocked(input),
+      );
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  private async createEnvironmentLocked(
+    input: CreateEnvironmentInput,
+  ): Promise<FileOperationResult> {
+    try {
       // Detect collection format
       const detection = await detectFormat(input.collectionPath);
 
@@ -408,6 +429,22 @@ export class EnvironmentManager {
    * Delete an environment
    */
   async deleteEnvironment(collectionPath: string, environmentName: string): Promise<FileOperationResult> {
+    // Deletion is an exists-then-unlink pair, and it competes with the variable
+    // mutators over the same file. Unlocked, a mutator that had already read the
+    // file could write it back after the unlink and resurrect the environment
+    // this call reported as deleted; and two concurrent deletions could both see
+    // the file and the second unlink would throw ENOENT instead of returning the
+    // "does not exist" result. Both cases are ordered away by taking the mutators'
+    // own key.
+    return withPathLock(environmentLockKey(collectionPath, environmentName), () =>
+      this.deleteEnvironmentLocked(collectionPath, environmentName),
+    );
+  }
+
+  private async deleteEnvironmentLocked(
+    collectionPath: string,
+    environmentName: string,
+  ): Promise<FileOperationResult> {
     try {
       const detection = await detectFormat(collectionPath);
       const ext = detection.format === 'yaml' ? '.yml' : '.bru';

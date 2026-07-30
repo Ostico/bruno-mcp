@@ -10,6 +10,7 @@
  */
 
 import { BrunoMcpServer } from '../../../src/server';
+import { withPathLock } from '../../../src/bruno/path-mutex';
 
 // ── Module mocks ───────────────────────────────────────────────────────────────
 
@@ -286,6 +287,35 @@ describe('delete_request tool handler', () => {
     expect(res.isError).toBeUndefined();
     expect(mockUnlink).toHaveBeenCalledWith('/workspace/collection/request.yml');
     expect(res.content[0].text).toMatch(/Deleted request request\.yml \(yaml format\)/);
+  });
+
+  it('waits for the per-file lock before unlinking', async () => {
+    // add_test_script and remove_script hold this lock while they read, inject and
+    // write back. Unlocked, a deletion could unlink between their read and their
+    // write, and the write would then restore a file this tool had just reported
+    // as permanently deleted.
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((res) => {
+      releaseGate = res;
+    });
+    const held = withPathLock('/workspace/collection/request.yml', () => gate);
+
+    const deleting = handler({
+      filePath: '/workspace/collection/request.yml',
+      confirm: true,
+    });
+
+    // Everything the handler awaits before the unlink is a resolved mock, so an
+    // unserialised delete would already have unlinked by now.
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockUnlink).not.toHaveBeenCalled();
+
+    releaseGate();
+    await held;
+    const res = await deleting;
+    expect(res.isError).toBeUndefined();
+    expect(mockUnlink).toHaveBeenCalledWith('/workspace/collection/request.yml');
   });
 
   it('refuses to delete without confirm', async () => {

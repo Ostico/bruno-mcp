@@ -1,5 +1,6 @@
 import { EnvironmentManager, createEnvironmentManager } from '../../../src/bruno/environment';
 import { BrunoError, BruFileError } from '../../../src/bruno/types';
+import { withPathLock } from '../../../src/bruno/path-mutex';
 
 // Writers now go through writeFileAtomic instead of a plain fs write. Route it
 // back to the same fs mock so these tests keep asserting on the content and path
@@ -663,6 +664,89 @@ describe('EnvironmentManager', () => {
       detectFormat.mockRejectedValue('str');
       const result = await manager.deleteEnvironment('/col', 'dev');
       expect(result.error).toBe('Unknown error');
+    });
+  });
+
+  /**
+   * The variable mutators take a per-environment lock; creation and deletion did
+   * not, so they could interleave with a mutator's read-modify-write and have
+   * their effect discarded or undone. These assert that both now queue behind the
+   * same key the mutators use.
+   *
+   * The key is deliberately spelled without an extension, matching the module's
+   * own lock key: a queue keyed by `dev.yml` would serialize nothing against
+   * callers queued on `dev`.
+   */
+  describe('serialization against the variable mutators', () => {
+    const LOCK_KEY = '/col/environments/dev';
+
+    /** A promise plus its resolver, so a test can hold the lock open. */
+    function deferred() {
+      let resolve!: () => void;
+      const promise = new Promise<void>((res) => {
+        resolve = res;
+      });
+      return { promise, resolve };
+    }
+
+    /**
+     * Drain everything the operation under test could still be waiting on. Every
+     * dependency is a resolved mock, so once microtasks and one macrotask have
+     * run, an unserialised operation would already have written.
+     */
+    const settle = async () => {
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+    };
+
+    it('does not let createEnvironment write while the environment is locked', async () => {
+      detectFormat.mockResolvedValue({ format: 'yaml' });
+      const gate = deferred();
+      const held = withPathLock(LOCK_KEY, () => gate.promise);
+
+      const creating = manager.createEnvironment({
+        collectionPath: '/col',
+        name: 'dev',
+        variables: { baseUrl: 'http://localhost:3000' },
+      });
+
+      await settle();
+      expect(fs.writeFile).not.toHaveBeenCalled();
+
+      gate.resolve();
+      await held;
+      await expect(creating).resolves.toMatchObject({ success: true });
+      expect(fs.writeFile).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not let deleteEnvironment unlink while the environment is locked', async () => {
+      detectFormat.mockResolvedValue({ format: 'yaml' });
+      fs.access.mockResolvedValue(undefined);
+      const gate = deferred();
+      const held = withPathLock(LOCK_KEY, () => gate.promise);
+
+      const deleting = manager.deleteEnvironment('/col', 'dev');
+
+      await settle();
+      expect(fs.unlink).not.toHaveBeenCalled();
+
+      gate.resolve();
+      await held;
+      await expect(deleting).resolves.toMatchObject({ success: true });
+      expect(fs.unlink).toHaveBeenCalledWith('/col/environments/dev.yml');
+    });
+
+    it('still reports invalid input as a result rather than throwing', async () => {
+      // The lock key is derived from the same fields the validator requires, so
+      // the validation has to run first — otherwise a missing name reaches
+      // path.join and raises where callers expect { success: false }.
+      const result = await manager.createEnvironment({
+        collectionPath: '/col',
+        name: '',
+        variables: {},
+      });
+      expect(result.success).toBe(false);
+      expect(fs.writeFile).not.toHaveBeenCalled();
     });
   });
 });

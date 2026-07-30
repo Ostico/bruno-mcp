@@ -15,6 +15,7 @@ import {
   BodyType,
 } from '../bruno/types.js';
 import { validateToolPath, resolveRequestFile } from './tool-path.js';
+import { withPathLock } from '../bruno/path-mutex.js';
 import { topologicalSort } from './topological-sort.js';
 import { inlineScriptsSchema, assertionEntrySchema, requestVarsSchema } from './schemas.js';
 import type { ToolContext } from './context.js';
@@ -308,7 +309,13 @@ export function registerDeleteRequestTool(ctx: ToolContext): void {
           };
         }
 
-        await unlink(args.filePath);
+        // Same per-file lock add_test_script and remove_script take. Without it,
+        // a script injection that had already read this file could write it back
+        // after the unlink, restoring a request this tool had just reported as
+        // permanently deleted. Taking the lock orders the two: either the
+        // injection finishes and is then deleted, or the delete wins and the
+        // injection's read fails with ENOENT.
+        await withPathLock(args.filePath, () => unlink(args.filePath));
 
         return {
           content: [

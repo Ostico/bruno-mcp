@@ -428,30 +428,30 @@ export class RequestBuilder {
 
       // Detect collection format
       const detection = await detectFormat(input.collectionPath);
+      const isYaml = detection.format === 'yaml';
+      const filePath = this.getRequestFilePath(input, isYaml ? '.yml' : '.bru');
 
-      if (detection.format === 'yaml') {
-        // Build YAML request and write .yml file
-        const yamlRequest = this.buildYamlRequest(input);
-        const filePath = this.getRequestFilePath(input, '.yml');
+      // Creation takes the same per-file lock updateRequest takes, for two
+      // reasons. With `scripts`, this is itself a read-modify-write: the file is
+      // written and then read back to inject them, so two creations of the same
+      // path can interleave and the second injection can be written over the
+      // first. And even without scripts, an unlocked write is not excluded from a
+      // concurrent locked read-modify-write elsewhere — a lock only serializes
+      // the callers that take it, so the writer that skips it is precisely the
+      // one whose write can land between another caller's read and write and be
+      // discarded. Locking only the mutating half of a file's API leaves the
+      // lost update the lock was added to prevent.
+      return await withPathLock(filePath, async () => {
         await this.ensureDirectory(dirname(filePath));
-        const yamlContent = generateYamlRequest(yamlRequest);
-        await writeFileAtomic(filePath, yamlContent);
+        const content = isYaml
+          ? generateYamlRequest(this.buildYamlRequest(input))
+          : generateBruRequest(this.buildBruFile(input));
+        await writeFileAtomic(filePath, content);
         if (input.scripts) {
           await this.applyInlineScripts(filePath, detection.format, input.scripts);
         }
         return { success: true, path: filePath };
-      } else {
-        // Build BRU file structure and write .bru file
-        const bruFile = this.buildBruFile(input);
-        const filePath = this.getRequestFilePath(input, '.bru');
-        await this.ensureDirectory(dirname(filePath));
-        const bruContent = generateBruRequest(bruFile);
-        await writeFileAtomic(filePath, bruContent);
-        if (input.scripts) {
-          await this.applyInlineScripts(filePath, detection.format, input.scripts);
-        }
-        return { success: true, path: filePath };
-      }
+      });
 
     } catch (error) {
       return {

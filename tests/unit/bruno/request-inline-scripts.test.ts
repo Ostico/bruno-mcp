@@ -10,6 +10,7 @@
 import { createRequestBuilder } from '../../../src/bruno/request';
 import { parseYamlRequest } from '../../../src/bruno/yaml-parser';
 import { parseBruRequest } from '../../../src/bruno/bru-parser';
+import { withPathLock } from '../../../src/bruno/path-mutex';
 
 // In-memory fs
 const store = new Map<string, string>();
@@ -44,6 +45,9 @@ jest.mock('../../../src/bruno/format-detector', () => ({
   detectFormat: jest.fn(),
 }));
 const { detectFormat } = require('../../../src/bruno/format-detector');
+const fs = (
+  jest.requireMock('fs') as { promises: { readFile: jest.Mock; writeFile: jest.Mock } }
+).promises;
 
 describe('inline scripts round-trip', () => {
   let builder = createRequestBuilder();
@@ -244,5 +248,46 @@ describe('inline scripts round-trip', () => {
     const before = (parsed.runtime?.scripts ?? []).filter(s => s.type === 'before-request');
     expect(before).toHaveLength(1);
     expect(before[0].code).toContain('req.setHeader("y", "2");');
+  });
+
+  /**
+   * Creating with inline scripts is itself a read-modify-write: the file is
+   * written, then read back so the scripts can be injected. Both halves have to
+   * sit inside one lock — guarding only the write would leave the read-back
+   * outside it, which is where two creations of the same path would interleave
+   * and the second injection could be written over the first.
+   */
+  it('holds the request lock across the write and the script injection', async () => {
+    detectFormat.mockResolvedValue({ format: 'yaml' });
+    const withScripts = { ...baseInput, scripts: { 'pre-request': 'req.setHeader("x", "1");' } };
+
+    // The writer decides the filename, so the lock key is taken from the created
+    // path rather than rebuilt — a key off by one character would queue on
+    // nothing and the assertions below would hold vacuously.
+    const first = await builder.createRequest(withScripts);
+    expect(first.success).toBe(true);
+
+    const readsBefore = fs.readFile.mock.calls.length;
+    const writesBefore = fs.writeFile.mock.calls.length;
+
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((res) => {
+      releaseGate = res;
+    });
+    const held = withPathLock(first.path!, () => gate);
+
+    const creating = builder.createRequest(withScripts);
+
+    // Every dependency is in memory, so an unserialised creation would already
+    // have both written and read back by the time one macrotask has run.
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fs.writeFile.mock.calls.length).toBe(writesBefore);
+    expect(fs.readFile.mock.calls.length).toBe(readsBefore);
+
+    releaseGate();
+    await held;
+    await expect(creating).resolves.toMatchObject({ success: true });
+    expect(fs.readFile.mock.calls.length).toBeGreaterThan(readsBefore);
   });
 });

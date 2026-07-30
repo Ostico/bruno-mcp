@@ -1,5 +1,6 @@
 import { CollectionManager, createCollectionManager } from '../../../src/bruno/collection';
 import { BrunoError, BruFileError, BruValidationError } from '../../../src/bruno/types';
+import { withPathLock } from '../../../src/bruno/path-mutex';
 
 // Writers now go through writeFileAtomic instead of a plain fs write. Route it
 // back to the same fs mock so these tests keep asserting on the content and path
@@ -400,6 +401,43 @@ describe('CollectionManager', () => {
     it('should throw BruFileError on failure', async () => {
       fs.readdir.mockRejectedValue(new Error('EACCES'));
       await expect(manager.getCollectionStats('/c')).rejects.toThrow(BruFileError);
+    });
+  });
+
+  /**
+   * updateCollection serializes its read-modify-write on the collection
+   * directory. Creation writes the same config file, so it has to queue on that
+   * key too — otherwise a create against an existing collection can land between
+   * an update's read and write and be overwritten by the older config.
+   */
+  describe('serialization against updateCollection', () => {
+    it('does not write the config while the collection is locked', async () => {
+      let resolveGate!: () => void;
+      const gate = new Promise<void>((res) => {
+        resolveGate = res;
+      });
+      const held = withPathLock('/out/Orders', () => gate);
+
+      const creating = manager.createCollection({ outputPath: '/out', name: 'Orders' });
+
+      // Every dependency is a resolved mock, so an unserialised create would
+      // already have written by the time microtasks and one macrotask have run.
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(fs.writeFile).not.toHaveBeenCalled();
+
+      resolveGate();
+      await held;
+      await expect(creating).resolves.toMatchObject({ success: true });
+      expect(fs.writeFile).toHaveBeenCalled();
+    });
+
+    it('still reports invalid input as a result rather than throwing', async () => {
+      // The lock key is built from outputPath and name, the same fields the
+      // validator requires, so validation has to run before the key is derived.
+      const result = await manager.createCollection({ outputPath: '/out', name: '' });
+      expect(result.success).toBe(false);
+      expect(fs.writeFile).not.toHaveBeenCalled();
     });
   });
 });

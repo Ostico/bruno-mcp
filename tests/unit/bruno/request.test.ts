@@ -1,5 +1,6 @@
 import { RequestBuilder, createRequestBuilder } from '../../../src/bruno/request';
 import { BrunoError, BruFileError } from '../../../src/bruno/types';
+import { withPathLock } from '../../../src/bruno/path-mutex';
 
 // Writers now go through writeFileAtomic instead of a plain fs write. Route it
 // back to the same fs mock so these tests keep asserting on the content and path
@@ -570,5 +571,58 @@ describe('RequestBuilder', () => {
       );
       expect(results).toHaveLength(4);
     });
+  });
+
+  /**
+   * updateRequest and the script tools serialize their read-modify-write on the
+   * request file. Creation wrote the same file without taking that lock, so its
+   * write was not excluded from anyone else's read-modify-write — and with
+   * `scripts` it is a read-modify-write of its own, since the file is written and
+   * then read back to inject them.
+   *
+   * The lock key comes from the created path rather than being rebuilt here: the
+   * writer decides the filename, and a hand-built key that differs by one
+   * character would queue on nothing and the test would pass vacuously.
+   */
+  describe('serialization against the other writers', () => {
+    /** A promise plus its resolver, so a test can hold the lock open. */
+    function deferred() {
+      let resolve!: () => void;
+      const promise = new Promise<void>((res) => {
+        resolve = res;
+      });
+      return { promise, resolve };
+    }
+
+    /**
+     * Drain everything the operation under test could still be waiting on. Every
+     * dependency is a resolved mock, so once microtasks and one macrotask have
+     * run, an unserialised creation would already have written.
+     */
+    const settle = async () => {
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+    };
+
+    it('does not write while the request path is locked', async () => {
+      detectFormat.mockResolvedValue({ format: 'yaml' });
+
+      const first = await builder.createRequest(baseInput);
+      expect(first.success).toBe(true);
+      const writesBefore = fs.writeFile.mock.calls.length;
+
+      const gate = deferred();
+      const held = withPathLock(first.path as string, () => gate.promise);
+
+      const creating = builder.createRequest(baseInput);
+      await settle();
+      expect(fs.writeFile.mock.calls.length).toBe(writesBefore);
+
+      gate.resolve();
+      await held;
+      await expect(creating).resolves.toMatchObject({ success: true });
+      expect(fs.writeFile.mock.calls.length).toBe(writesBefore + 1);
+    });
+
   });
 });

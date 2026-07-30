@@ -27,9 +27,31 @@ export class CollectionManager {
    */
   async createCollection(input: CreateCollectionInput): Promise<FileOperationResult> {
     try {
-      // Validate input
+      // Validate before deriving the lock key, not after: the key is built from
+      // the same two fields the validator requires, so a missing one would leave
+      // path.join to raise a TypeError where callers expect a failed result.
       this.validateCollectionInput(input);
 
+      // updateCollection queues on the collection directory; creation writes the
+      // same config file and so belongs in that queue. It matters when create
+      // runs against a directory that already exists — re-running it concurrently
+      // with an update would otherwise let the fresh config land between the
+      // update's read and write, and be overwritten by the older contents.
+      return await withPathLock(join(input.outputPath, input.name), () =>
+        this.createCollectionLocked(input),
+      );
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  private async createCollectionLocked(
+    input: CreateCollectionInput,
+  ): Promise<FileOperationResult> {
+    try {
       // Determine format — default to 'yaml'
       const format = input.format || 'yaml';
 
