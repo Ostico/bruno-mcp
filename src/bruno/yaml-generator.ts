@@ -172,6 +172,16 @@ export function generateYamlCollection(collection: YamlCollection): string {
 
 /**
  * Generate YAML environment file content from an EnvFile object.
+ *
+ * A secret variable is written as the flag plus the name and NOTHING else:
+ * Bruno does not persist a secret's value in the environment file, it keeps the
+ * value in its own secret store. Writing `value:` for a secret variable would
+ * put the credential on disk in plaintext, so the value is dropped here even
+ * when the model carries one.
+ *
+ * Key order matches what Bruno emits: `secret` before `name` for a secret
+ * variable, `name` then `value` otherwise, top-level `name` before the
+ * unmodelled keys before `variables`.
  */
 export function generateYamlEnvironment(env: EnvFile): string {
   const doc: Record<string, unknown> = {};
@@ -180,17 +190,51 @@ export function generateYamlEnvironment(env: EnvFile): string {
     doc.name = env.name;
   }
 
+  copyExtraKeys(doc, env.extra, ENV_FILE_KEYS);
+
   if (env.variables && env.variables.length > 0) {
     doc.variables = env.variables.map((v) => {
-      const entry: Record<string, unknown> = { name: v.name };
-      if (v.value !== undefined) entry.value = v.value;
+      const entry: Record<string, unknown> = {};
+      if (v.secret === true) {
+        entry.secret = true;
+        entry.name = v.name;
+      } else {
+        entry.name = v.name;
+        if (v.value !== undefined) entry.value = v.value;
+      }
       if (v.disabled !== undefined) entry.disabled = v.disabled;
+      copyExtraKeys(entry, v.extra, ENV_VARIABLE_KEYS);
       return entry;
     });
   }
 
   const cleaned = stripEmpty(doc) as Record<string, unknown>;
   return yamlStringify(cleaned, { indent: 2 });
+}
+
+/** Fields of EnvFile that generateYamlEnvironment writes itself. */
+const ENV_FILE_KEYS = new Set(['name', 'variables']);
+
+/** Fields of EnvVariable that generateYamlEnvironment writes itself. */
+const ENV_VARIABLE_KEYS = new Set(['name', 'value', 'disabled', 'secret']);
+
+/**
+ * Copy carried-through keys onto a document, skipping any the caller writes
+ * from the typed model.
+ *
+ * The skip list is what stops a stale carried `value` from resurrecting the
+ * plaintext of a variable that has since become secret.
+ */
+function copyExtraKeys(
+  target: Record<string, unknown>,
+  extra: Record<string, unknown> | undefined,
+  modelled: Set<string>,
+): void {
+  if (!extra) return;
+  for (const [key, value] of Object.entries(extra)) {
+    if (modelled.has(key)) continue;
+    target[key] = value;
+  }
 }
 
 /**
