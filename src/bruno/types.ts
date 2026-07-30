@@ -14,7 +14,7 @@ export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 
  * never authenticates looks identical to a working one until the server answers
  * 401, so the split is written down rather than left to be discovered.
  */
-export type AuthType = 'none' | 'bearer' | 'basic' | 'oauth2' | 'api-key' | 'digest';
+export type AuthType = 'none' | 'bearer' | 'basic' | 'oauth2' | 'api-key' | 'digest' | 'inherit';
 
 /**
  * Auth modes the executor applies to the outgoing request itself.
@@ -36,8 +36,24 @@ export type AppliedAuthType = Extract<AuthType, 'bearer' | 'basic' | 'api-key'>;
 export type UnappliedAuthType = Extract<AuthType, 'oauth2' | 'digest'>;
 
 /**
+ * The auth mode that defers to the enclosing folder or collection.
+ *
+ * Bruno resolves `inherit` by walking up to the nearest folder or collection auth
+ * block. This tool does not model that walk, so a request set to `inherit` goes
+ * out with no credential and carries a warning saying so — the same treatment as
+ * an `UnappliedAuthType`, for a different reason: the credential is not missing,
+ * it is somewhere this tool does not look.
+ *
+ * It is a member of `AuthType` rather than a mode to normalize away because both
+ * file formats write it and reading it as `none` is a silent downgrade: `none`
+ * means "send nothing", `inherit` means "send whatever the collection says", and
+ * rewriting one as the other changes what Bruno itself would send.
+ */
+export type InheritedAuthType = Extract<AuthType, 'inherit'>;
+
+/**
  * Compile-time proof that every AuthType member is classified as applied,
- * unapplied, or `none`.
+ * unapplied, inherited, or `none`.
  *
  * This is what keeps the split honest. Adding a mode to AuthType without
  * deciding whether the executor can perform it makes this alias resolve to
@@ -45,7 +61,7 @@ export type UnappliedAuthType = Extract<AuthType, 'oauth2' | 'digest'>;
  * promise the way `api-key`, `oauth2` and `digest` were widened before.
  */
 type _EveryAuthTypeIsClassified =
-  AuthType extends AppliedAuthType | UnappliedAuthType | 'none' ? true : never;
+  AuthType extends AppliedAuthType | UnappliedAuthType | InheritedAuthType | 'none' ? true : never;
 const _authTypesAreClassified: _EveryAuthTypeIsClassified = true;
 void _authTypesAreClassified;
 

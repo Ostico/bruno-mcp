@@ -78,7 +78,7 @@ export function parseBruRequest(content: string): BruFile {
     url: json.http?.url ?? '',
     // NOT validated against BodyType/AuthType, deliberately: a .bru file uses
     // Bruno's own vocabulary (`multipartForm`, `formUrlEncoded`, `sparql`,
-    // `inherit`), which is a different set from these unions. The `as` below is
+    // `awsv4`, `ntlm`), which is a different set from these unions. The `as` below is
     // therefore a known-false claim, left in place because correcting it means
     // retyping BruHttpRequest and reworking the generator and round-trip with
     // it — a larger change than this parse guard, and not attempted here.
