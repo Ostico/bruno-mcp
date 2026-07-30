@@ -6,6 +6,7 @@
 import { promises as fs } from 'fs';
 import { writeFileAtomic } from './atomic-write.js';
 import { withPathLock } from './path-mutex.js';
+import { isMetadataFile } from './metadata-files.js';
 import { join } from 'path';
 import {
   BrunoCollection,
@@ -182,7 +183,7 @@ export class CollectionManager {
   async listRequests(collectionPath: string): Promise<string[]> {
     try {
       const bruFiles: string[] = [];
-      await this.findBruFiles(collectionPath, bruFiles);
+      await this.findBruFiles(collectionPath, bruFiles, collectionPath);
       return bruFiles.sort();
 
     } catch (error) {
@@ -376,21 +377,21 @@ Created on: ${new Date().toISOString()}
     await writeFileAtomic(readmePath, readmeContent);
   }
 
-  private static readonly EXCLUDED_YML = new Set(['opencollection.yml', 'folder.yml']);
-
   /**
    * Recursively find all .bru and .yml request files
    */
-  private async findBruFiles(dirPath: string, bruFiles: string[]): Promise<void> {
+  private async findBruFiles(dirPath: string, bruFiles: string[], collectionPath: string): Promise<void> {
     const entries = await fs.readdir(dirPath, { withFileTypes: true });
 
     for (const entry of entries) {
       const fullPath = join(dirPath, entry.name);
 
       if (entry.isDirectory() && entry.name !== 'node_modules' && entry.name !== '.git' && entry.name !== 'environments') {
-        await this.findBruFiles(fullPath, bruFiles);
-      } else if (entry.isFile() && (entry.name.endsWith('.bru') || (entry.name.endsWith('.yml') && !CollectionManager.EXCLUDED_YML.has(entry.name)))) {
-        bruFiles.push(fullPath);
+        await this.findBruFiles(fullPath, bruFiles, collectionPath);
+      } else if (entry.isFile() && (entry.name.endsWith('.bru') || entry.name.endsWith('.yml'))) {
+        if (!isMetadataFile(fullPath, collectionPath)) {
+          bruFiles.push(fullPath);
+        }
       }
     }
   }
