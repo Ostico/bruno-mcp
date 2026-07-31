@@ -1120,6 +1120,97 @@ http:
       expect(result.parseErrors).toBe(1);
     });
 
+    it('names the skipped file and the reason, not just a count', async () => {
+      const VALID_REQUEST = `
+info:
+  name: Valid
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/valid"
+`;
+      // Nested mapping in a compact mapping — a yaml-level failure, so the
+      // message comes from the `yaml` package rather than our own guards.
+      const INVALID_YAML = `info:
+  name: Broken
+   token: literal-secret-that-must-not-be-echoed
+`;
+
+      setupFsReaddirRecursive({
+        '/test-collection': [
+          { name: 'Valid.yml', isFile: true, isDirectory: false },
+          { name: 'Broken.yml', isFile: true, isDirectory: false },
+        ],
+      });
+
+      mockedFs.readFile.mockImplementation(async (filePath: any) => {
+        const p = typeof filePath === 'string' ? filePath : filePath.toString();
+        if (p.includes('Valid.yml')) return VALID_REQUEST;
+        if (p.includes('Broken.yml')) return INVALID_YAML;
+        const err = new Error(`ENOENT: ${p}`) as NodeJS.ErrnoException;
+        err.code = 'ENOENT';
+        throw err;
+      });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
+
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
+
+      expect(result.parseFailures).toHaveLength(1);
+      const failure = result.parseFailures![0];
+      // The path a caller can hand straight back to read_request.
+      expect(failure.file).toBe(path.join('/test-collection', 'Broken.yml'));
+      expect(failure.message.length).toBeGreaterThan(0);
+      // First line only: the reason and its position survive, the code frame
+      // that echoes the offending source line does not.
+      expect(failure.message).not.toContain('\n');
+      expect(failure.message).not.toContain('literal-secret-that-must-not-be-echoed');
+      expect(failure.message).toMatch(/line \d+, column \d+/);
+      // The count stays in agreement with the detail because it is derived.
+      expect(result.parseErrors).toBe(result.parseFailures!.length);
+    });
+
+    it('reports every unparseable file, not only the first', async () => {
+      const INVALID_YAML = `not: [valid: yaml: request`;
+
+      setupFsReaddirRecursive({
+        '/test-collection': [
+          { name: 'BadOne.yml', isFile: true, isDirectory: false },
+          { name: 'BadTwo.yml', isFile: true, isDirectory: false },
+        ],
+      });
+
+      mockedFs.readFile.mockResolvedValue(INVALID_YAML as any);
+      setupFsStat(['/test-collection']);
+
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
+
+      expect(result.summary.total).toBe(0);
+      expect(result.parseErrors).toBe(2);
+      expect(result.parseFailures!.map((f) => path.basename(f.file)).sort())
+        .toEqual(['BadOne.yml', 'BadTwo.yml']);
+    });
+
+    it('names the file when a single requested request will not parse', async () => {
+      const INVALID_YAML = `not: [valid: yaml: request`;
+      const requestPath = path.join('/test-collection', 'broken.yml');
+
+      mockedFs.readFile.mockResolvedValue(INVALID_YAML as any);
+      setupFsStat(['/test-collection']);
+
+      // A named request that will not parse is a hard failure: there is no
+      // partial run to report, so it throws rather than being tallied — but the
+      // message has to say WHICH file, which the parser's own message does not.
+      await expect(
+        RequestExecutor.executeCollection('/test-collection', {
+          requestPath,
+          scriptRunner: TestRunner,
+        }),
+      ).rejects.toThrow(`Failed to parse ${requestPath}:`);
+    });
+
     it('should return parseErrors 0 when all files parse successfully', async () => {
       const VALID_REQUEST = `
 info:
@@ -1141,8 +1232,10 @@ http:
 
       expect(result.summary.total).toBe(1);
       expect(result.parseErrors).toBe(0);
+      expect(result.parseFailures).toEqual([]);
     });
   });
+
 
   // =========================================================================
   // Security fix tests: timeout ?? and redirect SSRF

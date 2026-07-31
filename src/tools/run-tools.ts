@@ -15,7 +15,7 @@ export function registerRunCollectionTool(ctx: ToolContext): void {
     'run_collection',
     {
       title: 'Run Collection',
-      description: 'Execute requests in a Bruno collection and run test scripts. Omit requestPath to run ALL requests. Provide requestPath as a .yml/.bru file to run one request, or as a subdirectory to run all requests in that folder. Each result includes the response body (response_body, response_content_type, response_body_truncated) by default — disable with includeResponseBody=false or cap the size with maxResponseBodyBytes. Outbound requests are SSRF-filtered: targets resolving to private, loopback, link-local or otherwise reserved addresses are refused unless the server operator has allowlisted them, and a refusal is reported per-request as an "SSRF blocked" error with status 0.',
+      description: 'Execute requests in a Bruno collection and run test scripts. Omit requestPath to run ALL requests. Provide requestPath as a .yml/.bru file to run one request, or as a subdirectory to run all requests in that folder. Each result includes the response body (response_body, response_content_type, response_body_truncated) by default — disable with includeResponseBody=false or cap the size with maxResponseBodyBytes. A request file that cannot be parsed is skipped rather than failing the run: the count is parseErrors and each skipped file is named with its reason in parseFailures, so a run over a whole collection can be a subset without looking like one. Outbound requests are SSRF-filtered: targets resolving to private, loopback, link-local or otherwise reserved addresses are refused unless the server operator has allowlisted them, and a refusal is reported per-request as an "SSRF blocked" error with status 0.',
       inputSchema: {
         collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to collection root directory. Use the path returned by list_collections.'),
         environment: z.string().optional().describe('Environment name to use (e.g. "dev", "staging"). Get available names from get_collection_stats.'),
@@ -69,7 +69,9 @@ export function registerRunCollectionTool(ctx: ToolContext): void {
             includeResponseBody: args.includeResponseBody,
             maxResponseBodyBytes: args.maxResponseBodyBytes,
             // Production runs untrusted scripts behind the process boundary.
-            // This is the single opt-in; the executor defaults to in-process.
+            // Named explicitly even though it is now the executor's default: a
+            // security property this entry point depends on should be readable
+            // here, not inferred from a default someone could change.
             scriptRunner: forkingScriptRunner,
           },
         );
