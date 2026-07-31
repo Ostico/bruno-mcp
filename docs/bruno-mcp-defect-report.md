@@ -547,7 +547,20 @@ posture decisions.
     checks for that name permanently, including if DNS later moves it. Correct behaviour, but an operator has
     to be told. Ride along with any PR.
 11. **Decision** — should the in-process runner stay the default for `options?.scriptRunner ?? TestRunner`?
+    **FIXED.** Resolved as no: the default is now `forkingScriptRunner`, so omitting the option gets the
+    process boundary and the in-process runner is reachable only by naming it. Retained rather than deleted,
+    because the unit lane cannot fork — the forking runner needs `dist/bruno/sandbox-worker.js`, which only
+    the integration lane's `globalSetup` builds — so unit tests that execute a script pass `TestRunner`
+    explicitly. A test asserts the default routes away from in-process execution, and it goes red if the
+    default regresses.
 12. **Decision** — is `env-loader.ts` binding a secret to `''` a bug or the contract?
+    **FIXED.** Resolved as a bug, in the value chosen rather than in the absence. Empty string is a *resolved*
+    value: `substitute` expanded `{{token}}` to nothing and put `Authorization: Bearer ` on the wire, while
+    `findUnresolvedPlaceholders` — which applies the same `undefined` test — reported nothing wrong, so the run
+    failed on a 401 with no diagnostic. A secret with no value on disk is now left unbound, which keeps the
+    placeholder literal and names it in the run's unresolved-variable warnings. A secret that does carry a
+    value is still bound to it. Does not remove the need for **H3** (item 9): leaving the name unbound makes
+    the gap visible, it does not give an operator any way to supply the value.
 
 ### Tier 3 — the rest
 

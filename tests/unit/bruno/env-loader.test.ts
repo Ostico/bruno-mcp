@@ -55,6 +55,50 @@ describe('Environment Loader', () => {
       expect(vars.get('url')).toBe('https://dev.matecat.com');
     });
 
+    it('leaves a .yml secret with no value key unbound', async () => {
+      // `.yml` stores a secret as `secret: true` with no `value` key, because the
+      // value lives outside the file. Binding the name to '' would resolve
+      // `{{token}}` to nothing and suppress the unresolved-variable warning.
+      const envDir = join(tempDir, 'environments');
+      await fs.mkdir(envDir, { recursive: true });
+      await fs.writeFile(join(envDir, 'dev.yml'), `name: dev\nvariables:\n  - name: url\n    value: https://dev.matecat.com\n  - name: token\n    secret: true\n`);
+
+      const vars = await loadEnvironment(tempDir, 'dev');
+      expect(vars.size).toBe(1);
+      expect(vars.has('token')).toBe(false);
+      expect(vars.get('url')).toBe('https://dev.matecat.com');
+    });
+
+    it('leaves a .yml secret whose value is an empty string unbound', async () => {
+      const envDir = join(tempDir, 'environments');
+      await fs.mkdir(envDir, { recursive: true });
+      await fs.writeFile(join(envDir, 'dev.yml'), `name: dev\nvariables:\n  - name: token\n    value: ''\n    secret: true\n`);
+
+      const vars = await loadEnvironment(tempDir, 'dev');
+      expect(vars.size).toBe(0);
+    });
+
+    it('binds a .yml secret that does carry a value', async () => {
+      // The file wins: a secret written with a value is bound to that value.
+      const envDir = join(tempDir, 'environments');
+      await fs.mkdir(envDir, { recursive: true });
+      await fs.writeFile(join(envDir, 'dev.yml'), `name: dev\nvariables:\n  - name: token\n    value: on-disk\n    secret: true\n`);
+
+      const vars = await loadEnvironment(tempDir, 'dev');
+      expect(vars.get('token')).toBe('on-disk');
+    });
+
+    it('still binds a NON-secret variable with no value to an empty string', async () => {
+      // The change is scoped to secrets: for a plain variable an absent value is
+      // a declared-but-empty value, not a value withheld by the format.
+      const envDir = join(tempDir, 'environments');
+      await fs.mkdir(envDir, { recursive: true });
+      await fs.writeFile(join(envDir, 'dev.yml'), `name: dev\nvariables:\n  - name: blank\n`);
+
+      const vars = await loadEnvironment(tempDir, 'dev');
+      expect(vars.get('blank')).toBe('');
+    });
+
     it('should return an empty map when the environment file is missing', async () => {
       const vars = await loadEnvironment(tempDir, 'nonexistent');
       expect(vars).toBeInstanceOf(Map);
@@ -166,10 +210,12 @@ describe('Environment Loader', () => {
       expect(vars.has('disabled_var')).toBe(false);
     });
 
-    it('should keep secret variables (preserving the secret flag) rather than dropping them', async () => {
-      // Bruno stores a secret variable's NAME in the `.bru` file but not its
-      // plaintext value, so `parseBruEnvironmentRaw` carries secret:true with an
-      // empty value. The loader must still include the variable, not drop it.
+    it('leaves a valueless secret unbound rather than binding it to an empty string', async () => {
+      // The serializer drops a secret's value, so this fixture round-trips to a
+      // `vars:secret [...]` entry carrying the NAME only — which is the point.
+      // Binding the name to '' would make it indistinguishable from a resolved
+      // empty value: `{{apiKey}}` would expand to nothing, go out on the wire,
+      // and be reported as resolved. Unbound keeps it diagnosable.
       const envDir = join(tempDir, 'environments');
       await fs.mkdir(envDir, { recursive: true });
       const content = generateBruEnvironmentFull([
@@ -179,10 +225,25 @@ describe('Environment Loader', () => {
       await fs.writeFile(join(envDir, 'prod.bru'), content);
 
       const vars = await loadEnvironment(tempDir, 'prod');
-      expect(vars.size).toBe(2);
-      expect(vars.has('apiKey')).toBe(true);
-      expect(vars.get('apiKey')).toBe('');
+      expect(vars.size).toBe(1);
+      expect(vars.has('apiKey')).toBe(false);
       expect(vars.get('plain')).toBe('visible');
+    });
+
+    it('binds a .bru secret that does carry a value on disk', async () => {
+      // The `vars` block wins over the assumption that secrets are never
+      // value-bearing: a name listed there with a value is bound to it, even
+      // when the file also flags it secret.
+      const envDir = join(tempDir, 'environments');
+      await fs.mkdir(envDir, { recursive: true });
+      await fs.writeFile(
+        join(envDir, 'prod.bru'),
+        `vars {\n  token: on-disk\n}\nvars:secret [\n  other\n]\n`,
+      );
+
+      const vars = await loadEnvironment(tempDir, 'prod');
+      expect(vars.get('token')).toBe('on-disk');
+      expect(vars.has('other')).toBe(false);
     });
 
     it('should prefer the .yml file when both .yml and .bru exist', async () => {

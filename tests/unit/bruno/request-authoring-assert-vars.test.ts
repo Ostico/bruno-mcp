@@ -29,6 +29,8 @@ import { createRequestBuilder, RequestBuilder } from '../../../src/bruno/request
 import { parseBruRequest } from '../../../src/bruno/bru-parser.js';
 import { parseYamlRequest } from '../../../src/bruno/yaml-parser.js';
 import { RequestExecutor } from '../../../src/bruno/request-executor.js';
+// Opts out of the forking default: this lane has no built dist/ worker to fork.
+import { TestRunner } from '../../../src/bruno/test-runner.js';
 
 // The closing test runs the executor. fetch is mocked rather than pointed at a
 // local server: a real socket would add nothing — path substitution, vars and
@@ -514,7 +516,7 @@ describe('an authored request actually asserts and substitutes when run', () => 
     });
     expect(created.success).toBe(true);
 
-    const run = await RequestExecutor.executeCollection(collectionPath, {});
+    const run = await RequestExecutor.executeCollection(collectionPath, { scriptRunner: TestRunner });
     expect(String(mockFetch.mock.calls[0][0])).toBe('https://api.example.com/users/42');
 
     const request = run.results[0];

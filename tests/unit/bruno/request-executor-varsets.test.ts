@@ -20,6 +20,8 @@
  */
 
 import { RequestExecutor } from '../../../src/bruno/request-executor';
+// Opts out of the forking default: this lane has no built dist/ worker to fork.
+import { TestRunner } from '../../../src/bruno/test-runner';
 import {
   applyPreRequestVars,
   bruVarSetsToYamlVars,
@@ -219,7 +221,7 @@ async function runOne(fileName: string, source: string, body: unknown = WIDGET_B
   setupFsStat(['/test-collection']);
   mockFetch.mockResolvedValue(createMockResponse(body));
 
-  const result = await RequestExecutor.executeCollection('/test-collection', {});
+  const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
   return result.results[0];
 }
 

@@ -4,8 +4,7 @@ import { homedir, tmpdir } from 'node:os';
 import { parseYamlRequest } from './yaml-parser.js';
 import { parseBruRequest } from './bru-parser.js';
 import { loadEnvironment, substitute, findUnresolvedPlaceholders } from './env-loader.js';
-import { TestRunner } from './test-runner.js';
-import type { ScriptRunner } from './sandbox-host.js';
+import { forkingScriptRunner, type ScriptRunner } from './sandbox-host.js';
 import { wrapFetchResponse } from './response-wrapper.js';
 import { validateUrl, ssrfRemediation } from './url-validator.js';
 import { VariableStore } from './variable-store.js';
@@ -57,9 +56,13 @@ interface ExecutionOptions {
   includeResponseBody?: boolean;
   maxResponseBodyBytes?: number;
   /**
-   * How scripts are run. Defaults to the in-process TestRunner so the test
-   * suite runs without forking; production (server.ts) injects the forking
-   * runner so untrusted scripts execute behind a process boundary.
+   * How scripts are run. Defaults to the FORKING runner, so a caller that says
+   * nothing gets the process boundary: scripts come from a collection on disk
+   * that the operator did not write. Pass the in-process `TestRunner` only to
+   * opt OUT of that boundary — it runs collection scripts in this process, with
+   * no env scrubbing and no way to kill a runaway script. The unit suite passes
+   * it deliberately, because forking needs the built worker at
+   * dist/bruno/sandbox-worker.js, which that lane does not produce.
    */
   scriptRunner?: ScriptRunner;
 }
@@ -1088,15 +1091,13 @@ export class RequestExecutor {
       maxResponseBodyBytes: options?.maxResponseBodyBytes ?? DEFAULT_MAX_RESPONSE_BODY_BYTES,
     };
 
-    // The default runs collection scripts IN THIS PROCESS, with no sandbox
-    // boundary. That is a deliberate choice for the test suite, which would
-    // otherwise fork a child per script, and it is safe only because a caller
-    // reaching this function directly already controls the process. Every
-    // production entry point must inject the forking runner instead — server.ts
-    // does — because there a script comes from a collection the operator did not
-    // write. A new caller that omits scriptRunner silently opts out of that
-    // boundary, so the omission is the thing to check in review.
-    const scriptRunner = options?.scriptRunner ?? TestRunner;
+    // Fails closed: omitting scriptRunner gets the process boundary, not a
+    // silent opt-out of it. The in-process runner is reachable only by naming
+    // it, and a caller that names it in production is visible in review.
+    // Forking needs the built worker, so a caller that omits this in a context
+    // without dist/ fails loudly on the first non-empty script rather than
+    // quietly running it here.
+    const scriptRunner = options?.scriptRunner ?? forkingScriptRunner;
 
     let vars = new Map<string, string>();
     if (options?.environment) {

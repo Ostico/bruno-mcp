@@ -4,6 +4,12 @@
  */
 
 import { RequestExecutor } from '../../../src/bruno/request-executor';
+// Every executeCollection call below names TestRunner to opt OUT of the forking
+// default, which needs the built worker at dist/bruno/sandbox-worker.js — an
+// artifact only the integration lane produces. A call that omits it fails on the
+// first non-empty script instead of quietly running it in-process, which is the
+// point: production gets the process boundary by default.
+import { TestRunner } from '../../../src/bruno/test-runner';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
@@ -265,7 +271,7 @@ describe('RequestExecutor', () => {
         createMockResponse({ hello: 'world' }, 200, 'OK', 'application/json'),
       );
 
-      const result = await RequestExecutor.executeCollection('/test-collection', {
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner,
         environment: 'dev',
       });
 
@@ -279,7 +285,7 @@ describe('RequestExecutor', () => {
         createMockResponse('abcdefghijklmnop', 200, 'OK', 'text/plain'),
       );
 
-      const result = await RequestExecutor.executeCollection('/test-collection', {
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner,
         environment: 'dev',
         maxResponseBodyBytes: 5,
       });
@@ -294,7 +300,7 @@ describe('RequestExecutor', () => {
         createMockResponse({ hello: 'world' }, 200, 'OK', 'application/json'),
       );
 
-      const result = await RequestExecutor.executeCollection('/test-collection', {
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner,
         environment: 'dev',
         includeResponseBody: false,
       });
@@ -326,7 +332,7 @@ describe('RequestExecutor', () => {
 
       const result = await RequestExecutor.executeCollection(
         '/test-collection',
-        { environment: 'dev' },
+        { scriptRunner: TestRunner, environment: 'dev' }
       );
 
       expect(result.summary.total).toBe(2);
@@ -363,7 +369,7 @@ describe('RequestExecutor', () => {
 
       const result = await RequestExecutor.executeCollection(
         '/test-collection',
-        { environment: 'dev' },
+        { scriptRunner: TestRunner, environment: 'dev' }
       );
 
       expect(result.summary.total).toBe(1);
@@ -407,6 +413,33 @@ describe('RequestExecutor', () => {
       ]);
     });
 
+    it('omitting scriptRunner takes the forking path, never the in-process one', async () => {
+      // The security property of the default, asserted rather than assumed: with
+      // no runner named, the script must NOT run in this process. It cannot
+      // succeed here either — the forking runner needs the built worker at
+      // dist/bruno/sandbox-worker.js and this lane does not produce it — so the
+      // observable outcome is a failed script, not a passing in-process one. If
+      // the default ever regresses to the in-process runner, these two tests
+      // pass, which is exactly what must not happen silently.
+      setupFsReaddir(['Get Status.yml']);
+      setupFsReadFile({
+        'Get Status.yml': REQUEST_WITH_TESTS_YAML,
+        'dev.yml': ENV_YAML,
+      });
+      setupFsStat(['/test-collection', '/test-collection/environments']);
+      mockFetch.mockResolvedValueOnce(createMockResponse({ status: 'healthy' }));
+
+      const result = await RequestExecutor.executeCollection('/test-collection', {
+        environment: 'dev',
+      });
+
+      expect(result.results[0].tests).not.toEqual([
+        { description: 'should return 200', status: 'pass' },
+        { description: 'should have status field', status: 'pass' },
+      ]);
+      expect(result.summary.passed).toBe(0);
+    });
+
     it('should warn when assertions ran outside a test() block', async () => {
       setupFsReaddir(['Bare Assert.yml']);
       setupFsReadFile({
@@ -419,7 +452,7 @@ describe('RequestExecutor', () => {
 
       const result = await RequestExecutor.executeCollection(
         '/test-collection',
-        { environment: 'dev' },
+        { scriptRunner: TestRunner, environment: 'dev' }
       );
 
       // The request passes and records no assertions — the warning is the only
@@ -441,7 +474,7 @@ describe('RequestExecutor', () => {
 
       const result = await RequestExecutor.executeCollection(
         '/test-collection',
-        { environment: 'dev' },
+        { scriptRunner: TestRunner, environment: 'dev' }
       );
 
       expect(result.results[0].warnings).toBeUndefined();
@@ -465,7 +498,7 @@ describe('RequestExecutor', () => {
 
       const result = await RequestExecutor.executeCollection(
         '/test-collection',
-        { environment: 'dev' },
+        { scriptRunner: TestRunner, environment: 'dev' }
       );
 
       expect(result.summary.total).toBe(2);
@@ -497,7 +530,7 @@ describe('RequestExecutor', () => {
 
       const result = await RequestExecutor.executeCollection(
         '/test-collection',
-        { environment: 'dev' },
+        { scriptRunner: TestRunner, environment: 'dev' }
       );
 
       expect(result.summary.total).toBe(1);
@@ -522,7 +555,7 @@ describe('RequestExecutor', () => {
 
       const result = await RequestExecutor.executeCollection(
         '/test-collection',
-        { environment: 'nonexistent' },
+        { scriptRunner: TestRunner, environment: 'nonexistent' }
       );
 
       expect(result.summary.total).toBe(1);
@@ -554,7 +587,7 @@ http:
       );
 
       const result = await RequestExecutor.executeCollection(
-        '/test-collection',
+        '/test-collection', { scriptRunner: TestRunner }
       );
 
       expect(result.summary.total).toBe(1);
@@ -587,10 +620,10 @@ http:
 
       const result = await RequestExecutor.executeCollection(
         '/test-collection',
-        {
+        { scriptRunner: TestRunner,
           environment: 'dev',
           requestPath: '/test-collection/requests/Get Users.yml',
-        },
+        }
       );
 
       expect(result.summary.total).toBe(1);
@@ -633,7 +666,7 @@ http:
 
       await RequestExecutor.executeCollection(
         '/test-collection',
-        { environment: 'dev' },
+        { scriptRunner: TestRunner, environment: 'dev' }
       );
 
       expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -692,7 +725,7 @@ http:
         .mockResolvedValueOnce(createMockResponse({ n: 2 }))
         .mockResolvedValueOnce(createMockResponse({ n: 3 }));
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.results[0].name).toBe('First');
       expect(result.results[1].name).toBe('Second');
@@ -706,7 +739,7 @@ http:
         Object.assign(new Error('ENOENT'), { code: 'ENOENT' }),
       );
 
-      const result = await RequestExecutor.executeCollection('/nonexistent');
+      const result = await RequestExecutor.executeCollection('/nonexistent', { scriptRunner: TestRunner });
 
       // Recursive discovery gracefully handles missing directories
       expect(result.summary.total).toBe(0);
@@ -730,7 +763,7 @@ http:
 
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.summary.total).toBe(1);
       expect(result.results[0].name).toBe('Simple');
@@ -752,7 +785,7 @@ http:
 
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.summary.total).toBe(1);
       expect(result.results[0].name).toBe('No Seq');
@@ -767,7 +800,7 @@ http:
 
       mockFetch.mockResolvedValueOnce(createMockResponse([]));
 
-      await RequestExecutor.executeCollection('/test-collection');
+      await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       const [, options] = mockFetch.mock.calls[0];
       expect(options.headers['Accept']).toBe('application/json');
@@ -784,7 +817,7 @@ http:
         createMockResponse({ id: 1 }, 201, 'Created'),
       );
 
-      await RequestExecutor.executeCollection('/test-collection');
+      await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       const [, options] = mockFetch.mock.calls[0];
       expect(options.method).toBe('POST');
@@ -802,7 +835,7 @@ http:
 
       mockFetch.mockResolvedValueOnce(createMockResponse([]));
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.results[0].duration_ms).toBeGreaterThanOrEqual(0);
       expect(typeof result.results[0].duration_ms).toBe('number');
@@ -860,7 +893,7 @@ http:
         .mockResolvedValueOnce(createMockResponse({ ok: true }))
         .mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.summary.total).toBe(2);
       // Sorted by seq: Nested (seq 1) before Top (seq 2)
@@ -895,7 +928,7 @@ http:
 
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.summary.total).toBe(1);
       expect(result.results[0].name).toBe('Valid');
@@ -921,7 +954,7 @@ http:
       setupFsReadFile({ 'SSRF Request.yml': SSRF_REQUEST_YAML });
       setupFsStat(['/test-collection']);
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.summary.total).toBe(1);
       expect(result.summary.failed).toBe(1);
@@ -943,7 +976,7 @@ http:
       setupFsReadFile({ 'SSRF Request.yml': SSRF_REQUEST_YAML });
       setupFsStat(['/test-collection']);
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.results[0].error).toBe(
         'SSRF blocked: Blocked IP: link-local address (169.254.0.0/16). REMEDIATION_SENTINEL',
@@ -962,7 +995,7 @@ http:
       setupFsReadFile({ 'SSRF Request.yml': SSRF_REQUEST_YAML });
       setupFsStat(['/test-collection']);
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.results[0].error).toBe(
         'SSRF blocked: DNS resolution failed for hostname: nope.example.com',
@@ -995,7 +1028,7 @@ http:
 
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.summary.total).toBe(2);
       expect(result.summary.failed).toBe(1);
@@ -1017,7 +1050,7 @@ http:
 
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      await RequestExecutor.executeCollection('/test-collection');
+      await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(mockFetch).toHaveBeenCalledTimes(1);
       const [, fetchOptions] = mockFetch.mock.calls[0];
@@ -1041,7 +1074,7 @@ http:
 
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      await RequestExecutor.executeCollection('/test-collection');
+      await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(mockFetch).toHaveBeenCalledTimes(1);
       const [, fetchOptions] = mockFetch.mock.calls[0];
@@ -1081,7 +1114,7 @@ http:
 
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.summary.total).toBe(1);
       expect(result.parseErrors).toBe(1);
@@ -1104,7 +1137,7 @@ http:
 
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.summary.total).toBe(1);
       expect(result.parseErrors).toBe(0);
@@ -1136,7 +1169,7 @@ settings:
 
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      await RequestExecutor.executeCollection('/test-collection');
+      await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       // timeout: 0 means no timeout — AbortSignal.timeout should NOT be called
       expect(abortTimeoutSpy).not.toHaveBeenCalled();
@@ -1189,7 +1222,7 @@ http:
         .mockResolvedValueOnce(createMockResponse({ token: 'tok_abc123' }))
         .mockResolvedValueOnce(createMockResponse({ data: 'secret' }));
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.summary.total).toBe(2);
       expect(result.summary.passed).toBe(2);
@@ -1243,7 +1276,7 @@ http:
 
       const result = await RequestExecutor.executeCollection(
         '/test-collection',
-        { environment: 'dev' },
+        { scriptRunner: TestRunner, environment: 'dev' }
       );
 
       expect(result.summary.total).toBe(2);
@@ -1293,7 +1326,7 @@ http:
         .mockResolvedValueOnce(createMockResponse({ ok: true }))
         .mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      const result1 = await RequestExecutor.executeCollection('/test-collection');
+      const result1 = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
       expect(result1.summary.total).toBe(2);
       expect(mockFetch.mock.calls[1][0]).toBe('https://api.example.com/get?val=from_run');
 
@@ -1306,7 +1339,7 @@ http:
         .mockResolvedValueOnce(createMockResponse({ ok: true }))
         .mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      const result2 = await RequestExecutor.executeCollection('/test-collection');
+      const result2 = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
       expect(result2.summary.total).toBe(2);
       // The setter runs again, so run_var is set again
       expect(mockFetch.mock.calls[1][0]).toBe('https://api.example.com/get?val=from_run');
@@ -1335,7 +1368,7 @@ runtime:
       setupFsStat(['/test-collection']);
 
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
-      await RequestExecutor.executeCollection('/test-collection');
+      await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       // Run 2: only getter, no setter — leak_test should not be available
       const GETTER_REQUEST = `
@@ -1359,7 +1392,7 @@ http:
       setupFsReadFile({ 'Getter.yml': GETTER_REQUEST });
 
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
-      await RequestExecutor.executeCollection('/test-collection2');
+      await RequestExecutor.executeCollection('/test-collection2', { scriptRunner: TestRunner });
 
       // leak_test should NOT be substituted — fresh store means it stays as template
       expect(mockFetch.mock.calls[0][0]).toBe('https://api.example.com/get?val={{leak_test}}');
@@ -1421,7 +1454,7 @@ http:
         .mockResolvedValueOnce(createMockResponse({ ok: true }))
         .mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.summary.total).toBe(3);
       expect(result.summary.passed).toBe(3);
@@ -1448,7 +1481,7 @@ http:
 
       const result = await RequestExecutor.executeCollection(
         '/test-collection',
-        { environment: 'dev' },
+        { scriptRunner: TestRunner, environment: 'dev' }
       );
 
       expect(result.summary.total).toBe(1);
@@ -1494,7 +1527,7 @@ http:
         .mockReturnValueOnce({ valid: true })
         .mockReturnValueOnce({ valid: false, reason: 'Blocked IP: link-local address (169.254.0.0/16)' });
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.summary.total).toBe(1);
       expect(result.summary.failed).toBe(1);
@@ -1538,7 +1571,7 @@ http:
       // Both URLs pass validation
       mockedValidateUrl.mockReturnValue({ valid: true });
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.summary.total).toBe(1);
       expect(result.summary.passed).toBe(1);
@@ -1578,7 +1611,7 @@ http:
         .mockResolvedValueOnce(createMockResponse({ ok: true }, 200));
       mockedValidateUrl.mockReturnValue({ valid: true });
 
-      await RequestExecutor.executeCollection('/test-collection');
+      await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       // Hop 1 (same origin as the request) carries the credential...
       const hop1 = mockFetch.mock.calls[0][1].headers as Record<string, string>;
@@ -1618,7 +1651,7 @@ http:
         .mockResolvedValueOnce(createMockResponse({ ok: true }, 200));
       mockedValidateUrl.mockReturnValue({ valid: true });
 
-      await RequestExecutor.executeCollection('/test-collection');
+      await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       const hop2 = mockFetch.mock.calls[1][1].headers as Record<string, string>;
       expect(hop2.Authorization).toBe('Bearer sekret');
@@ -1641,7 +1674,7 @@ http:
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }, 200));
       mockedValidateUrl.mockReturnValue({ valid: true });
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       // The real request still went out with the secret...
       expect(mockFetch.mock.calls[0][0]).toContain('SECRET123');
@@ -1680,7 +1713,7 @@ http:
 
       mockedValidateUrl.mockReturnValue({ valid: true });
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.summary.total).toBe(1);
       expect(result.summary.failed).toBe(1);
@@ -1718,7 +1751,7 @@ settings:
       mockFetch.mockResolvedValueOnce(redirectResponse);
       mockedValidateUrl.mockReturnValue({ valid: true });
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       // 3xx returned as-is; no follow
       expect(result.results[0].status).toBe(302);
@@ -1753,7 +1786,7 @@ settings:
       mockFetch.mockResolvedValue(loopResponse);
       mockedValidateUrl.mockReturnValue({ valid: true });
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.results[0].status).toBe(0);
       expect(result.results[0].error).toContain('Too many redirects');
@@ -1785,7 +1818,7 @@ settings:
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }, 200));
       mockedValidateUrl.mockReturnValue({ valid: true });
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.results[0].status).toBe(200);
       expect(result.results[0].error).toBeUndefined();
@@ -1830,7 +1863,7 @@ settings:
         .mockResolvedValueOnce(createMockResponse({ ok: true }, 200));
       mockedValidateUrl.mockReturnValue({ valid: true });
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.results[0].status).toBe(200);
       expect(result.results[0].error).toBeUndefined();
@@ -1872,7 +1905,7 @@ http:
         .mockResolvedValueOnce(createMockResponse({ ok: true }, 200));
       mockedValidateUrl.mockReturnValue({ valid: true });
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.results[0].status).toBe(200);
       // Original hop: POST with a body
@@ -1916,7 +1949,7 @@ http:
         .mockResolvedValueOnce(createMockResponse({ ok: true }, 200));
       mockedValidateUrl.mockReturnValue({ valid: true });
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.results[0].status).toBe(200);
       // 307 preserves method and body on the redirected hop
@@ -1951,7 +1984,7 @@ runtime:
 
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.summary.total).toBe(1);
       expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -1980,7 +2013,7 @@ runtime:
 
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      await RequestExecutor.executeCollection('/test-collection');
+      await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(mockFetch).toHaveBeenCalledTimes(1);
       const [calledUrl] = mockFetch.mock.calls[0];
@@ -2027,7 +2060,7 @@ http:
         .mockResolvedValueOnce(createMockResponse({ ok: true }))
         .mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.summary.total).toBe(2);
       const secondCallOptions = mockFetch.mock.calls[1][1];
@@ -2050,7 +2083,7 @@ http:
 
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.summary.total).toBe(1);
       expect(result.summary.passed).toBe(1);
@@ -2083,7 +2116,7 @@ runtime:
 
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.summary.total).toBe(1);
       expect(result.summary.passed).toBe(1);
@@ -2128,7 +2161,7 @@ http:
         .mockResolvedValueOnce(createMockResponse({ ok: true }))
         .mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.summary.total).toBe(2);
       expect(result.summary.passed).toBe(2);
@@ -2181,7 +2214,7 @@ http:
 
       const result = await RequestExecutor.executeCollection(
         '/test-collection',
-        { parallel: true },
+        { scriptRunner: TestRunner, parallel: true }
       );
 
       expect(result.summary.total).toBe(2);
@@ -2264,7 +2297,7 @@ http:
       throwOnBadProxy();
 
       await expect(
-        RequestExecutor.executeCollection('/test-collection', { parallel: true }),
+        RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner, parallel: true }),
       ).rejects.toThrow(/Invalid URL/);
     });
 
@@ -2285,7 +2318,7 @@ http:
       // Not an AggregateError: a single failure propagates unchanged so the
       // message and type match what serial execution would surface.
       await expect(
-        RequestExecutor.executeCollection('/test-collection', { parallel: true }),
+        RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner, parallel: true }),
       ).rejects.toThrow(TypeError);
     });
 
@@ -2327,7 +2360,7 @@ http:
 
       let caught: unknown;
       try {
-        await RequestExecutor.executeCollection('/test-collection', { parallel: true });
+        await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner, parallel: true });
       } catch (error) {
         caught = error;
       }
@@ -2370,7 +2403,7 @@ http:
 
       let caught: unknown;
       try {
-        await RequestExecutor.executeCollection('/test-collection', { parallel: true });
+        await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner, parallel: true });
       } catch (error) {
         caught = error;
       }
@@ -2430,7 +2463,7 @@ http:
 
       const result = await RequestExecutor.executeCollection(
         '/test-collection',
-        { parallel: true },
+        { scriptRunner: TestRunner, parallel: true }
       );
 
       expect(result.summary.total).toBe(2);
@@ -2469,7 +2502,7 @@ http:
 
       const result = await RequestExecutor.executeCollection(
         '/test-collection',
-        { parallel: true },
+        { scriptRunner: TestRunner, parallel: true }
       );
 
       expect(result.summary.total).toBe(1);
@@ -2516,7 +2549,7 @@ http:
 
       const result = await RequestExecutor.executeCollection(
         '/test-collection',
-        { parallel: true },
+        { scriptRunner: TestRunner, parallel: true }
       );
 
       expect(result.summary.total).toBe(2);
@@ -2591,7 +2624,7 @@ body:json {
 
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.summary.total).toBe(1);
       expect(result.results[0].name).toBe('Bru Multipart');
@@ -2615,7 +2648,7 @@ body:json {
 
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.summary.total).toBe(1);
       expect(result.results[0].name).toBe('Bru Json');
@@ -2629,7 +2662,7 @@ body:json {
 
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      const result = await RequestExecutor.executeCollection('/test-collection', {
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner,
         requestPath: '/test-collection/Data.bru',
       });
 
@@ -2652,7 +2685,7 @@ body:json {
 
       mockFetch.mockResolvedValueOnce(createMockResponse([{ id: 1 }]));
 
-      const result = await RequestExecutor.executeCollection('/test-collection', {
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner,
         requestPath: '/test-collection/sub',
       });
 
@@ -2666,7 +2699,7 @@ body:json {
       );
 
       await expect(
-        RequestExecutor.executeCollection('/test-collection', {
+        RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner,
           requestPath: '/test-collection/notes.txt',
         }),
       ).rejects.toThrow('Unsupported request file format');
@@ -2699,7 +2732,7 @@ runtime:
 
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      await RequestExecutor.executeCollection('/test-collection');
+      await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       const [, fetchOptions] = mockFetch.mock.calls[0];
       expect(fetchOptions.body).toBe(JSON.stringify({ hello: 'world', n: 42 }));
@@ -2726,7 +2759,7 @@ runtime:
 
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.results[0].error).toContain('pre boom');
       // A failing pre-request script halts the request: the HTTP call must not
@@ -2767,7 +2800,7 @@ http:
       setupFsStat(['/test-collection']);
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      await RequestExecutor.executeCollection('/test-collection');
+      await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       const [, opts] = mockFetch.mock.calls[0];
       const sent = opts.headers as Record<string, string>;
@@ -2789,7 +2822,7 @@ http:
       setupFsStat(['/test-collection']);
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       // A header that is never sent cannot have an unresolved variable problem.
       expect(JSON.stringify(result)).not.toContain('never_defined');
@@ -2823,7 +2856,7 @@ settings:
         close,
       });
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.summary.total).toBe(1);
       // Custom fetch used instead of the global mock
@@ -2881,7 +2914,7 @@ http:
       });
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      await RequestExecutor.executeCollection('/test-collection');
+      await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(mockedBuildDispatcher).toHaveBeenCalledTimes(1);
       expect(mockedBuildDispatcher).toHaveBeenCalledWith(expect.anything(), 'api.example.com', [
@@ -2900,7 +2933,7 @@ http:
       mockedValidateUrl.mockReturnValueOnce({ valid: true, addresses: ['93.184.216.34'] });
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
 
-      await RequestExecutor.executeCollection('/test-collection');
+      await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(mockedBuildDispatcher).toHaveBeenCalledTimes(1);
     });
@@ -2920,7 +2953,7 @@ http:
         .mockResolvedValueOnce(first)
         .mockResolvedValueOnce(second);
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.results[0].status).toBe(200);
       expect(mockedBuildDispatcher).toHaveBeenNthCalledWith(1, expect.anything(), 'api.example.com', [
@@ -2959,7 +2992,7 @@ http:
         .mockResolvedValueOnce(undefined);
       mockFetch.mockResolvedValueOnce(createMockResponse({ done: true }));
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.results[0].status).toBe(200);
       // The unpinned hop fell through to global fetch with no dispatcher set.
@@ -2982,7 +3015,7 @@ http:
       };
       mockedBuildDispatcher.mockResolvedValueOnce(failing);
 
-      const result = await RequestExecutor.executeCollection('/test-collection');
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.results[0].status).toBe(0);
       expect(failing.close).toHaveBeenCalledTimes(1);
