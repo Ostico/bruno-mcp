@@ -74,8 +74,13 @@ describe('buildFetchOptions auth application', () => {
     expect(warnings?.some(w => /digest/i.test(w))).toBe(true);
   });
 
-  it('warns that inherited auth is not resolved', async () => {
+  it('warns when there is no root chain to inherit auth from', async () => {
+    // `inherit` IS resolved now, from the collection/folder roots — see
+    // request-executor-roots.test.ts. With no chain passed there is nothing to
+    // resolve, and that still has to be said rather than looking unauthenticated
+    // by choice.
     const { warnings } = await buildFetchOptions(req('inherit'), noVars);
+
     expect(warnings?.some(w => /inherit/i.test(w))).toBe(true);
   });
 

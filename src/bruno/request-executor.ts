@@ -16,6 +16,7 @@ import { bruFileToYamlRequest, bruAuthToYamlAuth } from './bru-to-yaml.js';
 import { describeParseFailure } from './parse-failure.js';
 import type { ExecutionOptions } from './execution-options.js';
 import { discoverRequests, type ParsedRequest } from './request-discovery.js';
+import { createRootLoader, type RootChain, type RootLoader } from './collection-roots.js';
 import { applyVariableOverrides } from './runtime-variables.js';
 import {
   applyCookiesToHeaders,
@@ -154,6 +155,7 @@ export async function buildFetchOptions(
   yaml: YamlRequest,
   vars: Map<string, string>,
   collectionRoot?: string,
+  rootChain?: RootChain,
 ): Promise<{
   url: string;
   options: RequestInit;
@@ -200,6 +202,39 @@ export async function buildFetchOptions(
   // once, on the transition to the second occurrence, rather than N-1 times.
   const headerCounts = new Map<string, number>();
   const headerWarnings: string[] = [];
+
+  // Collection/folder root headers go on FIRST, and any name the request sets
+  // itself is left out of them entirely. Two reasons for dropping rather than
+  // overwriting: appendHeader would otherwise comma-join the two values and send
+  // a doubled credential, and upstream's own merge is a Map filled
+  // root-then-request, where the later write simply replaces the earlier one.
+  // Matched case-insensitively, which upstream does not do — it keys on the name
+  // as written, so a collection's `authorization` and a request's
+  // `Authorization` both go out. Header names are case-insensitive per HTTP, so
+  // that pairing is exactly the doubled-credential case worth avoiding.
+  if (rootChain && rootChain.headers.length > 0) {
+    const ownNames = new Set(
+      (yaml.http.headers ?? [])
+        .filter(h => h.disabled !== true)
+        .map(h => substitute(h.name, vars).toLowerCase()),
+    );
+    // Nearest root wins among the roots themselves: the chain arrives
+    // collection-first, so a later set() replaces an outer folder's header.
+    const nearest = new Map<string, { name: string; value: string }>();
+    for (const h of rootChain.headers) {
+      const headerName = substitute(h.name, vars);
+      nearest.set(headerName.toLowerCase(), { name: headerName, value: h.value });
+    }
+    for (const [lower, h] of nearest) {
+      if (ownNames.has(lower)) {
+        continue;
+      }
+      trackUnresolved(h.name);
+      trackUnresolved(h.value);
+      appendHeader(headers, headerKeys, h.name, substitute(h.value, vars));
+    }
+  }
+
   if (yaml.http.headers) {
     for (const h of yaml.http.headers) {
       // A header explicitly disabled in the collection must not be sent.
@@ -247,6 +282,7 @@ export async function buildFetchOptions(
     },
     authWarnings,
     authHeaderNames,
+    rootChain?.auth,
   );
   if (queryAuth) {
     url = appendQueryCredential(url, queryAuth.key, queryAuth.value);
@@ -357,6 +393,9 @@ export async function buildFetchOptions(
     name => `unresolved variable: {{${name}}}`,
   );
   const warnings = [
+    // First: a root setting that exists and is NOT applied explains warnings
+    // below it, such as an unresolved variable a root's vars block would define.
+    ...(rootChain?.unapplied ?? []),
     ...headerWarnings,
     ...authWarnings,
     ...bodyWarnings,
@@ -415,15 +454,22 @@ function applyAuth(
   subst: (value: string) => string,
   warnings: string[],
   authHeaderNames: string[],
+  inheritedAuth?: YamlAuth,
 ): { key: string; value: string } | undefined {
   if (!auth) {
     return undefined;
   }
   if (auth === 'inherit') {
-    warnings.push(
-      'auth is set to "inherit", but collection/folder auth inheritance is not supported; no credential was sent',
-    );
-    return undefined;
+    // Resolved from the nearest collection/folder root that defines auth. Still
+    // warns when no root does: `inherit` from nothing sends no credential, and
+    // that has to be said rather than looking like a request without auth.
+    if (!inheritedAuth || inheritedAuth === 'inherit') {
+      warnings.push(
+        'auth is set to "inherit", but no collection or folder root defines auth; no credential was sent',
+      );
+      return undefined;
+    }
+    return applyAuth(inheritedAuth, headers, subst, warnings, authHeaderNames);
   }
 
   switch (auth.type) {
@@ -593,6 +639,7 @@ async function executeSingleRequest(
   bodyCapture?: BodyCaptureOptions,
   collectionRoot?: string,
   cookieJar?: RunCookieJar,
+  rootChain?: RootChain,
 ): Promise<RequestExecutionResult> {
   // `vars:pre-request` sits between the environment and the runtime store, which
   // is where upstream puts it: collection < env < folder < REQUEST < oauth2 <
@@ -604,7 +651,7 @@ async function executeSingleRequest(
   const effectiveVars = variableStore ? variableStore.merge(baseVars) : baseVars;
 
   // eslint-disable-next-line prefer-const -- url is reassigned by pre-request script mutations below
-  const built = await buildFetchOptions(yaml, effectiveVars, collectionRoot);
+  const built = await buildFetchOptions(yaml, effectiveVars, collectionRoot, rootChain);
   let url = built.url;
   let options = built.options;
   // Reassignable: a pre-request script that sets a variable triggers a
@@ -659,7 +706,7 @@ async function executeSingleRequest(
       // baseVars, not vars: re-substituting from the environment alone would drop
       // every vars:pre-request entry the moment a pre-request script wrote a
       // variable, which is exactly when this path runs.
-      const rebuilt = await buildFetchOptions(yaml, variableStore.merge(baseVars), collectionRoot);
+      const rebuilt = await buildFetchOptions(yaml, variableStore.merge(baseVars), collectionRoot, rootChain);
       url = rebuilt.url;
       options = rebuilt.options;
       authWarnings = rebuilt.warnings;
@@ -1056,6 +1103,10 @@ export class RequestExecutor {
     // On unless refused, as upstream's `--disable-cookies` is off unless given.
     const cookiesEnabled = options?.cookieJar !== false;
 
+    // One loader for the run: its cache is read-only, so unlike the cookie jar
+    // it is safe to share across parallel folders.
+    const rootLoader: RootLoader = createRootLoader(options?.collectionRoot ?? collectionPath);
+
     let requests: ParsedRequest[];
     let parseFailures: ParseFailure[] = [];
 
@@ -1131,7 +1182,7 @@ export class RequestExecutor {
           const folderJar = cookiesEnabled ? createRunCookieJar() : undefined;
           const folderRes: RequestExecutionResult[] = [];
           for (const req of folderRequests) {
-            const result = await executeSingleRequest(req.yaml, vars, scriptRunner, folderStore, bodyCapture, collectionPath, folderJar);
+            const result = await executeSingleRequest(req.yaml, vars, scriptRunner, folderStore, bodyCapture, collectionPath, folderJar, await rootLoader.forRequest(req.filePath));
             folderRes.push(result);
           }
           return folderRes;
@@ -1178,7 +1229,7 @@ export class RequestExecutor {
       const runJar = cookiesEnabled ? createRunCookieJar() : undefined;
       results = [];
       for (const req of requests) {
-        const result = await executeSingleRequest(req.yaml, vars, scriptRunner, variableStore, bodyCapture, collectionPath, runJar);
+        const result = await executeSingleRequest(req.yaml, vars, scriptRunner, variableStore, bodyCapture, collectionPath, runJar, await rootLoader.forRequest(req.filePath));
         results.push(result);
       }
     }
