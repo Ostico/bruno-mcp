@@ -7,6 +7,7 @@
 import { z } from 'zod';
 import { RequestExecutor } from '../bruno/request-executor.js';
 import { forkingScriptRunner } from '../bruno/sandbox-host.js';
+import { normalizeVariableOverrides } from '../bruno/runtime-variables.js';
 import { validateToolPath } from './tool-path.js';
 import type { ToolContext } from './context.js';
 
@@ -23,7 +24,8 @@ export function registerRunCollectionTool(ctx: ToolContext): void {
         requestPath: z.string().optional().describe('Path to a specific .yml or .bru request file, or a subdirectory within the collection. Get file paths from list_requests or get_collection_stats. Omit to run all requests in the collection.'),
         parallel: z.boolean().optional().default(false).describe('Run folders in parallel. Requests within each folder still run sequentially by seq order. Default: false.'),
         includeResponseBody: z.boolean().optional().default(true).describe('Include the response body of each request in the results. Default: true.'),
-        maxResponseBodyBytes: z.number().optional().default(10240).describe('Maximum response body size (bytes) to return per request; longer bodies are truncated and response_body_truncated is set. Default: 10240.')
+        maxResponseBodyBytes: z.number().optional().default(10240).describe('Maximum response body size (bytes) to return per request; longer bodies are truncated and response_body_truncated is set. Default: 10240.'),
+        variables: z.record(z.union([z.string(), z.number(), z.boolean()])).optional().describe('Variables for this run only, as {name: value}. They override the environment file and work without one. Held in memory and never written to any file — this is the only correct way to supply a secret, because neither Bruno file format stores a secret value. Referenced as {{name}} in urls, headers, bodies and auth. A request-level vars:pre-request entry or a bru.setVar in a script still overrides these, matching Bruno\'s --env-var precedence.')
       }
     },
     async (args) => {
@@ -59,6 +61,17 @@ export function registerRunCollectionTool(ctx: ToolContext): void {
           }
         }
 
+        // Rejected rather than dropped: an override under a name no
+        // {{placeholder}} can reference would be accepted and then silently
+        // never applied, which looks identical to the request being wrong.
+        const { variables, errors } = normalizeVariableOverrides(args.variables);
+        if (errors.length > 0) {
+          return {
+            content: [{ type: 'text', text: `Invalid variables: ${errors.join('; ')}` }],
+            isError: true,
+          };
+        }
+
         const result = await RequestExecutor.executeCollection(
           args.collectionPath,
           {
@@ -68,6 +81,7 @@ export function registerRunCollectionTool(ctx: ToolContext): void {
             parallel: args.parallel,
             includeResponseBody: args.includeResponseBody,
             maxResponseBodyBytes: args.maxResponseBodyBytes,
+            variables,
             // Production runs untrusted scripts behind the process boundary.
             // Named explicitly even though it is now the executor's default: a
             // security property this entry point depends on should be readable

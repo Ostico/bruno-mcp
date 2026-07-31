@@ -15,6 +15,7 @@ import { applyPreRequestVars } from './request-vars.js';
 import { bruFileToYamlRequest, bruAuthToYamlAuth } from './bru-to-yaml.js';
 import { isMetadataFile } from './metadata-files.js';
 import { describeParseFailure } from './parse-failure.js';
+import { applyVariableOverrides } from './runtime-variables.js';
 import {
   redactUrl,
   stripCredentialHeaders,
@@ -67,6 +68,12 @@ interface ExecutionOptions {
    * dist/bruno/sandbox-worker.js, which that lane does not produce.
    */
   scriptRunner?: ScriptRunner;
+  /**
+   * Variables for this run only, overriding the environment file. Names are
+   * assumed validated and values already strings — `normalizeVariableOverrides`
+   * does that at the tool boundary. Never written anywhere.
+   */
+  variables?: Record<string, string>;
 }
 
 const DEFAULT_MAX_RESPONSE_BODY_BYTES = 10240;
@@ -1106,6 +1113,9 @@ export class RequestExecutor {
       const envRoot = options.collectionRoot ?? collectionPath;
       vars = await loadEnvironment(envRoot, options.environment);
     }
+    // Overrides the environment file, and works with no environment at all —
+    // the point, since a secret has no correct on-disk home to load from.
+    vars = applyVariableOverrides(vars, options?.variables);
 
     let requests: ParsedRequest[];
     let parseFailures: ParseFailure[] = [];

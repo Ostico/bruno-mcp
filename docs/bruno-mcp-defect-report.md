@@ -121,7 +121,7 @@ broken, because the symptom is a 403 with no explanation.
 A `cookieJar: true` option on `run_collection`, defaulting to on for a folder run, removes an entire class of
 user confusion. Couples to L1 — expose `res.getSetCookies()` in the same change.
 
-### H3 — Runtime variables cannot be injected into a run. CONFIRMED.
+### H3 — Runtime variables cannot be injected into a run. CONFIRMED. FIXED.
 
 `run_collection` (`tools/run-tools.ts:18-26`) accepts `collectionPath`, `requestPath`, `collectionRoot`,
 `environment`, `parallel`, `includeResponseBody`, `maxResponseBodyBytes` — and no way to pass variables in.
@@ -139,6 +139,31 @@ repository. For a credential, that means committing it.
 > This makes the `variables` input the *only* fix, not a nicety: there is no correct place on disk for a
 > secret, by design, so there must be an in-memory path. A `variables` input on `run_collection`, applied over
 > the environment for that run only, closes it.
+
+**Resolution.** `run_collection` takes `variables: {name: value}`, applied over the environment for that run.
+It works with no `environment` at all, which is the case that matters for a secret.
+
+**The layer was taken from upstream, not chosen.** Bruno's CLI spells this `--env-var name=value` and writes
+the value into `envVars` *after* the environment file is read (`bruno-cli/src/commands/run.js`), so it sits at
+the environment layer. That means an injected value beats the environment file, and a request-level
+`vars:pre-request` or a `bru.setVar` still beats the injected value — upstream's chain is
+`collection < env < folder < request < oauth2 < runtime < process.env`. Both directions are tested.
+
+Numbers and booleans are coerced (`{{port}}` as `8080` is the natural way to write it). A name no
+`{{placeholder}}` could ever reference — empty, brace-bearing, or space-padded — is **rejected**, not dropped:
+an override that is accepted and then silently never applied is this register's most common defect shape.
+
+**Nothing reaches disk, and that needed no guard.** Upstream keeps a separate `envVarOverrides` map so its
+persistence layer can tell an injected value from a deliberate script write and avoid writing the former
+back. There is no equivalent hazard here: the sandbox exposes no `bru.setEnvVar`, and `VariableStore` is not
+persisted between runs, so no write-back path exists. A test asserts a run carrying an injected secret issues
+no `writeFile`, `appendFile`, `rename` or `mkdir`.
+
+One thing this does *not* do: a value that resolves into a URL or header is reported in the run result under
+the existing redaction rules (`redactUrl`, `stripCredentialHeaders`), which recognise userinfo and known
+credential names. An injected secret substituted into an unrecognised query-parameter name would appear in the
+result. That is pre-existing behaviour, identical for environment-file values, and is not made worse here —
+but it is the reason to prefer a header or a recognised parameter name.
 
 ---
 
@@ -343,7 +368,7 @@ What remains under this heading:
 and silently places last. Defaulting to "one past the current maximum in the folder" matches what a user means
 by "add a request".
 
-### L5 — Allowlisted hostnames bypass private-address protection by name. CONFIRMED, by design, document it.
+### L5 — Allowlisted hostnames bypass private-address protection by name. CONFIRMED, by design, document it. FIXED.
 
 The SSRF allowlist is matched on the hostname string, so an allowlisted name that resolves to a loopback or
 private address is permitted. That is the correct behaviour for a local development host and is what makes
@@ -573,10 +598,12 @@ SSRF bypasses and three missing IPv4 ranges, query-param credential redaction, t
 realm-boundary escape, and plaintext environment secrets. What remains is one documentation gap and two
 posture decisions.
 
-9. **H3** — a `variables` input on `run_collection`. Also a tier-1 blocker by impact; listed here because the
+9. ~~**H3** — a `variables` input on `run_collection`. Also a tier-1 blocker by impact; listed here because the
    driver is security. Any value a run needs must currently be persisted into the collection's own git
    repository, and there is no correct on-disk place for a secret **by design**, so an in-memory path is the
-   only fix. Verify the variable resolves at the wire *and* appears in no written file.
+   only fix. Verify the variable resolves at the wire *and* appears in no written file.~~ **Done.** Both
+   checks are tested. Promoted above item 5 because leaving a valueless secret unbound (item 12) removed the
+   last way, however wrong, to supply one — see the resolution note under H3.
 10. **L5** — document the allowlist caveat. Allowlisting a hostname disables the loopback and private-range
     checks for that name permanently, including if DNS later moves it. Correct behaviour, but an operator has
     to be told. Ride along with any PR.
