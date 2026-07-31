@@ -1,8 +1,35 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'path';
 import { parse as parseYaml } from 'yaml';
-import type { EnvFile } from './types.js';
+import type { EnvFile, EnvVariable } from './types.js';
 import { parseBruEnvironmentRaw } from './bru-parser.js';
+
+/**
+ * Whether this variable is a secret with no value available to bind.
+ *
+ * Neither on-disk format persists a secret's VALUE: `.bru` lists the bare name
+ * in `vars:secret [...]`, `.yml` writes `secret: true` with no `value` key. So
+ * a secret read back off disk usually has nothing to bind, and binding it to
+ * `''` is worse than leaving it out. Empty string is a RESOLVED value here:
+ * `substitute` expands `{{token}}` to nothing and puts `Authorization: Bearer `
+ * on the wire, and `findUnresolvedPlaceholders` applies the same `undefined`
+ * test, so it reports nothing wrong. The run then fails on a 401 with no
+ * diagnostic pointing at the missing secret. Leaving the name unbound keeps the
+ * placeholder literal and gets it named in the run's unresolved warnings.
+ *
+ * Which arm fires depends on the format: `.yml` reaches here with `value`
+ * absent, while `parseBruEnvironmentRaw` already coerces a secret's value to
+ * `''`, so `.bru` cannot be told apart by absence alone.
+ *
+ * A secret that DOES carry a value is bound to it — the file wins over the
+ * assumption that secrets are never value-bearing.
+ */
+function isUnavailableSecret(entry: EnvVariable): boolean {
+  if (entry.secret !== true) {
+    return false;
+  }
+  return entry.value === undefined || entry.value === null || String(entry.value) === '';
+}
 
 export async function loadEnvironment(
   collectionPath: string,
@@ -41,6 +68,10 @@ export async function loadEnvironment(
       continue;
     }
 
+    if (isUnavailableSecret(entry)) {
+      continue;
+    }
+
     const value = entry.value === undefined || entry.value === null
       ? ''
       : String(entry.value);
@@ -54,10 +85,10 @@ export async function loadEnvironment(
 /**
  * Load a native Bruno `.bru` environment file. Reuses
  * `parseBruEnvironmentRaw` and maps its output to the same `name -> value`
- * shape the `.yml` loader returns: disabled variables are dropped, while
- * enabled variables — including `secret` ones — are kept with their value.
- * Precedence lives in `loadEnvironment`: `.yml` wins when present, `.bru` is
- * the fallback.
+ * shape the `.yml` loader returns: disabled variables are dropped, as are
+ * secrets with no value to bind (see `isUnavailableSecret`), and every other
+ * enabled variable is kept with its value. Precedence lives in
+ * `loadEnvironment`: `.yml` wins when present, `.bru` is the fallback.
  */
 async function loadBruEnvironment(
   collectionPath: string,
@@ -82,6 +113,9 @@ async function loadBruEnvironment(
   const vars = new Map<string, string>();
   for (const entry of variables) {
     if (entry.disabled === true) {
+      continue;
+    }
+    if (isUnavailableSecret(entry)) {
       continue;
     }
     vars.set(entry.name, String(entry.value ?? ''));
