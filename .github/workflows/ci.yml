@@ -15,21 +15,18 @@ on:
     # lands on `main` carrying no checks at all, and it does not recover on its
     # own: the workflow association never formed, so later pushes produced no
     # run either and the PR had to be reopened by hand to get one.
+    #
+    # `edited` also fires on title and body edits, and those run the full suite
+    # too. Skipping them with a job-level `if` was tried and reverted: a skipped
+    # job still posts a check run under the job's name, and "Test adequacy gate"
+    # is a required context, so the skipped result superseded the passing one
+    # and the ruleset refused the merge. Paying for a redundant run is the
+    # cheaper half of that trade — an unmergeable green PR is the expensive one.
     types: [ opened, synchronize, reopened, edited ]
 
 jobs:
   test:
     runs-on: ubuntu-latest
-
-    # `edited` also fires for title and body edits, which no more need a full
-    # matrix run than a typo does. The payload carries `changes.base` only when
-    # the base branch actually moved, so that is what separates a retarget from
-    # someone rewording a description. Every other event is unaffected: `push`
-    # has no `action`, so the first clause is already true for it.
-    #
-    # Guarding this job alone is enough — `build` and `test-guard` both declare
-    # `needs: test`, so they skip with it.
-    if: github.event.action != 'edited' || github.event.changes.base != null
 
     strategy:
       matrix:
