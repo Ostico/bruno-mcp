@@ -13,6 +13,7 @@ import { createWriter, normalizeScriptType } from '../bruno/format-factory.js';
 import { findCollectionRoot, detectFormat } from '../bruno/format-detector.js';
 import { validateToolPath, resolveRequestFile } from './tool-path.js';
 import type { ToolContext } from './context.js';
+import { isRequestExtension, isYamlExtension, REQUEST_EXTENSIONS } from '../bruno/request-extensions.js';
 
 export function registerAddTestScriptTool(ctx: ToolContext): void {
   ctx.server.registerTool(
@@ -66,9 +67,9 @@ export function registerAddTestScriptTool(ctx: ToolContext): void {
 
         // 3. File extension validation
         const ext = path.extname(args.bruFilePath).toLowerCase();
-        if (ext !== '.bru' && ext !== '.yml') {
+        if (!isRequestExtension(ext)) {
           return {
-            content: [{ type: 'text', text: `Invalid file extension "${ext}": expected .bru or .yml` }],
+            content: [{ type: 'text', text: `Invalid file extension "${ext}": expected ${REQUEST_EXTENSIONS.join(', ')}` }],
             isError: true,
           };
         }
@@ -86,8 +87,10 @@ export function registerAddTestScriptTool(ctx: ToolContext): void {
         const detection = await detectFormat(collectionRoot);
 
         // 6. Verify extension matches detected format
+        // `.yaml` satisfies a YAML collection: a dialect spelling, not another
+        // format. The run path warns that Bruno itself will not read it.
         const expectedExt = detection.format === 'yaml' ? '.yml' : '.bru';
-        if (ext !== expectedExt) {
+        if ((detection.format === 'yaml') !== isYamlExtension(ext)) {
           return {
             content: [{ type: 'text', text: `File extension "${ext}" does not match collection format "${detection.format}" (expected "${expectedExt}")` }],
             isError: true,

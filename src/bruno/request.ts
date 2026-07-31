@@ -6,6 +6,8 @@
 import { promises as fs } from 'fs';
 import { writeFileAtomic } from './atomic-write.js';
 import { withPathLock } from './path-mutex.js';
+import { nextRequestSequence } from './request-sequence.js';
+import { isYamlRequestFile, isBruRequestFile } from './request-extensions.js';
 import { join, dirname, isAbsolute } from 'path';
 import { validatePath } from './path-validator.js';
 import {
@@ -475,9 +477,18 @@ export class RequestBuilder {
       // lost update the lock was added to prevent.
       return await withPathLock(filePath, async () => {
         await this.ensureDirectory(dirname(filePath));
+        // With no explicit sequence the file used to be written with no `seq` at
+        // all, which the run order treats as last — every such request tied with
+        // every other, ordered by nothing. Default to after the folder's others.
+        const sequenced = input.sequence !== undefined
+          ? input
+          : {
+            ...input,
+            sequence: await nextRequestSequence(dirname(filePath), input.collectionPath),
+          };
         const content = isYaml
-          ? generateYamlRequest(this.buildYamlRequest(input))
-          : generateBruRequest(this.buildBruFile(input));
+          ? generateYamlRequest(this.buildYamlRequest(sequenced))
+          : generateBruRequest(this.buildBruFile(sequenced));
         await writeFileAtomic(filePath, content);
         if (input.scripts) {
           await this.applyInlineScripts(filePath, detection.format, input.scripts);
@@ -500,7 +511,7 @@ export class RequestBuilder {
     try {
       const content = await fs.readFile(filePath, 'utf-8');
 
-      if (filePath.endsWith('.yml')) {
+      if (isYamlRequestFile(filePath)) {
         const yamlReq = parseYamlRequest(content);
         const bruFile: BruFile = {
           meta: {
@@ -547,7 +558,7 @@ export class RequestBuilder {
         }
 
         return bruFile;
-      } else if (filePath.endsWith('.bru')) {
+      } else if (isBruRequestFile(filePath)) {
         return this.parseBruFile(content);
       }
 
@@ -572,7 +583,7 @@ export class RequestBuilder {
 
   private async updateRequestLocked(filePath: string, updates: Partial<CreateRequestInput>): Promise<FileOperationResult> {
     try {
-      if (filePath.endsWith('.yml')) {
+      if (isYamlRequestFile(filePath)) {
         const content = await fs.readFile(filePath, 'utf-8');
         const yamlReq = parseYamlRequest(content);
 
@@ -615,7 +626,7 @@ export class RequestBuilder {
 
         const updatedContent = generateYamlRequest(yamlReq);
         await writeFileAtomic(filePath, updatedContent);
-      } else if (filePath.endsWith('.bru')) {
+      } else if (isBruRequestFile(filePath)) {
         // Load existing BRU request
         const existingBru = await this.loadRequest(filePath);
 
@@ -628,7 +639,7 @@ export class RequestBuilder {
       }
 
       if (updates.scripts) {
-        const format: CollectionFormat = filePath.endsWith('.yml') ? 'yaml' : 'bru';
+        const format: CollectionFormat = isYamlRequestFile(filePath) ? 'yaml' : 'bru';
         await this.applyInlineScripts(
           filePath,
           format,

@@ -312,6 +312,41 @@ describe('RequestExecutor', () => {
   });
 
   describe('executeCollection', () => {
+    it('runs a .yaml request and says Bruno itself will not read it', async () => {
+      // `.yaml` used to be recognised nowhere, so this collection ran zero
+      // requests and reported success. It runs now — and because Bruno's own app
+      // and `bru run` do not read `.yaml`, a silent pass here would mean a green
+      // run of a request that does not exist as far as Bruno is concerned.
+      setupFsReaddir(['Get Users.yaml', 'opencollection.yml']);
+      setupFsReadFile({ 'Get Users.yaml': GET_REQUEST_YAML, 'dev.yml': ENV_YAML });
+      setupFsStat(['/test-collection', '/test-collection/environments']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse([{ id: 1, name: 'Alice' }]));
+
+      const result = await RequestExecutor.executeCollection(
+        '/test-collection',
+        { scriptRunner: TestRunner, environment: 'dev' },
+      );
+
+      expect(result.summary.total).toBe(1);
+      expect(result.warnings?.join(' ')).toContain('Get Users.yaml');
+    });
+
+    it('omits run-level warnings entirely for .yml and .bru requests', async () => {
+      setupFsReaddir(['Get Users.yml', 'opencollection.yml']);
+      setupFsReadFile({ 'Get Users.yml': GET_REQUEST_YAML, 'dev.yml': ENV_YAML });
+      setupFsStat(['/test-collection', '/test-collection/environments']);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse([{ id: 1, name: 'Alice' }]));
+
+      const result = await RequestExecutor.executeCollection(
+        '/test-collection',
+        { scriptRunner: TestRunner, environment: 'dev' },
+      );
+
+      expect(result.warnings).toBeUndefined();
+    });
+
     it('should execute all requests in a folder sorted by seq', async () => {
       // Setup: 2 request files + env
       setupFsReaddir(['Get Users.yml', 'Create User.yml', 'folder.yml', 'opencollection.yml']);

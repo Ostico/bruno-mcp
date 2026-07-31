@@ -20,7 +20,8 @@ Requires **Node.js >= 18.0.0**.
 - **Test Scripts**: Add pre/post request scripts and assertions
 - **CRUD Operations**: Generate complete CRUD request sets
 - **Collection Statistics**: Analyze existing collections
-- **Dual Format Support**: `.bru` (legacy) and `.yml` (opencollection YAML) with auto-detection
+- **Dual Format Support**: `.bru` (legacy) and `.yml` (opencollection YAML) with auto-detection. `.yaml` is
+  read as a spelling of the YAML dialect — see [The `.yaml` extension](#the-yaml-extension)
 - **Collection Discovery**: Discover Bruno collections from workspace with zero config
 - **Request Modification**: Partial-merge updates to existing request files
 - **Variable Chaining**: `bru.setVar()`/`bru.getVar()` for cross-request variable flow
@@ -88,6 +89,29 @@ The server auto-detects collection format by checking for marker files:
 | Neither | YAML (default) | — |
 
 New collections default to YAML format. Pass `format: "bru"` to `create_collection` for legacy format.
+
+### The `.yaml` extension
+
+Request files spelled `.yaml` are **read** as the YAML dialect, exactly like `.yml`. They were previously
+recognised nowhere, so a collection written with `.yaml` enumerated as empty — no requests, no error, nothing
+to act on.
+
+Reading them is where the support stops, because Bruno itself is inconsistent about the extension:
+
+| Bruno component | Accepts `.yaml`? |
+|---|---|
+| Desktop app collection watcher | No |
+| Desktop app request loader | No |
+| `bru run` CLI | No |
+| OpenAPI sync (walks a collection for requests) | Yes |
+
+So a `.yaml` request is a real thing a Bruno-adjacent tool can leave behind, and is at the same time invisible
+to Bruno's own app and runner. `run_collection` therefore reports a **run-level warning** naming every `.yaml`
+file it read, in `warnings` on the result — a silent pass would mean a green run of a request that does not
+exist as far as Bruno is concerned. Rename to `.yml` to clear it.
+
+Nothing this server writes uses `.yaml`: `create_request` writes `.yml` for a YAML collection and `.bru` for a
+legacy one.
 
 ## Available MCP Tools
 
@@ -202,7 +226,10 @@ Generate request files (`.bru` or `.yml` based on collection format).
 - `auth` (object, optional): Authentication — see [Auth Types](#auth-types)
 - `query` (object, optional): Query parameters as `Record<string, string | number | boolean>`
 - `folder` (string, optional): Subfolder within collection
-- `sequence` (number, optional): Execution order
+- `sequence` (number, optional): Execution order (`seq`). Defaults to one past the highest `seq` already in
+  the target folder, so a request created without one runs after the folder's existing requests rather than
+  tying with every other request that has no `seq`. Numbering is per-folder, and an explicit `sequence` is
+  written as given, even if it collides with a sibling
 - `scripts` (object, optional): Inline pre-request/post-response/test scripts to persist with the request — see [Inline Scripts](#inline-scripts)
 
 **Example:**
@@ -292,7 +319,7 @@ A request with a `form-data` body is sent as real `multipart/form-data` at execu
 Update an existing Bruno request file with partial-merge semantics. Only provided fields are updated; all other fields are preserved.
 
 **Parameters:**
-- `filePath` (string, required): Absolute path to `.bru` or `.yml` request file
+- `filePath` (string, required): Absolute path to a `.bru`, `.yml` or `.yaml` request file
 - `name` (string, optional): New request name
 - `method` (string, optional): New HTTP method (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS)
 - `url` (string, optional): New URL
@@ -443,7 +470,7 @@ Generate a test suite with multiple related requests and optional dependencies.
 Add test scripts to existing request files. Format-aware: injects into `.bru` or `.yml` automatically.
 
 **Parameters:**
-- `bruFilePath` (string): Path to `.bru` or `.yml` request file
+- `bruFilePath` (string): Path to a `.bru`, `.yml` or `.yaml` request file
 - `scriptType` (string): `"pre-request"`, `"post-response"`, or `"tests"` (aliases `"before-request"` → `pre-request` and `"after-response"` → `post-response` also accepted; see [Inline Scripts](#inline-scripts))
 - `script` (string): JavaScript code (max 50KB). Wrap assertions in `test("name", function() { ... })` — see [Assertions must be wrapped in `test()`](#assertions-must-be-wrapped-in-test)
 - `scriptMode` (string, optional): `"append"` (default) or `"replace"`
@@ -454,7 +481,7 @@ way to undo or clean up a script written by `create_request`, `modify_request`, 
 `add_test_script` — including duplicate blocks accumulated by appending.
 
 **Parameters:**
-- `bruFilePath` (string): Path to `.bru` or `.yml` request file
+- `bruFilePath` (string): Path to a `.bru`, `.yml` or `.yaml` request file
 - `scriptType` (string): `"pre-request"`, `"post-response"`, or `"tests"` (aliases accepted)
 
 Removing the last script also drops the now-empty script container. If there was
@@ -468,10 +495,10 @@ created by mistake; to clear only a script and keep the request, use
 `remove_script` instead.
 
 **Parameters:**
-- `filePath` (string): Path to the `.bru` or `.yml` request file to delete
+- `filePath` (string): Path to the `.bru`, `.yml` or `.yaml` request file to delete
 - `confirm` (boolean): Must be `true` — explicit acknowledgement that the file is deleted permanently
 
-Only `.yml`/`.bru` files whose extension matches a detected Bruno collection can be
+Only `.yml`/`.yaml`/`.bru` files whose extension matches a detected Bruno collection can be
 deleted. The file is unlinked from disk and cannot be recovered through this server.
 
 ### `list_collections`
@@ -532,7 +559,7 @@ Execute all requests in a collection (or a single request) and run test scripts.
 - `collectionPath` (string): Path to collection or subfolder
 - `environment` (string, optional): Environment name (loads from `environments/<name>.yml`)
 - `collectionRoot` (string, optional): Collection root for environment resolution
-- `requestPath` (string, optional): Path to a single `.yml`/`.bru` request file, or a subdirectory, to run instead of the full collection
+- `requestPath` (string, optional): Path to a single `.yml`/`.yaml`/`.bru` request file, or a subdirectory, to run instead of the full collection
 - `parallel` (boolean, optional, default `false`): Run folders in parallel (grouped by the request file's parent directory). Requests within a folder still run serially, in `seq` order. Each folder gets its own variable store while running in parallel — `bru.setVar()` in one folder is **not** visible to another folder until results are merged; use serial mode (the default) if requests in different folders depend on each other's variables
 - `includeResponseBody` (boolean, optional, default `true`): Include each request's response body in the results
 - `maxResponseBodyBytes` (number, optional, default `10240`): Maximum response body size (bytes) returned per request; longer bodies are truncated
@@ -541,7 +568,7 @@ Execute all requests in a collection (or a single request) and run test scripts.
 
 **Execution Flow:**
 1. Read the collection root (`collection.bru` / `opencollection.yml` / `collection.yml`) and each folder root (`folder.bru` / `folder.yml`) on the path to a request: their **headers** are sent under the request's own, and a request with `auth: inherit` takes the auth of the nearest root that defines one. Root-level **vars, scripts and tests are read but not applied yet** — each is named in that request's `warnings` rather than dropped silently
-2. Find all `.yml`/`.bru` request files, sort by `seq` field — one **global** sort across everything the run covers, so folders do not scope it. Two requests both numbered `seq: 1` in different folders are ordered by filesystem enumeration, which is not stable; give them distinct `seq` values, or run one folder at a time, when order matters. A file that cannot be parsed is skipped, and named with its reason in `parseFailures`
+2. Find all `.yml`/`.yaml`/`.bru` request files, sort by `seq` field — one **global** sort across everything the run covers, so folders do not scope it. Two requests both numbered `seq: 1` in different folders are ordered by filesystem enumeration, which is not stable; give them distinct `seq` values, or run one folder at a time, when order matters. A file that cannot be parsed is skipped, and named with its reason in `parseFailures`. Any request read from a `.yaml` file is named in the run-level `warnings`, because Bruno's own app and `bru run` do not recognise that extension — see [The `.yaml` extension](#the-yaml-extension)
 3. Load environment variables (if specified)
 4. For each request: run the pre-request script (if any) → substitute `{{variables}}` (env + runtime) in URL, headers, and body → attach any jar cookies for the target → execute via `fetch()` → store the response's cookies → run post-response/test scripts → extract `bru.setVar()` variables for next request
 5. Requests execute serially in sequence order (or per-folder in parallel, see `parallel` above); variables accumulate across the run

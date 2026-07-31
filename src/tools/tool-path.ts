@@ -8,6 +8,11 @@
 import path from 'path';
 import { validatePath } from '../bruno/path-validator.js';
 import { findCollectionRoot, detectFormat } from '../bruno/format-detector.js';
+import {
+  isRequestExtension,
+  isYamlExtension,
+  REQUEST_EXTENSIONS,
+} from '../bruno/request-extensions.js';
 import type { CollectionFormat } from '../bruno/format-detector.js';
 
 export function validateToolPath(
@@ -45,11 +50,14 @@ export async function resolveRequestFile(
     return { ok: false, message: `Invalid ${argName}: ${pathCheck.reason}` };
   }
 
+  // Lowercased, as this gate has always been: it validates an argument a caller
+  // typed, where `.YML` is a typo rather than a different file. The collection
+  // walks stay case-sensitive — see request-extensions.ts.
   const ext = path.extname(filePath).toLowerCase();
-  if (ext !== '.bru' && ext !== '.yml') {
+  if (!isRequestExtension(ext)) {
     return {
       ok: false,
-      message: `Invalid file extension "${ext}": expected .bru or .yml`,
+      message: `Invalid file extension "${ext}": expected ${REQUEST_EXTENSIONS.join(', ')}`,
     };
   }
 
@@ -63,8 +71,11 @@ export async function resolveRequestFile(
   }
 
   const detection = await detectFormat(collectionRoot);
-  const expectedExt = detection.format === 'yaml' ? '.yml' : '.bru';
-  if (ext !== expectedExt) {
+  const wantsYaml = detection.format === 'yaml';
+  // `.yaml` satisfies a YAML collection: it is a dialect spelling, not a
+  // different format. The run path warns that Bruno itself will not read it.
+  if (wantsYaml !== isYamlExtension(ext)) {
+    const expectedExt = wantsYaml ? '.yml' : '.bru';
     return {
       ok: false,
       message: `File extension "${ext}" does not match collection format "${detection.format}" (expected "${expectedExt}")`,
