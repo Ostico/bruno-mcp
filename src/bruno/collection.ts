@@ -7,6 +7,7 @@ import { promises as fs } from 'fs';
 import { writeFileAtomic } from './atomic-write.js';
 import { withPathLock } from './path-mutex.js';
 import { isMetadataFile } from './metadata-files.js';
+import { isRequestFile } from './request-extensions.js';
 import { join } from 'path';
 import {
   BrunoCollection,
@@ -410,7 +411,7 @@ Created on: ${new Date().toISOString()}
 
       if (entry.isDirectory() && entry.name !== 'node_modules' && entry.name !== '.git' && entry.name !== 'environments') {
         await this.findBruFiles(fullPath, bruFiles, collectionPath);
-      } else if (entry.isFile() && (entry.name.endsWith('.bru') || entry.name.endsWith('.yml'))) {
+      } else if (entry.isFile() && isRequestFile(entry.name)) {
         if (!isMetadataFile(fullPath, collectionPath)) {
           bruFiles.push(fullPath);
         }

@@ -1,8 +1,6 @@
-import { readFile, stat } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { basename, relative, dirname, resolve, isAbsolute } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
-import { parseYamlRequest } from './yaml-parser.js';
-import { parseBruRequest } from './bru-parser.js';
 import { loadEnvironment, substitute, findUnresolvedPlaceholders } from './env-loader.js';
 import { forkingScriptRunner, type ScriptRunner } from './sandbox-host.js';
 import { wrapFetchResponse } from './response-wrapper.js';
@@ -13,9 +11,8 @@ import { describeNetworkError } from './network-error.js';
 import { applyParams } from './request-params.js';
 import { applyPreRequestVars } from './request-vars.js';
 import { bruFileToYamlRequest, bruAuthToYamlAuth } from './bru-to-yaml.js';
-import { describeParseFailure } from './parse-failure.js';
 import type { ExecutionOptions } from './execution-options.js';
-import { discoverRequests, type ParsedRequest } from './request-discovery.js';
+import { resolveRunTargets, type ParsedRequest } from './request-discovery.js';
 import { createRootLoader, type RootChain, type RootLoader } from './collection-roots.js';
 import { applyVariableOverrides } from './runtime-variables.js';
 import {
@@ -44,7 +41,6 @@ import type {
   MockRequestData,
   CollectionRunResult,
   CollectionRunSummary,
-  ParseFailure,
   RequestExecutionResult,
   TestResult,
   MultipartFormPart,
@@ -1107,45 +1103,8 @@ export class RequestExecutor {
     // it is safe to share across parallel folders.
     const rootLoader: RootLoader = createRootLoader(options?.collectionRoot ?? collectionPath);
 
-    let requests: ParsedRequest[];
-    let parseFailures: ParseFailure[] = [];
-
-    if (options?.requestPath) {
-      const isFile = options.requestPath.endsWith('.yml') || options.requestPath.endsWith('.bru');
-      if (!isFile) {
-        // Not a recognized file extension — check if it's a directory
-        const pathStat = await stat(options.requestPath);
-        if (pathStat.isDirectory()) {
-          const discovery = await discoverRequests(options.requestPath);
-          requests = discovery.requests;
-          parseFailures = discovery.parseFailures;
-        } else {
-          throw new Error(`Unsupported request file format: ${options.requestPath}`);
-        }
-      } else {
-        const content = await readFile(options.requestPath, 'utf-8');
-        let yaml: YamlRequest;
-        try {
-          if (options.requestPath.endsWith('.yml')) {
-            yaml = parseYamlRequest(content);
-          } else {
-            yaml = bruFileToYamlRequest(parseBruRequest(content));
-          }
-        } catch (error) {
-          // A single named request that will not parse is a hard failure, not a
-          // tally — nothing else was asked for, so there is no partial run to
-          // report. The parser names the reason but not the file, and the
-          // caller's own argument is not in the message it gets back.
-          const failure = describeParseFailure(options.requestPath, error);
-          throw new Error(`Failed to parse ${failure.file}: ${failure.message}`);
-        }
-        requests = [{ yaml, filePath: options.requestPath }];
-      }
-    } else {
-      const discovery = await discoverRequests(collectionPath);
-      requests = discovery.requests;
-      parseFailures = discovery.parseFailures;
-    }
+    const { requests, parseFailures, warnings: discoveryWarnings } =
+      await resolveRunTargets(options?.requestPath, collectionPath);
 
     let results: RequestExecutionResult[];
 
@@ -1243,6 +1202,7 @@ export class RequestExecutor {
       // detail cannot drift apart if only one of them is maintained.
       parseErrors: parseFailures.length,
       parseFailures,
+      ...(discoveryWarnings.length > 0 ? { warnings: discoveryWarnings } : {}),
     };
   }
 }

@@ -435,11 +435,27 @@ What remains under this heading:
 - The third auth enum, at `request-tools.ts:355` (`create_crud_requests`), lists neither `digest` nor
   `inherit`, so it disagrees with the other two enums. Pure drift; cheap to fix.
 
-### L4 — `seq` is omitted when `sequence` is not passed. CONFIRMED.
+### L4 — `seq` is omitted when `sequence` is not passed. CONFIRMED. FIXED.
 
 `create_request` without `sequence` writes no `seq` at all, which the sort treats as `MAX_SAFE_INTEGER` (M2)
 and silently places last. Defaulting to "one past the current maximum in the folder" matches what a user means
 by "add a request".
+
+**Fixed** in `request-sequence.ts`: `nextRequestSequence` reads the target folder's request files, skips
+metadata files and anything that will not parse, and returns the highest `seq` plus one — 1 in an empty folder,
+since Bruno's sequences are 1-based. Numbering is per-folder, and an explicit `sequence` is still written as
+given.
+
+**Deliberately not upstream's formula.** Bruno assigns `items.length + 1` when it creates a request. That is
+the same number in any collection Bruno itself wrote, because it keeps sequences dense and rewrites them on
+reorder — but in a collection with gaps it returns a `seq` an existing request already holds, and two requests
+with one `seq` sort against each other arbitrarily. That is the defect being closed, so this takes the maximum
+instead.
+
+Not atomic against a concurrent create of a *different* file in the same folder: the write lock is keyed on the
+new file's own path, so two such creates can choose the same `seq`. Same collision upstream allows, and no
+worse than the missing `seq` it replaces; a folder-level lock would have to nest inside the non-reentrant path
+lock.
 
 ### L5 — Allowlisted hostnames bypass private-address protection by name. CONFIRMED, by design, document it. FIXED.
 
@@ -452,9 +468,43 @@ loopback / private-range checks for that name permanently, including if DNS late
 Allowlist entries are hostnames, not pinned addresses. Note also that any `*` wildcard in an allowlist entry
 is silently ignored rather than expanded.
 
-### L6 — `.yaml` is not recognised as a request extension. CONFIRMED.
+### L6 — `.yaml` is not recognised as a request extension. CONFIRMED, PREMISE CORRECTED. FIXED.
 
-Bruno accepts `.yaml`; we recognise only `.yml` and `.bru`. A collection using `.yaml` is enumerated as empty.
+The symptom was right: we recognised only `.yml` and `.bru`, so a collection using `.yaml` enumerated as
+empty — no requests, no error, nothing to act on.
+
+**"Bruno accepts `.yaml`" was too strong.** Read at `/Volumes/Projects/tools/working_dir/bruno-tool`, upstream
+disagrees with itself:
+
+| Bruno component | Accepts `.yaml`? | Evidence |
+|---|---|---|
+| Desktop app collection watcher | No | `bruno-electron/src/app/collection-watcher.js` — zero `.yaml` mentions |
+| Desktop app request loader | No | `bruno-electron/src/ipc/collection.js:1334` — `ext === '.bru' \|\| ext === '.yml'` |
+| `bru run` CLI | No | `bruno-cli/src/commands/run.js:374` — `ext === '.yml'`; `hasBruExtension` is `['bru']` |
+| OpenAPI sync's collection walk | **Yes** | `bruno-electron/src/ipc/openapi-sync.js:1136` — `.bru`/`.yml`/`.yaml`, same excluded dirs and metadata prefixes as our walk |
+
+So a `.yaml` request is a real artefact a Bruno-adjacent tool can leave behind, and is at the same time
+invisible to Bruno's own app and runner. Neither "ignore it" nor "run it silently" is right: ignoring it is the
+reported defect, and running it silently means a green run of a request that does not exist as far as `bru run`
+is concerned.
+
+**Fixed both halves.** `request-extensions.ts` is the single predicate for "is this a request file", now
+covering `.bru`/`.yml`/`.yaml` across request discovery, `list_requests`, `get_collection_stats`, the
+read/modify/delete tool gates and the executor. `.yaml` counts as the YAML dialect, so it satisfies a YAML
+collection's format check and is rejected by a `.bru` collection exactly as `.yml` would be. And
+`run_collection` now returns a run-level `warnings` entry naming every `.yaml` file it read, telling the caller
+to rename it.
+
+Two boundaries held on purpose:
+
+- **Environments are untouched.** No upstream site treats a `.yaml` file in `environments/` as an environment,
+  and env discovery is a separate predicate. `.yaml` env files stay unrecognised.
+- **Matching stays case-sensitive** in the collection walks, as it was at every call site replaced and as it is
+  in Bruno's watcher. Making it case-insensitive would newly enumerate `Collection.YML` as a request, because
+  the metadata-basename check beside it is case-sensitive too. The tool-argument gates keep the
+  `.toLowerCase()` they always had.
+- **Nothing writes `.yaml`.** `create_request` still writes `.yml` for a YAML collection and `.bru` for a
+  legacy one.
 
 ### L7 — Environment authoring gaps. CONFIRMED.
 
@@ -686,8 +736,10 @@ What an agent needs and does not have. Direct field feedback first.
    `auth: inherit` applied.** Root vars/scripts/tests are read and reported per request rather than dropped —
    the warn-on-dropped-settings step, kept for what is not applied yet. Root vars are blocked on **L11**;
    root scripts are **L12**. See the resolution note under M3.
-8. **L4 + L6** — `seq` defaulting to "one past the folder maximum", and recognising `.yaml`. Papercuts, one
-   PR. A Bruno collection using `.yaml` currently enumerates as empty.
+8. ~~**L4 + L6** — `seq` defaulting to "one past the folder maximum", and recognising `.yaml`. Papercuts, one
+   PR. A Bruno collection using `.yaml` currently enumerates as empty.~~ Both fixed. L6's premise needed
+   correcting first: upstream accepts `.yaml` in exactly one place and nowhere that mounts or runs a
+   collection, so reading it comes with a run-level warning rather than silent acceptance. See L6.
 
 ### Tier 2 — security
 

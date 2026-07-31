@@ -8,8 +8,11 @@
  *
  *  1. `seq: undefined` written literally into meta whenever no sequence was
  *     given. Upstream's serializer iterates every key present in `meta` and
- *     stringifies the value, so an absent seq has to be an absent KEY, which is
- *     what the .yml writer already did.
+ *     stringifies the value, so leaving the key present with an undefined value
+ *     emits a value that is not a number. Omitting the key was the first fix and
+ *     only half of one: a request with no `seq` sorts as MAX_SAFE_INTEGER, so
+ *     every request created without one tied for last. `create_request` now
+ *     defaults `seq` to one past the folder's highest.
  *  2. The method block said `auth: api-key`. Bruno's token is `apikey`, so the
  *     `auth:apikey` block we correctly emitted was ignored.
  *  3. `placement` was never written. We stored `in`, which upstream's serializer
@@ -107,10 +110,16 @@ auth:apikey {
 // ----------------------------------------------------------------------------
 
 describe('meta seq is never the literal string "undefined"', () => {
-  it('omits the key entirely when no sequence was given', async () => {
+  it('defaults to a real number when no sequence was given', async () => {
     // Upstream writes `${key}: ${meta[key]}` for every key present, so leaving
     // seq on the object with an undefined value produces "seq: undefined" —
     // syntactically a value, and not a number.
+    //
+    // This used to assert the key was omitted altogether, which was the safe
+    // half of the fix and the wrong end state: a request with no `seq` sorts as
+    // MAX_SAFE_INTEGER, so every request created without one tied for last and
+    // ran in an order decided by nothing. The first request in a collection is
+    // now `seq: 1`.
     const collectionPath = await makeCollection('seq');
     const created = await builder.createRequest({
       collectionPath,
@@ -122,7 +131,7 @@ describe('meta seq is never the literal string "undefined"', () => {
 
     const raw = await fs.readFile(created.path!, 'utf-8');
     expect(raw).not.toContain('undefined');
-    expect(raw).not.toMatch(/^\s*seq:/m);
+    expect(raw).toMatch(/^\s*seq: 1$/m);
   });
 
   it('still writes the sequence when one was given', async () => {

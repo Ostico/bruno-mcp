@@ -5,6 +5,7 @@ import { parse as parseYaml } from 'yaml';
 import { parseYamlRequest } from './yaml-parser.js';
 import { parseBruRequest, parseBruEnvironmentRaw } from './bru-parser.js';
 import { isMetadataFile } from './metadata-files.js';
+import { isRequestFile, isBruRequestFile } from './request-extensions.js';
 import { BrunoError } from './types.js';
 import type { CollectionStats, EnvironmentDetail, EnvFile, RequestDetail } from './types.js';
 
@@ -33,7 +34,7 @@ async function findRequestFiles(dirPath: string, results: string[]): Promise<voi
 
     if (entry.isDirectory() && entry.name !== 'node_modules' && entry.name !== '.git') {
       await findRequestFiles(fullPath, results);
-    } else if (entry.isFile() && (entry.name.endsWith('.yml') || entry.name.endsWith('.bru'))) {
+    } else if (entry.isFile() && isRequestFile(entry.name)) {
       results.push(fullPath);
     }
   }
@@ -164,21 +165,18 @@ export async function getCollectionStats(collectionPath: string): Promise<Collec
     let testsFound: boolean;
 
     try {
-      if (filePath.endsWith('.bru')) {
+      if (isBruRequestFile(filePath)) {
         const parsed = parseBruRequest(content);
         name = parsed.meta.name;
         method = parsed.http.method.toUpperCase();
         seq = parsed.meta.seq ?? 0;
         testsFound = (parsed.tests?.exec?.length ?? 0) > 0;
-      } else if (filePath.endsWith('.yml')) {
+      } else {
         const parsed = parseYamlRequest(content);
         name = parsed.info.name;
         method = parsed.http.method.toUpperCase();
         seq = parsed.info.seq ?? 0;
         testsFound = hasTestScripts(content);
-      } else {
-        /* istanbul ignore next -- unreachable: findRequestFiles only ever collects files ending in .yml or .bru, so this else can never execute */
-        continue;
       }
     } catch {
       continue;

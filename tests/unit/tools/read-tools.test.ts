@@ -137,10 +137,56 @@ describe('read_request', () => {
     expect(textOf(result)).toContain('Invalid filePath');
   });
 
-  it('rejects a file that is neither .bru nor .yml', async () => {
+  it('reads a hand-written .yaml request in a YAML collection', async () => {
+    // `.yaml` was recognised nowhere, so this file could not be read at all.
+    // Nothing here writes one — it is the extension a hand-authored or
+    // openapi-synced file arrives with.
+    const collectionPath = await makeCollection('yamlext', 'yaml');
+    const filePath = join(collectionPath, 'handwritten.yaml');
+    await fs.writeFile(
+      filePath,
+      'info:\n  name: HandWritten\n  type: http\n  seq: 1\nhttp:\n  method: GET\n'
+        + '  url: https://api.example.com/x\n',
+      'utf-8',
+    );
+
+    const view = jsonOf(await readRequest({ filePath }));
+
+    expect(view.format).toBe('yaml');
+    expect(view.name).toBe('HandWritten');
+    expect(view.url).toBe('https://api.example.com/x');
+  });
+
+  it('rejects a .yaml request in a .bru collection', async () => {
+    // `.yaml` counts as the YAML dialect, so it mismatches a native collection
+    // exactly as `.yml` would — being newly readable does not make it universal.
+    const collectionPath = await makeCollection('yamlinbru', 'bru');
+    const filePath = join(collectionPath, 'handwritten.yaml');
+    await fs.writeFile(filePath, 'info:\n  name: X\n', 'utf-8');
+
+    const result = await readRequest({ filePath });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('does not match collection format');
+  });
+
+  it('rejects a .bru request in a YAML collection, naming .yml as expected', async () => {
+    const collectionPath = await makeCollection('bruinyaml', 'yaml');
+    const filePath = join(collectionPath, 'handwritten.bru');
+    await fs.writeFile(filePath, 'meta {\n  name: X\n}\n', 'utf-8');
+
+    const result = await readRequest({ filePath });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('expected ".yml"');
+  });
+
+  it('rejects a file whose extension names no request dialect', async () => {
     const result = await readRequest({ filePath: '/tmp/c/request.json' });
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain('expected .bru or .yml');
+    // The message lists what IS accepted, so the caller can fix the argument
+    // without guessing — `.yaml` is now among them.
+    expect(textOf(result)).toContain('expected .bru, .yml, .yaml');
   });
 
   it('rejects a file that sits in no collection', async () => {

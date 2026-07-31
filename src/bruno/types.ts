@@ -958,6 +958,12 @@ export interface CollectionRunResult {
    * throws instead of being tallied.
    */
   parseFailures?: ParseFailure[];
+  /**
+   * Notes about the run as a whole rather than about one request — a request's
+   * own warnings live on its `RequestExecutionResult`. Currently only the
+   * `.yaml`-extension divergence; absent when there is nothing to say.
+   */
+  warnings?: string[];
 }
 
 // Utility types for better type safety
