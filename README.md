@@ -159,7 +159,7 @@ Set (add or update) a single variable in an existing environment. Merges into th
 - `name` (string): Variable key to set
 - `value` (string | number | boolean): Variable value
 - `enabled` (boolean, optional): Whether the variable is enabled. This is persisted — `enabled: false` writes the variable as disabled.
-- `secret` (boolean, optional): Whether the variable is a secret. **Accepted but not persisted** — the environment file format has no place to store it, so this flag is currently a no-op.
+- `secret` (boolean, optional): Marks the variable as a secret. The **flag** is persisted (`.yml` writes `secret: true`, `.bru` lists the name under `vars:secret`); the **value** is not, because neither Bruno format stores a secret's value. A secret with no value on disk is left unbound rather than resolved to an empty string, so it shows up in the run's unresolved-variable warnings instead of silently sending an empty credential — pass the value via `run_collection`'s `variables` instead.
 
 **Example:**
 ```json
@@ -536,11 +536,13 @@ Execute all requests in a collection (or a single request) and run test scripts.
 - `parallel` (boolean, optional, default `false`): Run folders in parallel (grouped by the request file's parent directory). Requests within a folder still run serially, in `seq` order. Each folder gets its own variable store while running in parallel — `bru.setVar()` in one folder is **not** visible to another folder until results are merged; use serial mode (the default) if requests in different folders depend on each other's variables
 - `includeResponseBody` (boolean, optional, default `true`): Include each request's response body in the results
 - `maxResponseBodyBytes` (number, optional, default `10240`): Maximum response body size (bytes) returned per request; longer bodies are truncated
+- `variables` (object, optional): `{name: value}` applied over the environment for this run only. Held in memory and never written to a file, which makes it the only correct place for a secret — neither Bruno file format stores a secret's value. Overrides the environment file; a request's own `vars:pre-request` and `bru.setVar()` still override it, matching Bruno's `--env-var`
+- `cookieJar` (boolean, optional, default `true`): Keep cookies from each response and send them on later requests in the same run, so a login carries into what follows. Matched by host, path and expiry, so one host's cookie is never sent to another; `Secure` cookies go only to https (or `http://localhost`). Scoped to the run, and to the individual folder in parallel mode — nothing is written to disk and nothing is shared between runs. Set `false` to send only the `Cookie` headers a request writes itself. Bruno's CLI spells this as the inverse flag, `--disable-cookies`
 
 **Execution Flow:**
-1. Find all `.yml`/`.bru` request files, sort by `seq` field
+1. Find all `.yml`/`.bru` request files, sort by `seq` field — one **global** sort across everything the run covers, so folders do not scope it. Two requests both numbered `seq: 1` in different folders are ordered by filesystem enumeration, which is not stable; give them distinct `seq` values, or run one folder at a time, when order matters. A file that cannot be parsed is skipped, and named with its reason in `parseFailures`
 2. Load environment variables (if specified)
-3. For each request: run the pre-request script (if any) → substitute `{{variables}}` (env + runtime) in URL, headers, and body → execute via `fetch()` → run post-response/test scripts → extract `bru.setVar()` variables for next request
+3. For each request: run the pre-request script (if any) → substitute `{{variables}}` (env + runtime) in URL, headers, and body → attach any jar cookies for the target → execute via `fetch()` → store the response's cookies → run post-response/test scripts → extract `bru.setVar()` variables for next request
 4. Requests execute serially in sequence order (or per-folder in parallel, see `parallel` above); variables accumulate across the run
 5. **On failure**: network errors or HTTP errors are recorded in the result — execution continues to the next request (never stops early)
 6. Requests with no test scripts report zero tests (still counted in `summary.total`)
