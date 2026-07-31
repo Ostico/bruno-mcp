@@ -9,6 +9,8 @@
  */
 
 import { RequestExecutor } from '../../../src/bruno/request-executor';
+// Opts out of the forking default: this lane has no built dist/ worker to fork.
+import { TestRunner } from '../../../src/bruno/test-runner';
 import * as fs from 'node:fs/promises';
 
 // ---------------------------------------------------------------------------
@@ -249,7 +251,7 @@ describe('RequestExecutor — VariableStore integration', () => {
 
     const result = await RequestExecutor.executeCollection(
       '/test-collection',
-      { environment: 'dev' },
+      { environment: 'dev', scriptRunner: TestRunner },
     );
 
     expect(result.summary.total).toBe(2);
@@ -280,7 +282,7 @@ describe('RequestExecutor — VariableStore integration', () => {
 
     const result = await RequestExecutor.executeCollection(
       '/test-collection',
-      { environment: 'dev' },
+      { environment: 'dev', scriptRunner: TestRunner },
     );
 
     expect(result.summary.total).toBe(2);
@@ -305,7 +307,7 @@ describe('RequestExecutor — VariableStore integration', () => {
 
     const result = await RequestExecutor.executeCollection(
       '/test-collection',
-      { environment: 'dev' },
+      { environment: 'dev', scriptRunner: TestRunner },
     );
 
     expect(result.summary.total).toBe(2);
@@ -330,7 +332,7 @@ describe('RequestExecutor — VariableStore integration', () => {
 
     const result = await RequestExecutor.executeCollection(
       '/test-collection',
-      { environment: 'dev' },
+      { environment: 'dev', scriptRunner: TestRunner },
     );
 
     expect(result.summary.total).toBe(2);
@@ -354,7 +356,7 @@ describe('RequestExecutor — VariableStore integration', () => {
     // start with a clean store. {{token}} should remain unsubstituted.
     const result = await RequestExecutor.executeCollection(
       '/test-collection',
-      { environment: 'dev' },
+      { environment: 'dev', scriptRunner: TestRunner },
     );
 
     expect(result.summary.total).toBe(1);

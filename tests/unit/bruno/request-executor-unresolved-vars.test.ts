@@ -14,6 +14,8 @@
  */
 
 import { RequestExecutor } from '../../../src/bruno/request-executor';
+// Opts out of the forking default: this lane has no built dist/ worker to fork.
+import { TestRunner } from '../../../src/bruno/test-runner';
 import * as fs from 'node:fs/promises';
 
 // ---------------------------------------------------------------------------
@@ -163,6 +165,7 @@ describe('RequestExecutor — unresolved variable warnings', () => {
 
     const result = await RequestExecutor.executeCollection('/test-collection', {
       parallel: true,
+      scriptRunner: TestRunner,
     });
 
     expect(result.summary.total).toBe(2);
@@ -195,7 +198,7 @@ describe('RequestExecutor — unresolved variable warnings', () => {
     setupFsReadFile({ 'Get Profile.yml': PROFILE_YAML });
     setupFsStat(['/test-collection']);
 
-    const result = await RequestExecutor.executeCollection('/test-collection');
+    const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
     expect(result.summary.total).toBe(1);
     expect(result.results[0].warnings).toContain('unresolved variable: {{token}}');
@@ -226,7 +229,7 @@ http:
     setupFsReadFile({ 'Login.yml': LOGIN_YAML, 'Get Profile.yml': CONSUMER_YAML });
     setupFsStat(['/test-collection']);
 
-    const result = await RequestExecutor.executeCollection('/test-collection');
+    const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
     const profileResult = result.results.find(r => r.name === 'Get Profile');
     expect(profileResult).toBeDefined();

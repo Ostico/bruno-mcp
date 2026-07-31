@@ -14,6 +14,8 @@
  */
 
 import { RequestExecutor } from '../../../src/bruno/request-executor';
+// Opts out of the forking default: this lane has no built dist/ worker to fork.
+import { TestRunner } from '../../../src/bruno/test-runner';
 import * as fs from 'node:fs/promises';
 
 const mockFetch = jest.fn();
@@ -203,7 +205,7 @@ async function runOne(fileName: string, source: string, body: unknown = WIDGET_B
   setupFsStat(['/test-collection']);
   mockFetch.mockResolvedValue(createMockResponse(body));
 
-  const result = await RequestExecutor.executeCollection('/test-collection', {});
+  const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
   return result.results[0];
 }
 
@@ -232,7 +234,7 @@ describe('RequestExecutor — declared assertions', () => {
     setupFsStat(['/test-collection']);
     mockFetch.mockResolvedValue(createMockResponse(WIDGET_BODY));
 
-    const result = await RequestExecutor.executeCollection('/test-collection', {});
+    const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
     // The request itself returned 200 with no script error, so before assertions
     // were evaluated this collection reported green.

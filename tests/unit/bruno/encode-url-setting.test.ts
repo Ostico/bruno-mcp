@@ -12,6 +12,8 @@
  * its chance to rewrite the URL.
  */
 import { RequestExecutor } from '../../../src/bruno/request-executor';
+// Opts out of the forking default: this lane has no built dist/ worker to fork.
+import { TestRunner } from '../../../src/bruno/test-runner';
 import * as fs from 'node:fs/promises';
 
 const mockFetch = jest.fn();
@@ -73,7 +75,7 @@ function setupCollection(files: Record<string, string>): void {
 async function sentUrl(files: Record<string, string>): Promise<string> {
   setupCollection(files);
   mockFetch.mockResolvedValue(mockResponse());
-  await RequestExecutor.executeCollection('/c', {});
+  await RequestExecutor.executeCollection('/c', { scriptRunner: TestRunner });
   return mockFetch.mock.calls[0][0] as string;
 }
 
