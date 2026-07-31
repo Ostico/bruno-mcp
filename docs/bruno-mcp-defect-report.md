@@ -252,7 +252,7 @@ seq order", is on the `parallel` option and is **accurate for that mode** — th
 and walks each folder's requests in order. What was undocumented is the *default* sequential mode's flat
 global sort. The real ordering fix still needs M3.
 
-### M3 — Collection-level and folder-level settings are silently ignored. CONFIRMED.
+### M3 — Collection-level and folder-level settings are silently ignored. CONFIRMED. PARTLY FIXED.
 
 `collection.ts` contains no handling of headers, auth, scripts or vars, and `request-executor.ts` never
 imports it. `metadata-files.ts` treats `collection.bru` / `folder.bru` purely as things to *exclude* from
@@ -282,6 +282,41 @@ it is what M2 needs for folder ordering.
 
 Minimum viable step, if the full read is too large: warn per request when a collection/folder root file exists
 and declares something that is being dropped.
+
+**Resolution, in two halves — read what a root declares, apply the two things collections lean on.**
+
+Root files are now read, in both dialects: `collection.bru` / `folder.bru` via upstream's own
+`collectionBruToJson` (a *separate grammar* from the request parser — a root file's bare `auth { mode: … }`
+block makes `bruToJsonV2` throw), and `opencollection.yml` / `collection.yml` / `folder.yml`, which share the
+`request:` section shape a folder file has.
+
+**Applied:**
+
+- **Headers**, collection root first, then each folder from the collection down to the request's own directory,
+  then the request. Upstream fills a `Map` in that order, so the nearest definition wins. A name the request
+  sets itself removes the root's entry rather than overwriting it, because this executor's header assembly
+  comma-joins duplicates — combining them would send `Bearer collection-token, Bearer request-token`.
+  Matched case-insensitively, which upstream does not do (it keys on the name as written, so `authorization`
+  from a collection and `Authorization` from a request both go out). Header names are case-insensitive per
+  HTTP, so that pairing is exactly the doubled-credential case worth diverging over.
+- **`auth: inherit`**, from the nearest root that defines auth — the warn-and-skip is gone. It still warns when
+  *no* root defines any, since inheriting from nothing sends no credential and that must not read as a request
+  deliberately left unauthenticated. Both dialects spell root auth `{ mode, [mode]: … }`, not the request's
+  `{ type, … }`, so one shared normalisation handles both — established by test after the YAML root came back
+  with `mode`.
+
+**Read and reported as NOT applied:** root-level vars, scripts and tests. Each is named per request
+("collection.bru declares a pre-request script, which is not applied to requests yet"), ahead of the warnings
+it explains — an unresolved `{{collection_var}}` now arrives with the note saying why. This is the finding's
+minimum viable step, kept for the parts the read does not yet act on, so nothing is silently dropped any more.
+
+**Why root vars stop here.** They need the typed-value shape the YAML dialect uses
+(`value: {type: number, data: "100"}`), and `parseYamlVarList` renders that as `String(value)` —
+`"[object Object]"` — for *request-level* vars too. That is one defect at request level and root level both,
+and half-fixing it inside the root loader would leave the two paths disagreeing. Filed as **L11**.
+
+A root file that will not parse degrades rather than failing the run: no settings, and a note saying so.
+Header precedence and nearest-root-wins are both mutation tested.
 
 ### M4 — Generated YAML does not match Bruno's writer. CONFIRMED, but not as originally described. FIXED.
 
@@ -440,6 +475,24 @@ the catch-all — but it is a live trap for the next caller.
 ### L9 — graphql body with no query falls back to `''`. SUSPECTED.
 
 Decide whether an empty query should be an error rather than an empty string sent to the server.
+
+### L11 — a typed variable value renders as `[object Object]`. CONFIRMED.
+
+The YAML dialect writes a non-string variable as `value: {type: number, data: "100"}` (see upstream's
+`bruno-tests/yml-collection`). `parseYamlVarList` (`yaml-parser.ts:271-273`) does `String(v.value)`, which
+turns that into the literal `"[object Object]"` — so `{{coll_num}}` substitutes to that string and goes on the
+wire.
+
+Affects request-level `vars` and the collection/folder root vars M3 now reads, which is why M3 reports root
+vars as unapplied instead of applying them through a parser that would mangle a typed value. Fix once, in the
+var parser, and root vars can then use it. Filed 2026-07-31 while implementing M3.
+
+### L12 — collection- and folder-level scripts and tests are read but not run. CONFIRMED.
+
+M3 reads `script:pre-request`, `script:post-response` and `tests` from the root files and reports them per
+request as not applied. Running them needs decisions the read did not: where a root script sits relative to a
+request's own (upstream runs collection, then folder, then request), and whether a root `tests` block
+contributes assertions to every request's result. Filed 2026-07-31 while implementing M3.
 
 ### L10 — a `.yml` graphql request is written under `http:`, not in its own `graphql:` block. CONFIRMED.
 
@@ -626,10 +679,13 @@ What an agent needs and does not have. Direct field feedback first.
    in whichever PR is open; the real ordering fix needs 7.~~ **Description half done.** The quoted sentence was
    accurate for the mode it describes; the flat global sort in the default mode was the undocumented part, and
    is now stated. The ordering fix itself still needs 7.
-7. **M3** — read the collection and folder root files. A collection-wide `Authorization` or `Content-Type` is
+7. ~~**M3** — read the collection and folder root files. A collection-wide `Authorization` or `Content-Type` is
    the normal way to write a collection, and here it vanishes without a word, so the agent duplicates it per
    request or gets 401s it cannot explain. Unblocks M2's real fix and makes `auth: inherit` resolvable. Start
-   with warn-on-dropped-settings if the full read is too large for one change.
+   with warn-on-dropped-settings if the full read is too large for one change.~~ **Read done; headers and
+   `auth: inherit` applied.** Root vars/scripts/tests are read and reported per request rather than dropped —
+   the warn-on-dropped-settings step, kept for what is not applied yet. Root vars are blocked on **L11**;
+   root scripts are **L12**. See the resolution note under M3.
 8. **L4 + L6** — `seq` defaulting to "one past the folder maximum", and recognising `.yaml`. Papercuts, one
    PR. A Bruno collection using `.yaml` currently enumerates as empty.
 
@@ -668,6 +724,10 @@ posture decisions.
 ### Tier 3 — the rest
 
 13. **M7** — request-level unknown-key passthrough.
+13a. **L11** — a typed variable value (`{type, data}`) renders as `[object Object]`. Blocks M3's root vars, and
+     already wrong for request-level vars. Cheap, and it unlocks the next slice of M3.
+13b. **L12** — run collection/folder scripts and tests. Needs the ordering decision upstream already makes
+     (collection, then folder, then request).
 14. **L7** — environment authoring: secrets, and the unwired `dataType` / `disabled`.
 15. **L3** — the third auth enum at `request-tools.ts:355`. Pure drift.
 16. **L8** — the `.bru` file-body catch-all. Unreachable from the tool surface today; a live trap for the

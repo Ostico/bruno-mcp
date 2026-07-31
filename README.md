@@ -50,7 +50,7 @@ npm run build
    - **Windows:** `%APPDATA%/Claude/claude_desktop_config.json`
    - **Linux:** `~/.config/Claude/claude_desktop_config.json`
 
-2. Add Bruno MCP Server:
+7. Add Bruno MCP Server:
    ```json
    {
      "mcpServers": {
@@ -540,12 +540,13 @@ Execute all requests in a collection (or a single request) and run test scripts.
 - `cookieJar` (boolean, optional, default `true`): Keep cookies from each response and send them on later requests in the same run, so a login carries into what follows. Matched by host, path and expiry, so one host's cookie is never sent to another; `Secure` cookies go only to https (or `http://localhost`). Scoped to the run, and to the individual folder in parallel mode — nothing is written to disk and nothing is shared between runs. Set `false` to send only the `Cookie` headers a request writes itself. Bruno's CLI spells this as the inverse flag, `--disable-cookies`
 
 **Execution Flow:**
-1. Find all `.yml`/`.bru` request files, sort by `seq` field — one **global** sort across everything the run covers, so folders do not scope it. Two requests both numbered `seq: 1` in different folders are ordered by filesystem enumeration, which is not stable; give them distinct `seq` values, or run one folder at a time, when order matters. A file that cannot be parsed is skipped, and named with its reason in `parseFailures`
-2. Load environment variables (if specified)
-3. For each request: run the pre-request script (if any) → substitute `{{variables}}` (env + runtime) in URL, headers, and body → attach any jar cookies for the target → execute via `fetch()` → store the response's cookies → run post-response/test scripts → extract `bru.setVar()` variables for next request
-4. Requests execute serially in sequence order (or per-folder in parallel, see `parallel` above); variables accumulate across the run
-5. **On failure**: network errors or HTTP errors are recorded in the result — execution continues to the next request (never stops early)
-6. Requests with no test scripts report zero tests (still counted in `summary.total`)
+1. Read the collection root (`collection.bru` / `opencollection.yml` / `collection.yml`) and each folder root (`folder.bru` / `folder.yml`) on the path to a request: their **headers** are sent under the request's own, and a request with `auth: inherit` takes the auth of the nearest root that defines one. Root-level **vars, scripts and tests are read but not applied yet** — each is named in that request's `warnings` rather than dropped silently
+2. Find all `.yml`/`.bru` request files, sort by `seq` field — one **global** sort across everything the run covers, so folders do not scope it. Two requests both numbered `seq: 1` in different folders are ordered by filesystem enumeration, which is not stable; give them distinct `seq` values, or run one folder at a time, when order matters. A file that cannot be parsed is skipped, and named with its reason in `parseFailures`
+3. Load environment variables (if specified)
+4. For each request: run the pre-request script (if any) → substitute `{{variables}}` (env + runtime) in URL, headers, and body → attach any jar cookies for the target → execute via `fetch()` → store the response's cookies → run post-response/test scripts → extract `bru.setVar()` variables for next request
+5. Requests execute serially in sequence order (or per-folder in parallel, see `parallel` above); variables accumulate across the run
+6. **On failure**: network errors or HTTP errors are recorded in the result — execution continues to the next request (never stops early)
+7. Requests with no test scripts report zero tests (still counted in `summary.total`)
 
 **Returns:**
 ```json
