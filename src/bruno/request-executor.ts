@@ -27,6 +27,7 @@ import {
   BODY_TYPE_CONTENT_TYPES,
   setDefaultContentType,
 } from './request-headers.js';
+import { buildGraphqlBody, buildFormUrlEncodedBody } from './request-body.js';
 import type {
   YamlRequest,
   YamlScript,
@@ -337,6 +338,7 @@ export async function buildFetchOptions(
     headers,
   };
 
+  const bodyWarnings: string[] = [];
   const body = yaml.http.body;
   if (isMultipartBody(body)) {
     const form = new FormData();
@@ -391,57 +393,51 @@ export async function buildFetchOptions(
         delete headers[key];
       }
     }
+  } else if (body?.type === 'graphql' && body.data != null && !Array.isArray(body.data)) {
+    // Ahead of the plain-string branch on purpose: a graphql query this tool
+    // wrote is stored as bare text, and the string branch would claim it and
+    // send it with no JSON envelope around it.
+    options.body = buildGraphqlBody(body.data as BruGraphql | string, vars, trackUnresolved);
+    setDefaultContentType(headers, 'application/json');
   } else if (typeof body?.data === 'string') {
     trackUnresolved(body.data);
     options.body = substitute(body.data, vars);
     const implied = BODY_TYPE_CONTENT_TYPES[body.type];
     if (implied !== undefined) setDefaultContentType(headers, implied);
   } else if (body?.type === 'form-urlencoded' && Array.isArray(body.data)) {
-    // Substitute first, encode second. The reverse order lets a variable whose
-    // value contains `&` or `=` splice extra fields into the body.
-    const params = new URLSearchParams();
-    for (const pair of body.data as FormUrlEncodedPart[]) {
-      // A pair the author switched off must not be sent. Skipped before
-      // tracking so its placeholders raise no unresolved-variable warning.
-      if (pair.enabled === false) continue;
-      trackUnresolved(pair.name);
-      trackUnresolved(pair.value);
-      params.append(substitute(pair.name, vars), substitute(pair.value, vars));
-    }
-    options.body = params.toString();
+    options.body = buildFormUrlEncodedBody(
+      body.data as FormUrlEncodedPart[],
+      vars,
+      trackUnresolved,
+    );
     setDefaultContentType(headers, 'application/x-www-form-urlencoded');
-  } else if (body?.type === 'graphql' && body.data != null && !Array.isArray(body.data)) {
-    // Same ordering rule: build the envelope from substituted parts so a value
-    // containing a quote cannot break out of the JSON string.
-    const graphql = body.data as BruGraphql;
-    trackUnresolved(graphql.query);
-    const envelope: { query: string; variables?: unknown } = {
-      query: substitute(graphql.query, vars),
-    };
-    if (graphql.variables !== undefined) {
-      trackUnresolved(graphql.variables);
-      const substituted = substitute(graphql.variables, vars);
-      // A `body:graphql:vars` block is parsed as text. Send it as real JSON when
-      // it parses, and as the raw string when it does not, so a malformed vars
-      // block surfaces as a server-side error rather than being dropped here.
-      try {
-        envelope.variables = JSON.parse(substituted) as unknown;
-      } catch {
-        envelope.variables = substituted;
-      }
-    }
-    options.body = JSON.stringify(envelope);
-    setDefaultContentType(headers, 'application/json');
+  } else if (body?.data != null) {
+    // The branch that used not to exist. Every shape above is one this codebase
+    // knows how to put on the wire; anything left is a body the file declares
+    // and this build cannot encode. Sending nothing is the only honest option —
+    // a guessed encoding is a body the author did not write — but it must not
+    // be silent, because the request then returns a perfectly clean 2xx or 4xx
+    // and any assertion on it passes for the wrong reason.
+    bodyWarnings.push(
+      `body of type "${body.type}" was not sent: its data is ${
+        Array.isArray(body.data) ? 'a list' : typeof body.data
+      }, which no encoder here accepts`,
+    );
   }
 
   // Name the placeholder (e.g. `{{token}}`) but never a resolved value — the
   // value may be a secret. Ordered by the stage that produced them:
   // headerWarnings (the authored header list is read first), then authWarnings,
-  // then the unresolved-variable warnings in first-seen order.
+  // then bodyWarnings, then the unresolved-variable warnings in first-seen order.
   const unresolvedWarnings = [...unresolvedNames].map(
     name => `unresolved variable: {{${name}}}`,
   );
-  const warnings = [...headerWarnings, ...authWarnings, ...unresolvedWarnings];
+  const warnings = [
+    ...headerWarnings,
+    ...authWarnings,
+    ...bodyWarnings,
+    ...unresolvedWarnings,
+  ];
 
   return {
     url,

@@ -104,13 +104,13 @@ describe('loadRequest keeps the body payload of a .yml request', () => {
     const bru = await load('form.yml', FORM_URLENCODED_YML);
 
     expect(bru.body?.type).toBe('form-urlencoded');
-    // `type: 'text'` is not a form-urlencoded field — the parser normalises every
-    // array body through its multipart part mapper, so it comes along. Asserted as
-    // it actually is rather than as it ought to be; the payload is what this
-    // change is about.
+    // No `type` key: it is not a form-urlencoded field, and Bruno does not write
+    // one. The parser used to run every array body through its multipart part
+    // mapper, which stamped `type: 'text'` on each pair and put that key back in
+    // the file on the next write.
     expect(bru.body?.formUrlEncoded).toEqual([
-      { name: 'grant_type', value: 'password', type: 'text' },
-      { name: 'scope', value: 'admin', type: 'text', enabled: false },
+      { name: 'grant_type', value: 'password' },
+      { name: 'scope', value: 'admin', enabled: false },
     ]);
   });
 
