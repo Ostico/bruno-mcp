@@ -381,6 +381,29 @@ describe('run_collection tool', () => {
       );
     });
 
+    it('defaults the cookie jar to on, matching Bruno\'s --disable-cookies', () => {
+      // The default lives in the schema: the SDK parses args before the handler
+      // sees them, so it is asserted where it actually applies. (Calling the
+      // handler directly, as the tests below do, bypasses that parse — the
+      // executor's own `cookieJar !== false` covers that case.)
+      const tool = getRegisteredTool(server)!;
+
+      expect(tool.config.inputSchema.cookieJar.parse(undefined)).toBe(true);
+      expect(tool.config.inputSchema.cookieJar.parse(false)).toBe(false);
+    });
+
+    it('passes the cookie jar opt-out through', async () => {
+      mockedExecutor.executeCollection.mockResolvedValue(createSuccessResult(1, 1, 0));
+
+      const tool = getRegisteredTool(server)!;
+      await tool.handler({ collectionPath: '/workspace/collection', cookieJar: false });
+
+      expect(mockedExecutor.executeCollection).toHaveBeenCalledWith(
+        '/workspace/collection',
+        expect.objectContaining({ cookieJar: false }),
+      );
+    });
+
     it('rejects a name no placeholder could reference, and runs nothing', async () => {
       const tool = getRegisteredTool(server)!;
       const response = await tool.handler({

@@ -105,7 +105,7 @@ the fallback branch, which **warns rather than throws** — `buildFetchOptions`'
 `executeSingleRequest`'s try block, so a throw would abort an entire sequential run. Guarded by
 `tests/unit/bruno/yml-body-fidelity.test.ts`, including a byte-exact round-trip of a Bruno-written file.
 
-### H2 — No cookie jar, so no session can be exercised without hand-rolled relaying. CONFIRMED.
+### H2 — No cookie jar, so no session can be exercised without hand-rolled relaying. CONFIRMED. FIXED.
 
 `Set-Cookie` is captured per response into `MockResponseData.setCookies` (`response-wrapper.ts:194-195, 221`)
 and then never used: `executeSingleRequest` reads only `scriptResult.variables`
@@ -120,6 +120,35 @@ broken, because the symptom is a 403 with no explanation.
 
 A `cookieJar: true` option on `run_collection`, defaulting to on for a folder run, removes an entire class of
 user confusion. Couples to L1 — expose `res.getSetCookies()` in the same change.
+
+**Resolution.** `run_collection` takes `cookieJar`, defaulting to **on**. That default is upstream's, not a
+preference: Bruno's CLI exposes the inverse flag `--disable-cookies`, off unless given, so cookies relay by
+default there too.
+
+Implemented on `tough-cookie`, the same library upstream uses, so host/path/expiry matching is not
+reimplemented here. Semantics copied deliberately from `bruno-cli/src/runner/run-single-request.js`:
+`Cookie.parse(..., { loose: true })` and `setCookieSync(..., { ignoreError: true })` so a malformed cookie is
+skipped rather than failing the run; jar cookies merged over a `Cookie` header the request wrote itself, with
+the jar winning a same-name clash and the caller's own header name preserved; cookies stored from 4XX/5XX
+responses too, since a failed login still sets the cookie the next request needs.
+
+**Where it goes beyond copying upstream, and why:**
+
+- **Scope.** Upstream keeps a module-level singleton jar, which is right for a CLI process that exits after one
+  run. This server is long-lived and runs unrelated collections, so a process-wide jar would send one
+  collection's session cookie to whatever host a later run happened to match. The jar is created per run, and
+  per *folder* in a parallel run — the same isolation the `VariableStore` already has, for the same reason.
+- **Redirects.** Our executor follows redirects itself, so the jar is applied per hop, *after* the existing
+  cross-origin credential strip. Applying it only to the initial request would have missed the
+  login-then-redirect flow, which is most of what H2 is about; applying it before the strip would have undone
+  the strip. A hop to another origin gets that origin's cookies, or none.
+- **`Secure` gating** is left to the library. Upstream passes an explicit `{ secure }` option to
+  `getCookiesSync`, but tough-cookie v6 removed it and derives this from the URL: sent over https, withheld
+  over http, allowed to `http://localhost`. Verified by test rather than assumed, since a silently-ignored
+  option looks identical to a working one.
+
+Host isolation is pinned by tests at both the jar and the wire level, and both survive mutation testing — the
+plausible bug (forgetting to thread the hop's URL) turns four tests red.
 
 ### H3 — Runtime variables cannot be injected into a run. CONFIRMED. FIXED.
 
@@ -213,6 +242,15 @@ cookie jar (H2) and state must flow between requests in order.
 
 Either implement folder-scoped ordering (and parse `folder.bru` `meta.seq`, which needs M3) or correct the
 description. Shipping a description that overstates the guarantee is the worse half of this defect.
+
+**Description half addressed.** `run_collection` now states the real rule: one global `seq` sort across
+everything the run covers, folders not scoping it, ties ordered by filesystem enumeration and therefore not
+stable — with the advice to use distinct `seq` values or run a folder at a time when order matters.
+
+One correction to this finding: the sentence it quotes, "Requests within each folder still run sequentially by
+seq order", is on the `parallel` option and is **accurate for that mode** — the parallel path groups by folder
+and walks each folder's requests in order. What was undocumented is the *default* sequential mode's flat
+global sort. The real ordering fix still needs M3.
 
 ### M3 — Collection-level and folder-level settings are silently ignored. CONFIRMED.
 
@@ -328,7 +366,7 @@ touches it.
 
 ## Open — Low
 
-### L1 — `setCookies` is captured but never exposed under a name. CONFIRMED.
+### L1 — `setCookies` is captured but never exposed under a name. CONFIRMED. FIXED.
 
 `response-wrapper.ts:194-195, 221` populates `setCookies`, but nothing in `sandbox-worker.ts` exposes it —
 verified, `getSetCookies` has zero occurrences there. It is reachable only incidentally as
@@ -577,13 +615,17 @@ What an agent needs and does not have. Direct field feedback first.
    agent: it cannot bisect, so it cannot recover. Cheap.~~ **Done.** Cheap as predicted; the single-request
    path turned out to have the same defect in a different shape and was fixed with it. See the resolution
    note under M1.
-5. **H2 + L1** — an opt-in cookie jar, exposing `getSetCookies()` alongside. Without it, every session-based
+5. ~~**H2 + L1** — an opt-in cookie jar, exposing `getSetCookies()` alongside. Without it, every session-based
    flow needs the same hand-rolled `set-cookie` relay, and the symptom of getting it wrong is an unexplained
    403. Larger, but it is the difference between "can test a login" and "can test a login if you already know
-   the internals".
-6. **M2 (description half, now)** — the tool description promises folder-scoped `seq` ordering that does not
+   the internals".~~ **Done.** On by default rather than opt-in, which is upstream's posture
+   (`--disable-cookies`). Built on `tough-cookie`, per run and per parallel folder, applied per redirect hop
+   after the cross-origin strip — see the resolution note under H2.
+6. ~~**M2 (description half, now)** — the tool description promises folder-scoped `seq` ordering that does not
    exist. An agent planning around a false guarantee is worse off than one told the limit. Correct the wording
-   in whichever PR is open; the real ordering fix needs 7.
+   in whichever PR is open; the real ordering fix needs 7.~~ **Description half done.** The quoted sentence was
+   accurate for the mode it describes; the flat global sort in the default mode was the undocumented part, and
+   is now stated. The ordering fix itself still needs 7.
 7. **M3** — read the collection and folder root files. A collection-wide `Authorization` or `Content-Type` is
    the normal way to write a collection, and here it vanishes without a word, so the agent duplicates it per
    request or gets 401s it cannot explain. Unblocks M2's real fix and makes `auth: inherit` resolvable. Start

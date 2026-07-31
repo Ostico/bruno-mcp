@@ -52,6 +52,10 @@ function buildSandboxSetupScript(responseData: MockResponseData): string {
     headers: normalizedHeaders,
     body: responseData.body,
     responseTime: responseData.responseTime,
+    // Captured per response since the wrapper was written, but never carried
+    // into the sandbox until res.getSetCookies() needed it. An accessor over a
+    // field nobody serialised would have returned [] forever.
+    setCookies: responseData.setCookies,
   });
 
   return `
@@ -85,6 +89,15 @@ res.getHeader = function(name) {
 };
 res.getBody = function() { return __resData.body; };
 res.getResponseTime = function() { return __resData.responseTime; };
+// Each Set-Cookie value, unparsed and unjoined. Headers.forEach comma-joins
+// them into one lossy string, so res.getHeader('set-cookie') cannot be split
+// safely -- a cookie value may contain a comma. Always an array, so a script
+// can iterate without a guard. Not a Bruno API: it exposes what the response
+// already captured, for scripts that want the raw values even though the run
+// now relays cookies on its own.
+res.getSetCookies = function() {
+  return Array.isArray(__resData.setCookies) ? __resData.setCookies : [];
+};
 
 // Bruno's response object carries the same five values as plain properties as
 // well as getters, and a declared assert block reaches for the properties:

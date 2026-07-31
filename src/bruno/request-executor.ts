@@ -1,5 +1,5 @@
-import { readFile, readdir, stat } from 'node:fs/promises';
-import { join, basename, relative, dirname, resolve, isAbsolute } from 'node:path';
+import { readFile, stat } from 'node:fs/promises';
+import { basename, relative, dirname, resolve, isAbsolute } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { parseYamlRequest } from './yaml-parser.js';
 import { parseBruRequest } from './bru-parser.js';
@@ -13,9 +13,16 @@ import { describeNetworkError } from './network-error.js';
 import { applyParams } from './request-params.js';
 import { applyPreRequestVars } from './request-vars.js';
 import { bruFileToYamlRequest, bruAuthToYamlAuth } from './bru-to-yaml.js';
-import { isMetadataFile } from './metadata-files.js';
 import { describeParseFailure } from './parse-failure.js';
+import type { ExecutionOptions } from './execution-options.js';
+import { discoverRequests, type ParsedRequest } from './request-discovery.js';
 import { applyVariableOverrides } from './runtime-variables.js';
+import {
+  applyCookiesToHeaders,
+  createRunCookieJar,
+  storeResponseCookies,
+  type RunCookieJar,
+} from './cookie-jar.js';
 import {
   redactUrl,
   stripCredentialHeaders,
@@ -51,31 +58,6 @@ import type {
 export { bruFileToYamlRequest, bruAuthToYamlAuth };
 export { redactUrl, stripCredentialHeaders };
 
-interface ExecutionOptions {
-  environment?: string;
-  collectionRoot?: string;
-  requestPath?: string;
-  parallel?: boolean;
-  includeResponseBody?: boolean;
-  maxResponseBodyBytes?: number;
-  /**
-   * How scripts are run. Defaults to the FORKING runner, so a caller that says
-   * nothing gets the process boundary: scripts come from a collection on disk
-   * that the operator did not write. Pass the in-process `TestRunner` only to
-   * opt OUT of that boundary — it runs collection scripts in this process, with
-   * no env scrubbing and no way to kill a runaway script. The unit suite passes
-   * it deliberately, because forking needs the built worker at
-   * dist/bruno/sandbox-worker.js, which that lane does not produce.
-   */
-  scriptRunner?: ScriptRunner;
-  /**
-   * Variables for this run only, overriding the environment file. Names are
-   * assumed validated and values already strings — `normalizeVariableOverrides`
-   * does that at the tool boundary. Never written anywhere.
-   */
-  variables?: Record<string, string>;
-}
-
 const DEFAULT_MAX_RESPONSE_BODY_BYTES = 10240;
 
 interface BodyCaptureOptions {
@@ -83,76 +65,6 @@ interface BodyCaptureOptions {
   maxResponseBodyBytes: number;
 }
 
-interface ParsedRequest {
-  yaml: YamlRequest;
-  filePath: string;
-}
-
-interface DiscoveryResult {
-  requests: ParsedRequest[];
-  parseFailures: ParseFailure[];
-}
-
-const EXCLUDED_DIRS = new Set([
-  'node_modules',
-  '.git',
-  'environments',
-]);
-
-async function findYmlFilesRecursive(dirPath: string, results: string[], collectionPath: string): Promise<void> {
-  let entries;
-  try {
-    entries = await readdir(dirPath, { withFileTypes: true });
-  } catch {
-    return;
-  }
-
-  for (const entry of entries) {
-    const fullPath = join(dirPath, entry.name);
-
-    if (entry.isDirectory() && !EXCLUDED_DIRS.has(entry.name)) {
-      await findYmlFilesRecursive(fullPath, results, collectionPath);
-    } else if (entry.isFile() && (entry.name.endsWith('.yml') || entry.name.endsWith('.bru'))) {
-      if (!isMetadataFile(fullPath, collectionPath)) {
-        results.push(fullPath);
-      }
-    }
-  }
-}
-
-async function discoverRequests(dirPath: string): Promise<DiscoveryResult> {
-  const requestFiles: string[] = [];
-  await findYmlFilesRecursive(dirPath, requestFiles, dirPath);
-
-  const requests: ParsedRequest[] = [];
-  const parseFailures: ParseFailure[] = [];
-
-  for (const filePath of requestFiles) {
-    try {
-      const content = await readFile(filePath, 'utf-8');
-      let yaml: YamlRequest;
-      if (filePath.endsWith('.yml')) {
-        yaml = parseYamlRequest(content);
-      } else if (filePath.endsWith('.bru')) {
-        yaml = bruFileToYamlRequest(parseBruRequest(content));
-      } else {
-        /* istanbul ignore next -- unreachable: findYmlFilesRecursive only yields .yml/.bru paths, so this defensive else is dead code */
-        continue;
-      }
-      requests.push({ yaml, filePath });
-    } catch (error) {
-      parseFailures.push(describeParseFailure(filePath, error));
-    }
-  }
-
-  requests.sort((a, b) => {
-    const seqA = a.yaml.info.seq ?? Number.MAX_SAFE_INTEGER;
-    const seqB = b.yaml.info.seq ?? Number.MAX_SAFE_INTEGER;
-    return seqA - seqB;
-  });
-
-  return { requests, parseFailures };
-}
 
 function isMultipartBody(body: YamlRequest['http']['body']): boolean {
   return (
@@ -680,6 +592,7 @@ async function executeSingleRequest(
   variableStore?: VariableStore,
   bodyCapture?: BodyCaptureOptions,
   collectionRoot?: string,
+  cookieJar?: RunCookieJar,
 ): Promise<RequestExecutionResult> {
   // `vars:pre-request` sits between the environment and the runtime store, which
   // is where upstream puts it: collection < env < folder < REQUEST < oauth2 <
@@ -883,7 +796,15 @@ async function executeSingleRequest(
     if (timeoutMs > 0) {
       currentOpts = { ...fetchOpts, signal: AbortSignal.timeout(timeoutMs) };
     }
+    if (cookieJar) {
+      applyCookiesToHeaders(currentOpts.headers as Record<string, string>, url, cookieJar);
+    }
     let response = await fetchFn(url, currentOpts);
+    // Stored even for a 4XX/5XX, as upstream does: a failed login still sets
+    // the cookie the next request needs.
+    if (cookieJar) {
+      storeResponseCookies(cookieJar, url, response);
+    }
     let currentUrl = url;
     let redirectCount = 0;
 
@@ -944,6 +865,18 @@ async function executeSingleRequest(
       // Pin this hop to the addresses redirectCheck approved for it. The
       // previous hop's dispatcher is pinned to a different host's addresses, so
       // it must be replaced — or cleared, when this hop has nothing to pin.
+      // After the cross-origin strip above, never before it: the jar decides
+      // what this hop's host may receive, which is the whole point of following
+      // a login redirect. A hop to another origin gets that origin's cookies,
+      // or none.
+      if (cookieJar) {
+        applyCookiesToHeaders(
+          currentOpts.headers as Record<string, string>,
+          redirectUrl,
+          cookieJar,
+        );
+      }
+
       const hop = await dispatcherFor(redirectUrl, redirectCheck.addresses);
       currentOpts = { ...currentOpts };
       if (hop) {
@@ -953,6 +886,9 @@ async function executeSingleRequest(
       }
 
       response = await (hop ? hop.fetch : fetch)(redirectUrl, currentOpts);
+      if (cookieJar) {
+        storeResponseCookies(cookieJar, redirectUrl, response);
+      }
       currentUrl = redirectUrl;
       redirectCount++;
     }
@@ -1117,6 +1053,9 @@ export class RequestExecutor {
     // the point, since a secret has no correct on-disk home to load from.
     vars = applyVariableOverrides(vars, options?.variables);
 
+    // On unless refused, as upstream's `--disable-cookies` is off unless given.
+    const cookiesEnabled = options?.cookieJar !== false;
+
     let requests: ParsedRequest[];
     let parseFailures: ParseFailure[] = [];
 
@@ -1187,9 +1126,12 @@ export class RequestExecutor {
           //, so this isolation can no longer let an unsubstituted
           // placeholder reach the wire silently the way serial mode would not.
           const folderStore = new VariableStore();
+          // The cookie jar is scoped per folder for the same reason: two
+          // folders running concurrently must not share mutable session state.
+          const folderJar = cookiesEnabled ? createRunCookieJar() : undefined;
           const folderRes: RequestExecutionResult[] = [];
           for (const req of folderRequests) {
-            const result = await executeSingleRequest(req.yaml, vars, scriptRunner, folderStore, bodyCapture, collectionPath);
+            const result = await executeSingleRequest(req.yaml, vars, scriptRunner, folderStore, bodyCapture, collectionPath, folderJar);
             folderRes.push(result);
           }
           return folderRes;
@@ -1233,9 +1175,10 @@ export class RequestExecutor {
     } else {
       // Serial execution (default)
       const variableStore = new VariableStore();
+      const runJar = cookiesEnabled ? createRunCookieJar() : undefined;
       results = [];
       for (const req of requests) {
-        const result = await executeSingleRequest(req.yaml, vars, scriptRunner, variableStore, bodyCapture, collectionPath);
+        const result = await executeSingleRequest(req.yaml, vars, scriptRunner, variableStore, bodyCapture, collectionPath, runJar);
         results.push(result);
       }
     }

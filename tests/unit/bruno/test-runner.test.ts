@@ -203,6 +203,46 @@ describe('TestRunner', () => {
       expect(results[0].status).toBe('pass');
     });
 
+    it('should provide res.getSetCookies() with each Set-Cookie value intact', async () => {
+      // Headers.forEach comma-joins Set-Cookie, and a cookie value may itself
+      // contain a comma, so getHeader('set-cookie') cannot be split safely.
+      // to.eql is deliberately unsupported by this sandbox's expect — it fails
+      // an unknown matcher rather than passing silently — so assert by length
+      // and membership, which also proves the comma-bearing value survived.
+      const script = `test("cookies", function() {
+        expect(res.getSetCookies()).to.have.lengthOf(2);
+        expect(res.getSetCookies()).to.include("sid=abc; Path=/");
+        expect(res.getSetCookies()).to.include("pref=a,b; Path=/");
+      });`;
+      const mockResponse = {
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        body: null,
+        responseTime: 10,
+        setCookies: ['sid=abc; Path=/', 'pref=a,b; Path=/'],
+      };
+
+      const { results } = await TestRunner.runScript(script, mockResponse);
+
+      expect(results).toHaveLength(1);
+      expect(results[0].status).toBe('pass');
+    });
+
+    it('should provide res.getSetCookies() as [] when the response set none', async () => {
+      // Always an array, so a script can iterate without guarding.
+      const script = `test("no cookies", function() {
+        expect(res.getSetCookies()).to.be.an('array');
+        expect(res.getSetCookies()).to.have.lengthOf(0);
+      });`;
+      const mockResponse = { status: 200, statusText: 'OK', headers: {}, body: null, responseTime: 10 };
+
+      const { results } = await TestRunner.runScript(script, mockResponse);
+
+      expect(results).toHaveLength(1);
+      expect(results[0].status).toBe('pass');
+    });
+
     it('should provide res.getResponseTime() in VM context', async () => {
       const script = `test("timing", function() { expect(res.getResponseTime()).to.be.a("number"); expect(res.getResponseTime()).to.equal(55); });`;
       const mockResponse = { status: 200, statusText: 'OK', headers: {}, body: null, responseTime: 55 };
