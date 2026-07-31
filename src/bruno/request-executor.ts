@@ -14,6 +14,7 @@ import { applyParams } from './request-params.js';
 import { applyPreRequestVars } from './request-vars.js';
 import { bruFileToYamlRequest, bruAuthToYamlAuth } from './bru-to-yaml.js';
 import { isMetadataFile } from './metadata-files.js';
+import { describeParseFailure } from './parse-failure.js';
 import {
   redactUrl,
   stripCredentialHeaders,
@@ -34,6 +35,7 @@ import type {
   MockRequestData,
   CollectionRunResult,
   CollectionRunSummary,
+  ParseFailure,
   RequestExecutionResult,
   TestResult,
   MultipartFormPart,
@@ -81,7 +83,7 @@ interface ParsedRequest {
 
 interface DiscoveryResult {
   requests: ParsedRequest[];
-  parseErrors: number;
+  parseFailures: ParseFailure[];
 }
 
 const EXCLUDED_DIRS = new Set([
@@ -116,7 +118,7 @@ async function discoverRequests(dirPath: string): Promise<DiscoveryResult> {
   await findYmlFilesRecursive(dirPath, requestFiles, dirPath);
 
   const requests: ParsedRequest[] = [];
-  let parseErrors = 0;
+  const parseFailures: ParseFailure[] = [];
 
   for (const filePath of requestFiles) {
     try {
@@ -131,8 +133,8 @@ async function discoverRequests(dirPath: string): Promise<DiscoveryResult> {
         continue;
       }
       requests.push({ yaml, filePath });
-    } catch {
-      parseErrors++;
+    } catch (error) {
+      parseFailures.push(describeParseFailure(filePath, error));
     }
   }
 
@@ -142,7 +144,7 @@ async function discoverRequests(dirPath: string): Promise<DiscoveryResult> {
     return seqA - seqB;
   });
 
-  return { requests, parseErrors };
+  return { requests, parseFailures };
 }
 
 function isMultipartBody(body: YamlRequest['http']['body']): boolean {
@@ -1106,7 +1108,7 @@ export class RequestExecutor {
     }
 
     let requests: ParsedRequest[];
-    let parseErrors = 0;
+    let parseFailures: ParseFailure[] = [];
 
     if (options?.requestPath) {
       const isFile = options.requestPath.endsWith('.yml') || options.requestPath.endsWith('.bru');
@@ -1116,24 +1118,33 @@ export class RequestExecutor {
         if (pathStat.isDirectory()) {
           const discovery = await discoverRequests(options.requestPath);
           requests = discovery.requests;
-          parseErrors = discovery.parseErrors;
+          parseFailures = discovery.parseFailures;
         } else {
           throw new Error(`Unsupported request file format: ${options.requestPath}`);
         }
       } else {
         const content = await readFile(options.requestPath, 'utf-8');
         let yaml: YamlRequest;
-        if (options.requestPath.endsWith('.yml')) {
-          yaml = parseYamlRequest(content);
-        } else {
-          yaml = bruFileToYamlRequest(parseBruRequest(content));
+        try {
+          if (options.requestPath.endsWith('.yml')) {
+            yaml = parseYamlRequest(content);
+          } else {
+            yaml = bruFileToYamlRequest(parseBruRequest(content));
+          }
+        } catch (error) {
+          // A single named request that will not parse is a hard failure, not a
+          // tally — nothing else was asked for, so there is no partial run to
+          // report. The parser names the reason but not the file, and the
+          // caller's own argument is not in the message it gets back.
+          const failure = describeParseFailure(options.requestPath, error);
+          throw new Error(`Failed to parse ${failure.file}: ${failure.message}`);
         }
         requests = [{ yaml, filePath: options.requestPath }];
       }
     } else {
       const discovery = await discoverRequests(collectionPath);
       requests = discovery.requests;
-      parseErrors = discovery.parseErrors;
+      parseFailures = discovery.parseFailures;
     }
 
     let results: RequestExecutionResult[];
@@ -1224,7 +1235,10 @@ export class RequestExecutor {
     return {
       summary: summarise(results, totalDuration),
       results,
-      parseErrors,
+      // Derived, not tallied in parallel with the list: the count and the
+      // detail cannot drift apart if only one of them is maintained.
+      parseErrors: parseFailures.length,
+      parseFailures,
     };
   }
 }

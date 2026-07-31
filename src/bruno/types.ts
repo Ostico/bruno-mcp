@@ -927,10 +927,37 @@ export interface CollectionRunSummary {
   requestsWithoutTests: number;
 }
 
+/**
+ * A request file that was discovered but could not be parsed, so it was skipped.
+ *
+ * `file` is the same path shape `RequestExecutionResult` reports, so it can be
+ * handed straight to `read_request`. `message` is the reason, reduced to its
+ * first line: every BrunoError message is single-line already, and the only
+ * multi-line source is the `yaml` package's code frame, which echoes the
+ * offending source line back — the line and column are in the first line
+ * anyway, and duplicating file content into a run result is how a literal
+ * credential in a request body would end up somewhere nobody expected it.
+ */
+export interface ParseFailure {
+  file: string;
+  message: string;
+}
+
 export interface CollectionRunResult {
   summary: CollectionRunSummary;
   results: RequestExecutionResult[];
+  /**
+   * How many discovered files failed to parse and were skipped. Always equals
+   * `parseFailures.length` — it is derived from it, not counted separately.
+   */
   parseErrors?: number;
+  /**
+   * One entry per skipped file, naming it and why. A bare count is a dead end
+   * for a caller that cannot bisect: it says a subset ran without saying which
+   * subset. Absent only on the single-request path, where a parse failure
+   * throws instead of being tallied.
+   */
+  parseFailures?: ParseFailure[];
 }
 
 // Utility types for better type safety

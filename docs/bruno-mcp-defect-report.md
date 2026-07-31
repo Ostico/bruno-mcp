@@ -144,7 +144,7 @@ repository. For a credential, that means committing it.
 
 ## Open — Medium
 
-### M1 — Parse failures are counted, never identified. CONFIRMED.
+### M1 — Parse failures are counted, never identified. CONFIRMED. FIXED.
 
 `discoverRequests` (`request-executor.ts:110-142`) wraps each file in `try { … } catch { parseErrors++ }`.
 The run result carries `parseErrors: <n>` and nothing else — not the path, not the message.
@@ -154,6 +154,24 @@ learn which file by bisecting. Attach `{file, message}` per failure.
 
 This is the same shape as the zero-tests-reports-PASS gate that was closed earlier: an aggregate number that
 cannot distinguish "nothing was wrong" from "something was skipped".
+
+**Resolution.** The run result now carries `parseFailures: [{file, message}]`, and `parseErrors` is derived
+from its length rather than tallied beside it, so the count and the detail cannot drift. `file` is the same
+path shape `results[]` reports, so it can be handed straight to `read_request`.
+
+Two things worth knowing about the reported message. It is the **first line only**: our own guards throw
+single-line messages, and the one multi-line source is the `yaml` package's code frame, which echoes the
+offending source line back — the reason and its line/column are already in the first line, and copying file
+content into a run result is how a literal credential in a request body ends up somewhere nobody expected it.
+It is capped at 300 characters, with the truncation marked rather than silent.
+
+The **single-request** path was the same defect with a different shape and is fixed too: `requestPath`
+pointing at an unparseable file throws (correctly — there is no partial run to report), but the parser names
+the reason and not the file, and the caller's own argument does not appear in what it gets back. It now
+throws `Failed to parse <path>: <reason>`.
+
+`describeParseFailure` lives in `src/bruno/parse-failure.ts` rather than in the executor because
+`request-executor.ts` sits on the repo-wide max-lines ceiling — adding this inline broke the lint gate.
 
 ### M2 — Execution order is a flat global `seq` sort; folders do not scope it. CONFIRMED, contradicts the tool description.
 
@@ -230,7 +248,11 @@ Fixed by routing all six call sites through one helper that mirrors Bruno's opti
 `defaultStringType: 'PLAIN'` is what selects `|-` over `>-`; the original note that `lineWidth: 0` alone
 would not do it is correct.
 
-### M5 — No tool to read a request or an environment. CONFIRMED. *(User-reported)*
+### M5 — No tool to read a request or an environment. CONFIRMED. FIXED.  *(User-reported)*
+
+**Closure was never recorded here.** `read_request` and `read_environment` shipped in PR #85; this heading
+and Tier-1 item 1 still read as open until 2026-07-31. Marking the heading is how closure is recorded — see
+the M4 convention note at the top. The description below is the original finding.
 
 The surface is `list_collections`, `list_requests`, `run_collection`, `create_request`, `modify_request`,
 `delete_request`, `create_environment`, `update_environment`, `set_environment_variable`,
@@ -262,6 +284,13 @@ environment file off disk.
 
 Withholding secrets is reasonable; withholding every value is not. Return non-secret values, or add a
 `revealValues` flag. Best folded into `read_environment` (M5) rather than solved twice.
+
+**RESOLVED via M5, not in `get_collection_stats`.** `read_environment` returns every variable with its value
+plus its `disabled` and `secret` flags, which is the "folded into M5" option this finding preferred.
+`get_collection_stats` still returns variable names only, and its description says so — that split is now
+deliberate: a stats call over a whole collection is not where a caller should be handed every value.
+Secrets remain name-only there and in `read_environment`, because no format stores a secret's value to
+return.
 
 ### M7 — Request-level unknown-key passthrough. CONFIRMED.
 
@@ -503,21 +532,26 @@ defect; use this list to decide what to do next.
 
 What an agent needs and does not have. Direct field feedback first.
 
-1. **M5 + M6** — `read_request` and `read_environment`. Reported twice by users. The agent must leave the MCP
+1. ~~**M5 + M6** — `read_request` and `read_environment`. Reported twice by users. The agent must leave the MCP
    boundary and `cat` files to see what it just wrote. This is also the meta-blocker: H1 survived precisely
    because there was no in-protocol way to look at the generated `data:` scalar. Fixing this makes every
-   remaining defect on this list *visible* to whoever hits it, so it goes first even though H1 is more severe.
-2. **M4** — match Bruno's writer options and its blank-line pass. Ranked here on the strength of a
+   remaining defect on this list *visible* to whoever hits it, so it goes first even though H1 is more
+   severe.~~ **Done** in PR #85 — struck 2026-07-31, having stayed unmarked here for a week after landing.
+   M6 was answered inside `read_environment`, not in `get_collection_stats`; see the note under M6.
+2. ~~**M4** — match Bruno's writer options and its blank-line pass. Ranked here on the strength of a
    corruption claim that did not survive measurement: folded style round-trips losslessly, so no script was
    ever silently commented out. It kept the slot only because it is the cheapest fix on the list; on its
-   real merits — byte-fidelity with Bruno, and removing a hand-edit trap — it belongs below M1.
+   real merits — byte-fidelity with Bruno, and removing a hand-edit trap — it belongs below M1.~~ **Done** —
+   the heading has said `FIXED.` since it landed; only this list entry was left unstruck.
 3. ~~**H1 + L2** — the missing `else` in the body chain, the `.yml` `toFormUrlEncodedEntries` routing, and the
    read-path mirror, in one change. The run reports a clean 2xx/4xx and the body was never sent, so
    assertions pass for the wrong reason. Fix the orphaned docblock while in the file — it actively hides
    this.~~ **Done.** Measurement moved three of H1's claims and turned up one defect it never listed — see
    the note under H1. Filed L10 out of it.
-4. **M1** — name the file and the reason in `parseErrors`. A bare count is a dead end for an autonomous
-   agent: it cannot bisect, so it cannot recover. Cheap.
+4. ~~**M1** — name the file and the reason in `parseErrors`. A bare count is a dead end for an autonomous
+   agent: it cannot bisect, so it cannot recover. Cheap.~~ **Done.** Cheap as predicted; the single-request
+   path turned out to have the same defect in a different shape and was fixed with it. See the resolution
+   note under M1.
 5. **H2 + L1** — an opt-in cookie jar, exposing `getSetCookies()` alongside. Without it, every session-based
    flow needs the same hand-rolled `set-cookie` relay, and the symptom of getting it wrong is an unexplained
    403. Larger, but it is the difference between "can test a login" and "can test a login if you already know
