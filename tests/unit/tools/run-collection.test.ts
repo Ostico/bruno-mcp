@@ -351,4 +351,49 @@ describe('run_collection tool', () => {
       expect(mockedExecutor.executeCollection).not.toHaveBeenCalled();
     });
   });
+
+  describe('variables', () => {
+    it('passes variables through, coercing non-string values', async () => {
+      mockedExecutor.executeCollection.mockResolvedValue(createSuccessResult(1, 1, 0));
+
+      const tool = getRegisteredTool(server)!;
+      const response = await tool.handler({
+        collectionPath: '/workspace/collection',
+        variables: { token: 'secret-abc', port: 8080 },
+      });
+
+      expect(response.isError).toBeUndefined();
+      expect(mockedExecutor.executeCollection).toHaveBeenCalledWith(
+        '/workspace/collection',
+        expect.objectContaining({ variables: { token: 'secret-abc', port: '8080' } }),
+      );
+    });
+
+    it('omits nothing when no variables are given', async () => {
+      mockedExecutor.executeCollection.mockResolvedValue(createSuccessResult(1, 1, 0));
+
+      const tool = getRegisteredTool(server)!;
+      await tool.handler({ collectionPath: '/workspace/collection' });
+
+      expect(mockedExecutor.executeCollection).toHaveBeenCalledWith(
+        '/workspace/collection',
+        expect.objectContaining({ variables: {} }),
+      );
+    });
+
+    it('rejects a name no placeholder could reference, and runs nothing', async () => {
+      const tool = getRegisteredTool(server)!;
+      const response = await tool.handler({
+        collectionPath: '/workspace/collection',
+        variables: { 'bad}name': 'x' },
+      });
+
+      // Accepting it would mean running the whole collection with an override
+      // that silently never applied.
+      expect(response.isError).toBe(true);
+      expect(response.content[0].text).toContain('Invalid variables');
+      expect(response.content[0].text).toContain('bad}name');
+      expect(mockedExecutor.executeCollection).not.toHaveBeenCalled();
+    });
+  });
 });
