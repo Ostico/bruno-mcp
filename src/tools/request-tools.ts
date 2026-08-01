@@ -370,7 +370,13 @@ export function registerCreateTestSuiteTool(ctx: ToolContext): void {
             content: z.string().optional()
           }).optional(),
           auth: z.object({
-            type: z.enum(['none', 'bearer', 'basic', 'oauth2', 'api-key']),
+            // Same seven modes as create_request and update_request. This enum
+            // used to stop at api-key, so a CRUD set could not be given the
+            // digest or inherit auth the other two tools accept and the writer
+            // handles — the same auth, rejected by whichever tool you reached
+            // for. `inherit` in particular is what a request in an authenticated
+            // collection normally wants.
+            type: z.enum(['none', 'bearer', 'basic', 'oauth2', 'api-key', 'digest', 'inherit']),
             config: z.record(z.string())
           }).optional(),
           folder: z.string().optional()

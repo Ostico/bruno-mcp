@@ -827,8 +827,15 @@ mismatch rather than a silent failure.
 What remains under this heading:
 - oauth2 and digest are still parsed and persisted but never applied. Their *config* is additionally dropped
   by the readers — a partial block may be worse than none, so decide before implementing.
-- The third auth enum, at `request-tools.ts:355` (`create_crud_requests`), lists neither `digest` nor
-  `inherit`, so it disagrees with the other two enums. Pure drift; cheap to fix.
+- ~~The third auth enum lists neither `digest` nor `inherit`.~~ **FIXED.**
+  > **Attribution corrected.** The enum is in **`create_test_suite`**, not `create_crud_requests`, which takes
+  > no auth at all — that is a separate gap, filed as **L19**. `create_test_suite` maps its `auth` into the
+  > same `CreateRequestInput` and calls the same `createRequest` as the other two tools, so nothing downstream
+  > justified the difference: the same auth was accepted or refused depending only on which tool the caller
+  > reached for, and `inherit` — what a request inside an authenticated collection normally wants — was the
+  > likeliest of the two to be asked for. The new guard test finds every auth enum by walking the registered
+  > schemas rather than naming the tools, so a fourth tool added later is covered without anyone remembering
+  > it exists.
 
 ### L4 — `seq` is omitted when `sequence` is not passed. CONFIRMED. FIXED.
 
@@ -955,15 +962,70 @@ As filed:
 > It now rejects by default. New coverage uses real files in a temp directory rather than adding to the mocks.
 > See **L17** for the gap this left visible next door.
 
-### L8 — `.bru` generator catch-all crashes on a well-typed file body. CONFIRMED.
+### L8 — `.bru` generator catch-all crashes on a well-typed file body. CONFIRMED. FIXED.
 
 The `.bru` generator's body chain is presence-based, not type-based (graphql → formUrlEncoded → file →
 `content` catch-all at ~`bru-parser.ts:467`). The catch-all `json.body = { [mode]: content }` is still live and
 throws `items.filter is not a function` for any caller passing a well-typed `BruBody {type: 'file', content}`.
 Upstream expects `body.file` to be an **array** of `{filePath, contentType?, selected?}`.
 
-Not reachable from the current tool surface — the authoring path populates the structured field and bypasses
-the catch-all — but it is a live trap for the next caller.
+> **Premise right, scope understated, and the reachability claim wrong.** The crash is real, but `file` is one
+> of four body types the catch-all got wrong, and the failure mode differs by type:
+>
+> | type given as `content` | key written | what `@usebruno/lang` does |
+> |---|---|---|
+> | `json`, `text`, `xml`, `sparql` | same | correct — these four were always fine |
+> | `file` | `file` | **throws** `items.filter is not a function` |
+> | `graphql` | `graphql` | reads `body.graphql.query`, absent on a string — query dropped |
+> | `form-urlencoded`, `multipart-form`, `form-data` | kebab-case | key unknown upstream — body dropped, and the
+>   mode token in the `http` block stays kebab-case, which Bruno does not recognise either |
+>
+> **It is reachable.** `create_test_suite` forwards only `{type, content}` — it has no way to express parts —
+> so a `form-data` body arrives at the catch-all with nothing structured, and the body is silently lost. The
+> original note is right only about `file`, which the authoring path does translate.
+>
+> **FIXED** in `bodyFromContent` (`bru-parser.ts`), which converts by declared type instead of by presence.
+> The conversions are not invented: they mirror what `toBruBody` already decided for the same input — a file
+> body's `content` is a path, a graphql body's `content` is the query — and `form-urlencoded` reuses
+> `toFormUrlEncodedEntries` rather than parsing the string a second time, so the two paths cannot drift. The
+> multipart types return the corrected mode alone, since no bare string can name parts; `binary` and `none`
+> return nothing, because Bruno has no body block for either. Tests assert the emitted `.bru` text, not a
+> round-trip: a round-trip through this codebase's own parser agrees with whatever the generator wrote, which
+> is how the defect stayed invisible.
+>
+> Found while fixing this: the tool surface cannot ask for most of these types at all — see **L18**.
+
+### L18 — the tool surface cannot ask for half the body types the writer supports. CONFIRMED. *(Found while fixing L8)*
+
+`BodyType` has eleven members and the `.bru` and `.yml` writers handle all of them. The zod enums on
+`create_request`, `modify_request` and `create_test_suite` offer six:
+
+```
+none | json | text | xml | form-data | form-urlencoded          (+ binary on the first two)
+```
+
+Missing: **`graphql`**, **`file`**, **`sparql`** and **`multipart-form`**. The consequences are not
+cosmetic:
+
+- **No graphql request can be authored through MCP at all.** `toBruBody` translates
+  `{type: 'graphql', content}` into `body.graphql = {query: content}`, the executor sends graphql bodies, and
+  L10 taught the `.yml` writer to emit Bruno's `graphql:` block — every layer supports it except the one an
+  agent can reach. `grep -rn graphql src/tools/` returns nothing.
+- **No file body either**, though `toBruBody` and the executor both handle one.
+- `multipart-form` is only reachable under its `form-data` spelling, and `create_test_suite` cannot express
+  parts in any spelling (it forwards `{type, content}` only), which is what makes **L8** reachable.
+
+Same class as **L3**, opposite direction: L3's surface over-promises a mode the executor will not apply,
+this one under-promises modes the writer implements. Not folded into the L8/L3 change because widening an
+enum makes previously-rejected input succeed — each newly accepted type needs its own end-to-end test that
+the file written is one Bruno reads, which is real work rather than a one-line edit.
+
+### L19 — `create_crud_requests` accepts no auth. CONFIRMED. *(Found while fixing L3)*
+
+`createCrudRequests(collectionPath, entityName, baseUrl, folder?)` takes no auth parameter, so every request
+in a generated CRUD set is written with `auth: none`. Against any authenticated API the whole set has to be
+edited afterwards, one request at a time. Surfaced when correcting L3's attribution — the register named this
+tool as the one with the short auth enum; it in fact has no auth enum at all.
 
 ### L9 — graphql body with no query falls back to `''`. SUSPECTED.
 
@@ -1336,9 +1398,13 @@ posture decisions.
 14a. **L17** — `copy_environment` reads its source through the flat loader, so secret and disabled flags do not
      survive a copy. Latent until L7 made those flags authorable at create time. Needs a decision for an
      overridden secret's value.
-15. **L3** — the third auth enum at `request-tools.ts:355`. Pure drift.
-16. **L8** — the `.bru` file-body catch-all. Unreachable from the tool surface today; a live trap for the
-    next caller.
+15. ~~**L3** — the third auth enum.~~ **Done** — it was `create_test_suite`, not
+    `create_crud_requests`; that tool takes no auth at all, now filed as **L19**.
+16. ~~**L8** — the `.bru` file-body catch-all.~~ **Done**, and it was wider than filed: `file` was one of four
+    body types the catch-all got wrong, and it is *not* unreachable — `create_test_suite` forwards only
+    `{type, content}`, so a `form-data` body reaches it and is silently lost. Conversion is now by declared
+    type, mirroring `toBruBody`. Turned up **L18** on the way: the tool surface offers six of eleven body
+    types, so no graphql or file body can be authored through MCP at all.
 17. **L9 + L10** — the two graphql items, together: decide whether a body with no query should error, and
     move the request into the top-level `graphql:` block upstream writes. Same file, same round-trip test.
     **Split, because only one of them was decision-free.** ~~**L10** is done~~ — the block is written and read
@@ -1348,3 +1414,9 @@ posture decisions.
     `settings` defaults for a graphql request was also left unmatched on purpose — that is M9's second half.
 18. **Test lint and typecheck debt**, in its own PR. The load-bearing part is not the error count — it is that
     `tests/` is neither linted nor type-checked, so **a type-only fix has no test that can go red**.
+
+19. **L18** — widen the body-type enums to the eleven the writer supports. Decision-free in principle but not a
+    one-liner: each newly accepted type needs an end-to-end test that the emitted file is one Bruno reads, and
+    `graphql` needs a way to carry variables, which `{type, content}` has no room for.
+20. **L19** — give `create_crud_requests` an auth parameter. Small, and the only reason a generated CRUD set
+    cannot be pointed at an authenticated API.

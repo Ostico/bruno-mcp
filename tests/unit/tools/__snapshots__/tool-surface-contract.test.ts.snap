@@ -70,7 +70,7 @@ exports[`MCP tool surface contract matches the recorded surface exactly (titles,
     "schema": {
       "collectionPath": "string",
       "dependencies": "{ from: string; to: string }[]?",
-      "requests": "{ auth: { config: record<string>; type: enum(none|bearer|basic|oauth2|api-key) }?; body: { content: string?; type: enum(none|json|text|xml|form-data|form-urlencoded) }?; folder: string?; headers: record<string>?; method: enum(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS); name: string; url: string }[]",
+      "requests": "{ auth: { config: record<string>; type: enum(none|bearer|basic|oauth2|api-key|digest|inherit) }?; body: { content: string?; type: enum(none|json|text|xml|form-data|form-urlencoded) }?; folder: string?; headers: record<string>?; method: enum(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS); name: string; url: string }[]",
       "suiteName": "string",
     },
     "title": "Create Test Suite",
