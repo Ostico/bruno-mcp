@@ -307,6 +307,34 @@ exists for exactly this reason, which is the part that should have prompted the 
 **FIXED** with a `file` branch keyed on `type`, above the multipart catch-all. `selected` is recorded only
 when false, matching how the `.bru` side models the flag: absence means the part will be sent.
 
+### H6 — a `.bru` settings block kills the request's scripts. CONFIRMED. FIXED. *(Found while scoping the `.yml` settings parity)*
+
+Any `.bru` request carrying **both** a `settings` block and a script failed the script outright:
+
+```
+RangeError [ERR_OUT_OF_RANGE]: The value of "options.timeout" is out of range.
+It must be >= 1 && <= 4294967295. Received 0
+```
+
+`@usebruno/lang` injects `timeout: 0` into **every** `.bru` settings block — verified: a block containing only
+`encodeUrl: true` parses to `{ encodeUrl: true, timeout: 0 }`. The script budget was
+`yaml.settings?.timeout ?? 5000` at two call sites, and `0` is not nullish, so the zero reached the worker,
+which refuses it. Upstream spells "no limit" as `0`; nothing here translated that.
+
+Reachable on the shape a Bruno user is most likely to produce — `encodeUrl` is the settings toggle in the UI,
+and scripts are the reason to use this server at all. Worse than a crash, it reports as `Script error` in the
+run output, which reads as the user's own code being broken rather than a block they may never have hand-written.
+
+**FIXED** with `scriptTimeoutMs` (`src/bruno/script-timeout.ts` — its own module because `request-executor.ts`
+sits at the 1300-line `max-lines` ceiling). Zero, negative and non-finite values all collapse to the default an
+undeclared timeout gets, since a script cannot be handed an unbounded budget: the worker has no encoding for
+one.
+
+**No existing test had to change, which is the finding behind the finding.** The path had no coverage at all —
+`.bru` settings blocks were exercised for what they *write*, never for what they do to a run. Found only
+because matching upstream's `.yml` settings writer started emitting `timeout: 0` into `.yml` too, and that made
+an existing execution test fail.
+
 ## Open — Medium
 
 ### M1 — Parse failures are counted, never identified. CONFIRMED. FIXED.
