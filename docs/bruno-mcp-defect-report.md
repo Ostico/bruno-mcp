@@ -779,6 +779,23 @@ The real fix is to model `tags` on both sides (parse the comma-separated string 
 back), which also removes the exclusion. Small, but it is a model change with its own round-trip fixtures
 rather than part of a passthrough, and `.yml` needs the same field for parity. Worth reporting upstream too.
 
+### L17 — `copy_environment` flattens what it copies: secret and disabled flags do not survive. CONFIRMED. *(Found while fixing L7)*
+
+`copyEnvironment` (`environment.ts:625`) reads the source through `loadEnvironment`, which returns the flat
+`Record<string, scalar>` shape — it drops disabled variables outright and keeps no `secret` flag. It then hands
+that map to `createEnvironment`. So copying an environment that holds a secret produces one where the same name
+is an ordinary variable, and a disabled variable is not copied at all.
+
+Latent before **L7**, because `create_environment` could not express those flags either, so nothing was lost
+relative to what create could do. Now that create takes the full per-variable form, copy is the only path left
+that cannot, which is what makes this worth a number.
+
+Fix: read the source with `loadEnvironmentFile` (the full-fidelity reader that already exists and is what the
+read-modify-write helpers use) and pass `EnvVariable[]` straight through. The work is in `variableOverrides`,
+which is a flat map and has to be merged **into** a typed list by name rather than spread over it — and a
+secret whose value is overridden stops being expressible, since no format stores a secret's value, so that case
+needs a decision rather than a merge. Small, but not a one-liner, and it wants its own round-trip test.
+
 ### L1 — `setCookies` is captured but never exposed under a name. CONFIRMED. FIXED.
 
 `response-wrapper.ts:194-195, 221` populates `setCookies`, but nothing in `sandbox-worker.ts` exposes it —
@@ -884,11 +901,59 @@ Two boundaries held on purpose:
 - **Nothing writes `.yaml`.** `create_request` still writes `.yml` for a YAML collection and `.bru` for a
   legacy one.
 
-### L7 — Environment authoring gaps. CONFIRMED.
+### L7 — Environment authoring gaps. PREMISE LARGELY STALE. FIXED, but not as filed.
+
+As filed:
 
 - `create_environment` cannot author a secret at all.
 - `generateBruEnvironment` writes `secret: false` unconditionally; the real fix is in `format-factory.ts`.
 - `dataType` and `disabled` on environment variables are parsed and persisted but unwired.
+
+> **All three checked against the code before starting. Two are stale and the third is nearly so** — the same
+> trap L11 set. Corrected 2026-08-01:
+>
+> - **"cannot author a secret at all" — stale.** `set_environment_variable` has a working `secret` flag whose
+>   description already states that a secret's value is not saved. Secrets were authorable, just not in one call.
+> - **"`generateBruEnvironment` writes `secret: false` unconditionally" — stale, and it named the wrong
+>   function.** There are two paths. `generateBruEnvironmentFull` writes `secret: v.secret === true`; the
+>   unconditional `false` came from `EnvironmentManager.generateEnvironmentFile`, a private wrapper that
+>   converts a flat `name -> value` map into flag-less `EnvVariable`s before delegating to it. The writer was
+>   never the problem — its **input** was, so the fix is in the input schema and nothing in `format-factory.ts`
+>   needed touching.
+> - **`disabled` — stale.** `env-loader.ts:67` and `:115` drop disabled variables at load, so it is honoured.
+>   Only **`dataType`** is genuinely stored and unread, and that has no observable effect because substitution
+>   is textual either way. Left alone deliberately.
+>
+> **What was actually wrong was worse than any of the three, and sat next door.**
+> `createEnvironmentLocked` wrote the whole file with **no existence check and no read**, so:
+>
+> 1. An existing environment was **silently replaced**. Every variable the caller did not list was deleted,
+>    and a secret could not be put back from the file alone because no format stores a secret's value.
+> 2. It **bypassed the unmodelled-key read** that every other write path performs, so `color`,
+>    `externalSecrets` and anything else Bruno writes were deleted on each overwrite — the same class as
+>    **M7**, on the one environment path that skipped the machinery built to prevent it.
+>
+> **FIXED.** An existing name is now refused, and the refusal carries the comparison needed to choose what to
+> do instead: `alreadyPresent`, `added`, and `wouldBeLost`. The last decides — empty means the request is a
+> superset and `overwrite: true` is safe, non-empty means merge via `update_environment` or use another name.
+> Names and flags only, never values (a secret has none stored, `get_collection_stats` withholds them by
+> design, and an error message is the wrong channel for a token — `read_environment` exists for that).
+> `copyEnvironment` inherits the refusal, because a copy that clobbered its target would lose exactly as much.
+> Both branches carry unmodelled keys, so `overwrite: true` replaces the variables without destroying the file.
+> `variables` now also accepts a list of objects, so `secret` and `disabled` are authorable in one call; the
+> flat map still works. The array branch is checked **first** — an array is also an object, so an
+> `Object.entries` branch above it would index the list by position and write variables named `0`, `1`, `2`
+> from the very shape the richer callers pass.
+>
+> **Refusing is a behaviour change**, and deliberate: a caller using create as an upsert now gets an error
+> naming the alternatives. Nothing has shipped since 1.2.4, so no released version has callers depending on the
+> silent overwrite.
+>
+> The mocked environment suite could not see any of this: a `jest.fn()` `readFile` **resolves `undefined`**
+> rather than rejecting, which reads as "the file exists and is empty" to anything checking existence by
+> reading — so the fix appeared to break seven passing tests that were themselves not modelling an absent file.
+> It now rejects by default. New coverage uses real files in a temp directory rather than adding to the mocks.
+> See **L17** for the gap this left visible next door.
 
 ### L8 — `.bru` generator catch-all crashes on a well-typed file body. CONFIRMED.
 
@@ -1231,7 +1296,16 @@ posture decisions.
      only on L12.
 13b. **L12** — run collection/folder scripts and tests. Needs the ordering decision upstream already makes
      (collection, then folder, then request).
-14. **L7** — environment authoring: secrets, and the unwired `dataType` / `disabled`.
+14. ~~**L7** — environment authoring: secrets, and the unwired `dataType` / `disabled`.~~ **Done, but almost
+     none of it was what the entry said** — secrets were already authorable, the unconditional `secret: false`
+     was a private wrapper's flat input rather than the writer named here, and `disabled` was honoured all
+     along. The real defect next door: `create_environment` replaced an existing file with no existence check
+     and no read, deleting unlisted variables *and* the unmodelled keys every other write path preserves. It
+     now refuses with a merge-or-replace comparison, and takes the full per-variable form. `dataType` is left
+     unwired on purpose — substitution is textual, so it has no observable effect.
+14a. **L17** — `copy_environment` reads its source through the flat loader, so secret and disabled flags do not
+     survive a copy. Latent until L7 made those flags authorable at create time. Needs a decision for an
+     overridden secret's value.
 15. **L3** — the third auth enum at `request-tools.ts:355`. Pure drift.
 16. **L8** — the `.bru` file-body catch-all. Unreachable from the tool surface today; a live trap for the
     next caller.
