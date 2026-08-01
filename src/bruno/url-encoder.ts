@@ -140,18 +140,32 @@ export function encodeRequestUrl(url: string): string {
 }
 
 /**
- * Whether the transform applies, reproducing upstream's two-valued default.
+ * Whether the transform applies.
  *
- * The default genuinely depends on whether a settings block exists at all, which
- * is easy to get wrong in either direction:
+ * The rule looks asymmetric and is: no settings object means off, a settings
+ * object without `encodeUrl` means on. That is correct, but not for the reason
+ * this comment used to give — it claimed the parser fills the key in as `true`
+ * and that Bruno writes it explicitly on save. Both are wrong, and the real
+ * mechanism is that **the two dialects disagree, upstream, about what an
+ * omitted key means**:
  *
- *  - No settings block: the runtime reads `request.settings?.encodeUrl`, gets
- *    `undefined`, and sends the URL raw. The default is **off**.
- *  - A settings block that does not mention `encodeUrl`: the parser fills in
- *    `true`. The default is **on**.
+ *  - **`.bru`** — `@usebruno/lang` resolves the key while parsing and returns
+ *    `encodeUrl: false` for a block that omits it (measured; see
+ *    `settings-parser-oracle.test.ts`). `bruFileToYamlRequest` passes `settings`
+ *    through verbatim, so a `.bru` request always arrives here with the flag
+ *    already explicit. The `?? true` branch below is unreachable for it.
+ *  - **`.yml`** — nothing resolves it, so an omitted key arrives as `undefined`,
+ *    and upstream's own reader defaults it to `true`
+ *    (`bruno-filestore/.../yml/items/parseHttpRequest.ts`: `else { settings.encodeUrl = true }`).
+ *    That is the branch below.
  *
- * Bruno also writes `encodeUrl: true` explicitly when it saves a request, so
- * anything its UI has touched arrives here with the flag set.
+ * So `?? true` is the `.yml` default, not a statement about settings blocks in
+ * general — and changing it to `=== true` silently breaks every `.yml` request
+ * whose block sets only a timeout, which is how this was nearly "fixed" into a
+ * regression.
+ *
+ * A settings object that is entirely absent means off in both dialects, which is
+ * what upstream's runner does with `if (request.settings?.encodeUrl)`.
  */
 export function shouldEncodeUrl(settings: { encodeUrl?: boolean } | undefined): boolean {
   if (settings === undefined) return false;
