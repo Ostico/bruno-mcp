@@ -435,9 +435,115 @@ timer callback is reported as the script's error instead of vanishing, since no 
 The wrapper opens on the same line as the script's first line, so stack line numbers still point at the lines
 the author wrote — upstream instead carries a `NODEVM_SCRIPT_WRAPPER_OFFSET` to subtract afterwards.
 
+### M9 — request `settings` can be read but never written, and no request is created with one. CONFIRMED. *(User-reported)*
+
+Reported 2026-08-01 from a session that went through the MCP for everything else — create, modify, delete,
+read, run — and had to hand-edit YAML for exactly this.
+
+`read_request` returns `settings` (its own description advertises it). Nothing writes it: `settings` appears in
+`request-tools.ts` **only inside tool descriptions**, never as a schema field on `create_request` or
+`modify_request`, and `grep settings src/bruno/request.ts` returns **zero hits** — the writer has no concept of
+the block at all. So `timeout`, `followRedirects`, `maxRedirects` and `encodeUrl` are inspectable and
+unauthorable, which is the worst shape for an agent: it can see the field it cannot change.
+
+**The second half is the expensive one.** A created request carries no `settings` block, so every one of them
+inherits defaults, and the default is `followRedirects = yaml.settings?.followRedirects !== false`
+(`request-executor.ts:830`) — absent settings means **follow**. The reporter's cost: a reset flow whose session
+cookie rides on the 302, so with redirects followed the `Set-Cookie` was lost and the next call returned 500.
+It presented as the endpoint issuing no session at all.
+
+**M-level, not L**, because a wrong default that cannot be overridden through the protocol produces a wrong
+result the agent cannot diagnose from inside — the register's own severity rule.
+
+Fixing it is two things, and the second is the one that matters: accept `settings` on create and modify, and
+decide what a created request should carry. Emitting Bruno's own defaults explicitly is not obviously right —
+Bruno omits the block too — but silently inheriting `followRedirects: true` is what caused this.
+
+### M10 — no shared-state concurrency, so a credential race cannot be exercised. CONFIRMED. *(User-reported)*
+
+`run_collection`'s `parallel` runs **folders** concurrently (`Promise.allSettled`, `request-executor.ts:1111`),
+serial within each. But parallel folders are isolated on purpose: each gets its own `VariableStore` — the code
+says why, *"concurrent folder tasks never share a mutable store (which would reintroduce a setVar/getVar
+race)"* — and the cookie jar is scoped per folder when parallel. So two concurrent requests can never contend
+over one token, and the reporter had to fall back to `curl` for a token-renewal race.
+
+**Upstream cannot settle this one.** Bruno has no concurrency anywhere: `grep -rn "parallel|concurrency|concurrent"`
+over `bruno-cli/src` returns nothing, and its runner is a `for (const resolvedPath of resolvedPaths)` loop with
+`await runSingleRequest` inside (`commands/run.js:642`, `:700`, `:728`); the only match anywhere in the desktop
+packages is `bruno-electron/src/utils/git.js`. Folder parallelism is **this server's own extension**, so a
+shared-state mode would be inventing semantics Bruno never had to define — what `bru.setVar` means under a
+race, whether a jar shared across folders leaks a session between them, what a `seq` implies when two folders
+interleave.
+
+Cheapest honest shape: an opt-in shared-state mode on `run_collection`, explicitly non-Bruno and documented as
+such, with per-folder isolation staying the default.
+
+### M11 — the cookie jar overrides a `Cookie` header the request set itself. CONFIRMED. *(User-reported)*
+
+Reported as "the jar replays stored cookies alongside explicit Cookie headers", and the mechanism is sharper
+than that: `mergeCookieHeader` (`cookie-jar.ts:63`) lets **the jar win on a same-named cookie**, by design —
+*"a value the server just set is fresher than one written into the request by hand."* Upstream's order, and
+defensible for a login flow.
+
+It is the wrong order for a multi-credential test. A request that writes `Cookie: session=A` to assert what
+credential A can see has that value **replaced** by whatever session the jar last stored, so the assertion
+passes against the wrong identity. The reporter had two assertions pass for the wrong reason before catching
+it. The failure direction is the worst available: a contaminated run reads greener than reality.
+
+`cookieJar` defaults to `true`, so this is on unless refused.
+
+Two candidate fixes, and the choice is a real one: flip the precedence so an explicitly-written cookie wins
+(diverges from upstream, but the explicit value is the author's stated intent), or leave the jar alone for any
+request that writes its own `Cookie` header. Either way it needs saying in the tool description, which
+currently promises only that the jar is per-run and host-matched.
+
+### Field report 2026-08-01 — the claims that were checked and NOT filed
+
+Thirteen items came in from one session. Nine are filed above or already had entries; these four did not survive
+the check, and they are recorded because re-reporting them costs more than reading this.
+
+- **"The SSRF filter rejects raw private IPs, but a hostname mapped to loopback in `/etc/hosts` passes."**
+  **Not a gap.** `url-validator.ts` does a DNS pre-flight (`node:dns/promises` `lookup`, under its own timeout
+  budget) and refuses a name that resolves into a reserved range. What let the reporter's hostname through was
+  their own `BRUNO_SSRF_ALLOWLIST` — the documented, by-design bypass under **L5**. The filter behaved as
+  specified.
+- **"A bare top-level `expect()` records nothing and the request looks green with zero assertions."** Half
+  right, and the half that matters is wrong. `tests: []` is accurate, but `detectUnreportedAssertions`
+  (`sandbox-diagnostics.ts:107`) emits a warning naming the count and, when nothing was recorded, states it
+  outright: *"This run therefore reports zero assertions even though the request itself succeeded."* The real
+  residue is a design question, not a defect: it warns rather than fails.
+- **"Parse errors are skipped, not failed, and the summary still looks healthy."** Reported and documented.
+  `parseErrors` is in the run summary (`request-executor.ts:1203`), each file is named with its reason in
+  `parseFailures` (**M1**), and `run_collection`'s own description spells out that a run over a whole collection
+  can be a subset. Same residue as above: skipping is deliberate.
+- **"Request filenames are lowercased on write, so the returned path must be reused."** True, and already
+  documented on the tool surface. Behaviour, not defect.
+
+**One correction to an existing entry.** **M2**'s heading still says *"CONTRADICTS the tool description"*. That
+is now stale: `run-tools.ts:19` documents the global `seq` sort explicitly, including that two requests numbered
+`seq 1` in different folders are ordered by filesystem enumeration. The defect stands; the contradiction does
+not.
+
 ---
 
 ## Open — Low
+
+### L13 — no return channel for a value a run captured. CONFIRMED. *(User-reported)*
+
+H3 solved the inbound direction — `run_collection` accepts `variables`. There is no outbound one: nothing on
+the run result carries what a script set with `bru.setVar`. The reporter's workaround was to embed the token in
+a dynamic `test()` description, which works and means **credentials land in run output as test names** — the
+one place they are certain to be logged and echoed back.
+
+Worth deciding alongside redaction: the values most worth returning are exactly the ones most worth not
+printing.
+
+### L14 — `folder` is not a parameter, and passing it runs the whole collection. CONFIRMED. *(User-reported)*
+
+The filter is `requestPath`, which takes either a request file or a subdirectory. An agent that reaches for the
+obvious name gets a silent whole-collection run instead of an error, because an unknown key is dropped rather
+than rejected. Either accept `folder` as an alias or reject unknown keys; the current behaviour is the only one
+that cannot be noticed.
 
 ### L1 — `setCookies` is captured but never exposed under a name. CONFIRMED. FIXED.
 
@@ -784,6 +890,25 @@ What an agent needs and does not have. Direct field feedback first.
     Placed above L11 because L11 needs a typed variable to be reachable at all, while this is reached by any
     script that waits.~~ **Done.** A virtual in-context clock rather than upstream's host timers, for the
     realm-boundary and microtask reasons under M8.
+8b. **M9** — accept `settings` on `create_request` / `modify_request`, and decide what a created request
+    carries. **Top of the queue**, on the reporter's ranking and on this list's own rule: an agent can *see*
+    `settings` through `read_request` and cannot change it, and the default it silently inherits —
+    `followRedirects: true` — cost a session cookie on a 302 and presented as the endpoint issuing no session.
+    It is also the blocker behind the script-timeout cap: 5000ms is liftable only through `settings.timeout`,
+    and a script that exceeds it fails the whole request with `status: 0`, `tests: []` rather than warning. Two
+    findings, one schema change.
+8c. **M11** — stop the cookie jar overwriting a `Cookie` header the request wrote itself, or leave the jar out
+    of any request that writes one. Ranked here rather than lower because of its direction: it makes a
+    contaminated run read **greener** than reality, and two of the reporter's assertions passed against the
+    wrong identity before they noticed. Cheap next to M9, and it needs the tool description updated with
+    whichever precedence wins.
+8d. **M10** — an opt-in shared-state concurrency mode. Larger, and the only item here with no upstream answer to
+    copy: Bruno has no concurrency at all, so folder parallelism is already ours and shared state means defining
+    semantics upstream never had to. Do it after M9 and M11, and expect it to be a design discussion rather
+    than a patch.
+8e. **L13 + L14** — a return channel for captured values, and `folder` either accepted or rejected instead of
+    silently ignored. Both cheap, both agent-visible; L13 needs a redaction decision at the same time, since
+    the values worth returning are the ones worth not printing.
 
 ### Tier 2 — security
 
