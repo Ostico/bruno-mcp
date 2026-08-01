@@ -432,8 +432,30 @@ describe.each(FIXTURES)('.yml round-trip: $name', (fixture: YamlFixture) => {
     expect(lostFields(before, after, true)).toEqual([]);
   });
 
-  it('parse → generate → parse is deeply equal', () => {
-    expect(after).toEqual(before);
+  it('parse → generate → parse is deeply equal, apart from the settings block', () => {
+    // The `.yml` writer always states all four settings, as upstream's does, so
+    // a source with no block (or a partial one) gains the missing keys on its
+    // first write. Everything else must still survive untouched, and the block
+    // itself is asserted below rather than waived.
+    const { settings: afterSettings, ...afterRest } = after;
+    const { settings: beforeSettings, ...beforeRest } = before;
+
+    expect(afterRest).toEqual(beforeRest);
+    // Nothing the source declared may be lost in the normalisation.
+    for (const [key, value] of Object.entries(beforeSettings ?? {})) {
+      if (value !== undefined) expect(afterSettings).toHaveProperty(key, value);
+    }
+  });
+
+  it('states all four settings after a write, whatever the source had', () => {
+    expect(after.settings).toEqual(
+      expect.objectContaining({
+        encodeUrl: expect.any(Boolean),
+        timeout: expect.anything(),
+        followRedirects: expect.any(Boolean),
+        maxRedirects: expect.any(Number),
+      }),
+    );
   });
 
   it('is idempotent from the second generate onwards', () => {

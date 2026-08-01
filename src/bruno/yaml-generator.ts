@@ -142,6 +142,28 @@ function serialiseBody(body: YamlBody): YamlBody | Record<string, unknown> {
   };
 }
 
+/**
+ * The timeout upstream would write, byte for byte.
+ *
+ * Mirrors `resolveTimeoutSetting` in `bruno-common/src/utils/index.ts`:
+ *
+ * ```js
+ * if (value === TIMEOUT_INHERIT) return value;
+ * if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+ * return 0;
+ * ```
+ *
+ * `0` is upstream's "no timeout", so a zero, a negative, a NaN and an absent
+ * value all collapse to it. `'inherit'` is a legal value there and is carried
+ * through rather than flattened, even though this server's own input surface
+ * cannot yet produce one — a file authored elsewhere can.
+ */
+function resolveTimeoutSetting(value: unknown): number | 'inherit' {
+  if (value === 'inherit') return value;
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  return 0;
+}
+
 function stripEmpty(obj: unknown): unknown {
   if (obj === null || obj === undefined) return undefined;
   if (Array.isArray(obj)) {
@@ -259,15 +281,44 @@ export function generateYamlRequest(request: YamlRequest): string {
     doc.runtime = runtime;
   }
 
-  // settings section. `extra` is destructured off rather than left to the skip
-  // list, because the whole rest of the object is passed through verbatim and
-  // the bag would otherwise be written to the file as a literal `extra:` key.
-  if (request.settings) {
-    const { extra: settingsExtra, ...modelledSettings } = request.settings;
-    const settings = (stripEmpty(modelledSettings) ?? {}) as Record<string, unknown>;
-    applyExtraKeys(settings, settingsExtra, YAML_SETTINGS_KEYS);
-    if (Object.keys(settings).length > 0) doc.settings = settings;
-  }
+  // settings section, always written and always complete.
+  //
+  // Upstream's `.yml` writer is unconditional — it builds all four keys and
+  // assigns `ocRequest.settings = settings` for every request, defaulting
+  // `encodeUrl` and `followRedirects` to true, `maxRedirects` to 5 and `timeout`
+  // to 0 (`bruno-filestore/src/formats/yml/items/stringifyHttpRequest.ts`). This
+  // writer used to emit the block only when the model carried one, which left
+  // two visible differences from a request Bruno created: the block was missing,
+  // and — because the `.yml` reader treats an omitted `encodeUrl` as **true**
+  // while a missing block means false — the request went out with its URL raw
+  // where Bruno sends it encoded. Same collection, two behaviours, depending on
+  // which tool wrote the request.
+  //
+  // The `.bru` writer deliberately does NOT do this: upstream's `jsonToBru` is a
+  // passthrough that writes only the keys the model holds, and 248 of the 275
+  // `.bru` files in upstream's own test collection carry no settings block at
+  // all. The two dialects differ here, so this server differs with them.
+  //
+  // `extra` is destructured off rather than left to the skip list, because the
+  // whole rest of the object is passed through verbatim and the bag would
+  // otherwise be written to the file as a literal `extra:` key.
+  const { extra: settingsExtra, ...modelledSettings } = request.settings ?? {};
+  const settings = (stripEmpty(modelledSettings) ?? {}) as Record<string, unknown>;
+
+  // Assigned onto whatever the source already had, never rebuilt from these four
+  // alone: `settings` also carries `tls` and `proxy`, and a first cut that
+  // constructed a fresh object out of the four keys silently dropped both. A key
+  // already present keeps its position — assigning to an existing property does
+  // not reorder it — so a document Bruno wrote is unchanged, and only the keys it
+  // was missing are appended.
+  settings.encodeUrl = modelledSettings.encodeUrl ?? true;
+  settings.timeout = resolveTimeoutSetting(modelledSettings.timeout);
+  settings.followRedirects = modelledSettings.followRedirects ?? true;
+  settings.maxRedirects =
+    typeof modelledSettings.maxRedirects === 'number' ? modelledSettings.maxRedirects : 5;
+
+  applyExtraKeys(settings, settingsExtra, YAML_SETTINGS_KEYS);
+  doc.settings = settings;
 
   // docs
   if (request.docs) {

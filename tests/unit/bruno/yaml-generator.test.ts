@@ -273,15 +273,17 @@ describe('yaml-generator', () => {
       expect(yaml).not.toMatch(/data:/);
     });
 
-    it('drops an object field that becomes empty after cleaning', () => {
-      // settings is a truthy but empty object → stripEmpty returns undefined,
-      // so no `settings:` key is emitted.
+    it('still states the four settings for an empty settings object', () => {
+      // settings used to be pruned away when it cleaned down to nothing. It is
+      // no longer prunable: the .yml writer always states all four, as
+      // upstream's does, so an empty object is filled in rather than dropped.
       const yaml = generateYamlRequest({
         info: { name: 'R' },
         http: { method: 'GET', url: 'https://example.com' },
         settings: {},
       });
-      expect(yaml).not.toMatch(/settings:/);
+      expect(yaml).toMatch(/settings:/);
+      expect(yaml).toMatch(/encodeUrl: true/);
     });
   });
 

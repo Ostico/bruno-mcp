@@ -212,8 +212,22 @@ describe('reading a file Bruno wrote', () => {
     ]);
   });
 
-  it('writes the file back unchanged', () => {
-    expect(generateYamlRequest(parseYamlRequest(brunoFile))).toBe(brunoFile);
+  it('writes the file back with nothing lost and only the settings block added', () => {
+    // This fixture is hand-written, not real Bruno output — a request Bruno
+    // saved would already carry a settings block, because its .yml writer states
+    // all four every time. So the rewrite adds that block and changes nothing
+    // else, which is what Bruno itself would do on opening this file.
+    const out = generateYamlRequest(parseYamlRequest(brunoFile));
+
+    expect(out).toContain(brunoFile.trimEnd());
+    expect(out).toContain('settings:');
+    expect(out).toContain('encodeUrl: true');
+  });
+
+  it('is stable from the second write onwards', () => {
+    const once = generateYamlRequest(parseYamlRequest(brunoFile));
+
+    expect(generateYamlRequest(parseYamlRequest(once))).toBe(once);
   });
 
   it('a hand-written string body still gets the form content-type', async () => {
