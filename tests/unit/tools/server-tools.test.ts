@@ -179,6 +179,34 @@ describe('Server tool handlers', () => {
       );
     });
 
+    it('should pass the settings block to builder', async () => {
+      const mock = getManagerMock(server, 'requestBuilder', 'createRequest');
+      mock.mockResolvedValue({ success: true, path: '/col/test.yml' });
+      const handler = getHandler(server, 'create_request');
+      await handler({
+        collectionPath: '/col', name: 'Test', method: 'POST',
+        url: 'https://example.com',
+        settings: { followRedirects: false, timeout: 20000 },
+      });
+      expect(mock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          settings: { followRedirects: false, timeout: 20000 },
+        }),
+      );
+    });
+
+    it('should leave settings undefined when none was given', async () => {
+      // A request created without settings must carry no block: Bruno omits it
+      // too, and for encodeUrl the presence of the block is itself the signal.
+      const mock = getManagerMock(server, 'requestBuilder', 'createRequest');
+      mock.mockResolvedValue({ success: true, path: '/col/test.yml' });
+      const handler = getHandler(server, 'create_request');
+      await handler({
+        collectionPath: '/col', name: 'Test', method: 'GET', url: 'https://example.com',
+      });
+      expect(mock.mock.calls[0][0].settings).toBeUndefined();
+    });
+
     it('should return error on failure', async () => {
       getManagerMock(server, 'requestBuilder', 'createRequest')
         .mockResolvedValue({ success: false, error: 'invalid' });

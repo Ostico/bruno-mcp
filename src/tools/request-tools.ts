@@ -19,7 +19,7 @@ import { toRequestView } from '../bruno/request-view.js';
 import { validateToolPath, resolveRequestFile } from './tool-path.js';
 import { withPathLock } from '../bruno/path-mutex.js';
 import { topologicalSort } from './topological-sort.js';
-import { inlineScriptsSchema, assertionEntrySchema, requestVarsSchema } from './schemas.js';
+import { inlineScriptsSchema, assertionEntrySchema, requestVarsSchema, requestSettingsSchema } from './schemas.js';
 import type { ToolContext } from './context.js';
 import { isRequestExtension, isYamlExtension, REQUEST_EXTENSIONS } from '../bruno/request-extensions.js';
 
@@ -28,7 +28,7 @@ export function registerCreateRequestTool(ctx: ToolContext): void {
     'create_request',
     {
       title: 'Create Bruno Request',
-      description: 'Generate request files for API testing (supports .bru and .yml formats). Supports multipart/form-data with file uploads and per-part contentType (body.type "form-data" with formData entries of type "file"), and inline scripts (pre-request/post-response/tests) so no separate add_test_script call is needed. Scripts run as async functions: top-level await works, and bru.sleep(ms)/setTimeout/setInterval are available, spending the script timeout (settings.timeout, default 5000ms).',
+      description: 'Generate request files for API testing (supports .bru and .yml formats). Supports multipart/form-data with file uploads and per-part contentType (body.type "form-data" with formData entries of type "file"), and inline scripts (pre-request/post-response/tests) so no separate add_test_script call is needed. Scripts run as async functions: top-level await works, and bru.sleep(ms)/setTimeout/setInterval are available, spending the script timeout (settings.timeout, default 5000ms) — raise it via the settings argument.',
       inputSchema: {
         collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to existing collection directory.'),
         name: z.string().min(1, 'Request name is required'),
@@ -56,6 +56,7 @@ export function registerCreateRequestTool(ctx: ToolContext): void {
         assert: z.array(assertionEntrySchema).optional()
           .describe('Declared assertions, evaluated on every run without needing a test() block.'),
         vars: requestVarsSchema,
+        settings: requestSettingsSchema,
         folder: z.string().optional(),
         sequence: z.number().optional(),
         scripts: inlineScriptsSchema
@@ -90,6 +91,7 @@ export function registerCreateRequestTool(ctx: ToolContext): void {
           pathParams: args.pathParams,
           assert: args.assert,
           vars: args.vars,
+          settings: args.settings,
           folder: args.folder,
           sequence: args.sequence,
           scripts: args.scripts as Record<string, string> | undefined
@@ -165,6 +167,7 @@ export function registerModifyRequestTool(ctx: ToolContext): void {
         assert: z.array(assertionEntrySchema).optional()
           .describe('Replaces the whole assert block. Omit to leave existing assertions untouched.'),
         vars: requestVarsSchema,
+        settings: requestSettingsSchema,
         scripts: inlineScriptsSchema,
         scriptMode: z.enum(['replace', 'append']).optional().default('replace').describe(
           'How to write the scripts field. "replace" (default) overwrites the existing script ' +
@@ -241,6 +244,7 @@ export function registerModifyRequestTool(ctx: ToolContext): void {
         if (args.pathParams !== undefined) updates.pathParams = args.pathParams;
         if (args.assert !== undefined) updates.assert = args.assert;
         if (args.vars !== undefined) updates.vars = args.vars;
+        if (args.settings !== undefined) updates.settings = args.settings;
         if (args.scripts !== undefined) {
           updates.scripts = args.scripts as Record<string, string>;
           // Default explicitly: the zod default only applies when the SDK
