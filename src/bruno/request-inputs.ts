@@ -13,6 +13,7 @@ import {
   BruAuthMode,
   BruBody,
   BruGraphql,
+  BruFilePart,
   BruHeader,
   BruParam,
   BruVar,
@@ -183,6 +184,19 @@ export function toYamlBody(source: NonNullable<CreateRequestInput['body']>): Yam
     // multipart part on disk.
     return { type: 'form-urlencoded', data: toFormUrlEncodedEntries(source) };
   }
+  if (source.type === 'file') {
+    // A list of parts on disk, never a path string: Bruno's `.yml` reader takes
+    // `filePath` off each entry. Writing the path as `data` produced a file
+    // whose body block Bruno reads as no files at all.
+    return { type: 'file', data: toFilePartList(source) };
+  }
+  if (source.type === 'graphql' && source.variables) {
+    // Only when there are variables. Without them the bare string is what this
+    // server has always written and what the graphql block reader already
+    // accepts, so widening it unconditionally would rewrite every existing
+    // graphql request for no gain.
+    return { type: 'graphql', data: { query: source.content ?? '', variables: source.variables } };
+  }
   return { type: source.type, data: source.content };
 }
 
@@ -229,15 +243,36 @@ export function toBruBody(source: NonNullable<CreateRequestInput['body']>): BruB
     });
   }
 
-  if (source.type === 'graphql' && source.content) {
-    body.graphql = { query: source.content };
+  if (source.type === 'graphql' && (source.content || source.variables)) {
+    const graphql: BruGraphql = { query: source.content ?? '' };
+    // Raw text through to `body:graphql:vars`. Parsing it would reformat the
+    // author's JSON on the way back out and break a `{{placeholder}}` that is
+    // not valid JSON on its own.
+    if (source.variables) graphql.variables = source.variables;
+    body.graphql = graphql;
   }
 
-  if (source.type === 'file' && source.content) {
-    body.file = [{ filePath: source.content }];
+  if (source.type === 'file') {
+    const files = toFilePartList(source);
+    if (files.length > 0) body.file = files;
   }
 
   return body;
+}
+
+/**
+ * A file body's parts, from either spelling the caller may use.
+ *
+ * `files` wins over `content` when both are given: it is the richer field, and
+ * the shorthand cannot express a content type or a deselected entry. An entry
+ * with no path is dropped rather than written, since Bruno reads a file body by
+ * its `filePath` and an entry without one names nothing.
+ */
+function toFilePartList(source: NonNullable<CreateRequestInput['body']>): BruFilePart[] {
+  if (source.files && source.files.length > 0) {
+    return source.files.filter((part) => part.filePath).map((part) => ({ ...part }));
+  }
+  return source.content ? [{ filePath: source.content }] : [];
 }
 
 /**

@@ -437,7 +437,13 @@ export class RequestBuilder {
     const bruFile: BruFile = {
       meta: {
         name: input.name,
-        type: 'http',
+        // A graphql request says so in its meta block. Bruno writes
+        // `type: graphql` there (see `bruno-tests/collection/graphql/*.bru`) and
+        // its UI reads that key, not the body mode, to decide a request is a
+        // graphql one. Hardcoding 'http' produced a file whose body block was
+        // right and whose identity was wrong. The `.yml` side needs no
+        // equivalent: its generator already settles `info.type` from the body.
+        type: input.body?.type === 'graphql' ? 'graphql' : 'http',
         // Absent has to mean an absent KEY, not a key holding undefined:
         // upstream's serializer writes `${key}: ${meta[key]}` for everything
         // present, so leaving it here emits the literal text "seq: undefined".

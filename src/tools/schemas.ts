@@ -123,3 +123,46 @@ export const requestSettingsSchema = z.object({
   'merged individually over the existing block, so setting one does not clear the rest. ' +
   'Note the encodeUrl field: creating a block at all changes the URL-encoding default.'
 );
+
+/**
+ * A request body, shared by every tool that accepts one.
+ *
+ * One definition on purpose. The three tools each carried their own copy and
+ * they drifted: `create_test_suite` offered six body types and no parts at all,
+ * so a suite request could name a multipart body and then have no way to say
+ * what was in it. The type list here is the full `BodyType` union the writers
+ * support, not a subset of it.
+ */
+export const requestBodySchema = z.object({
+  type: z.enum([
+    'none', 'json', 'text', 'xml', 'sparql', 'graphql',
+    'form-data', 'multipart-form', 'form-urlencoded', 'file', 'binary',
+  ]),
+  content: z.string().optional()
+    .describe(
+      'The payload as text. For graphql this is the query; for file it is the one-file ' +
+      'shorthand for files[0].filePath.',
+    ),
+  formData: z.array(z.object({
+    name: z.string(),
+    value: z.union([z.string(), z.array(z.string())]),
+    type: z.enum(['text', 'file']).optional(),
+    contentType: z.string().optional(),
+  })).optional()
+    .describe('multipart/form-data parts, for body.type "form-data" or "multipart-form".'),
+  variables: z.string().optional()
+    .describe(
+      'GraphQL variables, as raw JSON text. Kept as text end to end, so a {{placeholder}} ' +
+      'inside it survives to substitution time.',
+    ),
+  files: z.array(z.object({
+    filePath: z.string(),
+    contentType: z.string().optional(),
+    selected: z.boolean().optional(),
+  })).optional()
+    .describe(
+      'File body parts. `content` is the one-file shorthand; use this to set a content ' +
+      'type, deselect an entry, or send more than one.',
+    ),
+}).optional();
+
