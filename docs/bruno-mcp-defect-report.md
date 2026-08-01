@@ -760,7 +760,7 @@ that cannot be noticed.
 > the named-directory and whole-collection paths, ending "Zero requests is not a pass." A warning rather than a
 > throw, deliberately — the directory exists, so this is a misaimed subset, not a bad path.
 
-### L15 — authoring any `settings` field silently turns URL encoding on. CONFIRMED. *(Filed out of M9)*
+### L15 — authoring any `settings` field silently turns URL encoding on. WITHDRAWN — not a defect. *(Filed out of M9)*
 
 `shouldEncodeUrl` has a two-valued default (`url-encoder.ts:156-158`): with no `settings` block it returns
 `false`, and with a block that does not mention `encodeUrl` it returns `settings.encodeUrl ?? true`. So the
@@ -772,6 +772,49 @@ Only reachable now that M9 made the block authorable. It is upstream's behaviour
 `encodeUrl` explicitly, so a Bruno-authored request never sits in the ambiguous state, and ours always did.
 Stated in the tool's field description rather than compensated, because compensating means writing a default the
 caller did not ask for, which is the same open decision as M9's second half. Take the two together.
+
+> **NOT A DEFECT. Checked 2026-08-02, and the code is right — but not for the reason it gave.** The rule was
+> read as a bug and nearly "fixed" into a regression, so the evidence is recorded here in full.
+>
+> `@usebruno/lang`, measured directly:
+>
+> ```
+> no settings block            -> settings === undefined
+> settings { timeout: 20000 }  -> { encodeUrl: false, timeout: 20000 }
+> settings { encodeUrl: false} -> { encodeUrl: false, timeout: 0 }
+> ```
+>
+> That looks like it contradicts `shouldEncodeUrl`'s `?? true`. It does not, because **the two dialects
+> genuinely disagree upstream about what an omitted key means**, and each resolves it in its own reader:
+>
+> - **`.bru`** — the key is resolved *at parse time* to `false`, and `bruFileToYamlRequest` passes `settings`
+>   through verbatim, so a `.bru` request reaches the executor with the flag already explicit. The `?? true`
+>   branch is unreachable for it.
+> - **`.yml`** — nothing resolves it, and upstream's own reader defaults it to **`true`**
+>   (`bruno-filestore/.../yml/items/parseHttpRequest.ts`: `else { settings.encodeUrl = true; }`). That is the
+>   branch, and `true` is the correct answer.
+>
+> So authoring `{timeout: 20000}` on a `.bru` request does **not** turn encoding on — this finding's premise —
+> and on a `.yml` request it does, matching Bruno. Verified end to end: a `.bru` file whose block sets only a
+> timeout goes out raw, a `.yml` file in the same state goes out encoded, and both match what Bruno does with
+> the same file.
+>
+> Two claims in the old docblock *were* wrong and are rewritten: the parser fills the key in as `false`, not
+> `true`, and Bruno does not write `encodeUrl` explicitly on every save — `jsonToBru` is a passthrough, and
+> **248 of the 275** `.bru` files in upstream's own test collection have no `settings` block at all. A correct
+> rule resting on a wrong explanation is one edit away from being removed by someone who checks the
+> explanation, which is exactly what nearly happened.
+>
+> **Kept from the investigation:** `.bru` coverage for this rule, which did not exist — every prior test was
+> `.yml`, so nothing would have failed had the `.bru` half been broken — and
+> `settings-parser-oracle.test.ts`, which asserts the library's defaults directly so a future change upstream
+> fails here rather than in a user's collection.
+>
+> **This also answers M9's second half: no, a created request should not emit an explicit `settings` block.**
+> The reason that decision looked forced was this finding; with it withdrawn, writing four unrequested defaults
+> would be churn in every file and a divergence from a passthrough writer, compensating for a bug that does not
+> exist. `.yml` differs — upstream's writer does always emit settings there — but that is a separate question
+> about the `.yml` writer, not about what a created request should declare.
 
 ### L16 — `.bru` `tags` cannot survive a rewrite: upstream's reader and writer disagree on its shape. CONFIRMED. *(Found while fixing M7)*
 
@@ -1158,6 +1201,11 @@ what a reader should switch on.
 model carries one, because emitting defaults a caller never asked for is exactly **M9's second half** and
 **L15**, which are the open product decision. Matching upstream here would pre-empt that decision, so it is
 left alone.
+
+> **Settled 2026-08-02.** L15 is withdrawn and M9's second half is answered: a created request writes no
+> `settings` block. This divergence therefore stays, now by decision rather than by deferral. Note that the
+> claim above is about the **`.yml`** writer specifically, which does always emit settings — the `.bru` writer
+> is a passthrough. Both statements are true; they are different writers.
 
 Both placements are still read and old files migrate on the next write; upstream's block wins if a file
 somehow carries both. **L9 is untouched** — whether an empty query should be an error is still open.
