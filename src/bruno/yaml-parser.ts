@@ -23,6 +23,11 @@ import {
   type YamlVar,
   type YamlVars,
 } from './types.js';
+import {
+  assertionsFromYaml,
+  postResponseVarsFromYaml,
+  variablesFromYaml,
+} from './yaml-runtime-blocks.js';
 
 function safeParse(content: string, label: string): Record<string, unknown> {
   if (!content || !content.trim()) {
@@ -279,6 +284,10 @@ function parseRuntime(raw: unknown): YamlRuntime | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const obj = raw as Record<string, unknown>;
 
+  // Only the scripts half is modelled here. Variables, assertions and actions
+  // live in the same block but are read straight off the raw document by the
+  // caller, so returning undefined for a script-less runtime block loses
+  // nothing — `YamlRuntime` is scripts and nothing else.
   if (!Array.isArray(obj.scripts) || obj.scripts.length === 0) return undefined;
 
   const scripts: YamlScript[] = obj.scripts.map(
@@ -346,13 +355,28 @@ export function parseYamlRequest(content: string): YamlRequest {
     result.docs = doc.docs;
   }
 
-  // Assertions and vars were not modelled at all, so they vanished on any
-  // read-modify-write of a .yml request.
-  const assertions = parseAssertions(doc.assert);
-  if (assertions.length > 0) result.assert = assertions;
+  // Variables, assertions and post-response actions live inside `runtime`, which
+  // is where Bruno reads them. Earlier versions of this server wrote them at the
+  // top level under `vars` and `assert` instead — names Bruno ignores — so those
+  // are still accepted as a fallback and files already on disk keep loading.
+  // Upstream's keys win when both are present.
+  const runtimeRaw = (doc.runtime ?? {}) as Record<string, unknown>;
 
-  const vars = parseYamlVars(doc.vars);
-  if (vars) result.vars = vars;
+  const assertions = assertionsFromYaml(runtimeRaw.assertions);
+  const resolvedAssertions = assertions.length > 0 ? assertions : parseAssertions(doc.assert);
+  if (resolvedAssertions.length > 0) result.assert = resolvedAssertions;
+
+  const preRequest = variablesFromYaml(runtimeRaw.variables);
+  const postResponse = postResponseVarsFromYaml(runtimeRaw.actions);
+  if (preRequest.length > 0 || postResponse.length > 0) {
+    const vars: YamlVars = {};
+    if (preRequest.length > 0) vars.preRequest = preRequest;
+    if (postResponse.length > 0) vars.postResponse = postResponse;
+    result.vars = vars;
+  } else {
+    const legacyVars = parseYamlVars(doc.vars);
+    if (legacyVars) result.vars = legacyVars;
+  }
 
   return result;
 }

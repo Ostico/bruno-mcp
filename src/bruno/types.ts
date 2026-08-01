@@ -666,6 +666,13 @@ export interface YamlVar {
   value: string;
   disabled?: boolean;
   local?: boolean;
+  /**
+   * Set only when the on-disk value was a typed `{ type, data }` and the type is
+   * not `string`. `value` always holds the `data` as written, so substitution
+   * never has to know about this; it exists so writing the variable back does
+   * not silently retype it as a plain string.
+   */
+  dataType?: string;
 }
 
 export interface YamlVars {

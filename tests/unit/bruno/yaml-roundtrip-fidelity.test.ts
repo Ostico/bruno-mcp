@@ -34,23 +34,30 @@ http:
   body:
     type: json
     data: '{"a":1}'
-assert:
-  - name: res.status
-    value: eq 200
-  - name: res.body.id
-    value: neq 0
-    disabled: true
-vars:
-  preRequest:
+runtime:
+  variables:
     - name: token
       value: abc
-  postResponse:
-    - name: orderId
-      value: res.body.id
-runtime:
   scripts:
     - type: pre-request
       code: bru.setVar("x", 1);
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+    - expression: res.body.id
+      operator: neq
+      value: "0"
+      disabled: true
+  actions:
+    - type: set-variable
+      phase: after-response
+      selector:
+        expression: res.body.id
+        method: jsonq
+      variable:
+        name: orderId
+        scope: runtime
 settings:
   encodeUrl: true
 docs: Some documentation here.
@@ -114,10 +121,14 @@ describe('.yml round-trip preserves assertions', () => {
       { name: 'res.status', value: 'eq 200' },
       { name: 'res.body.id', value: 'neq 0', disabled: true },
     ]);
-    expect(yamlParse(roundTrip(FULL_REQUEST)).assert).toEqual([
+    // Re-parsed rather than read off the raw document, because the on-disk
+    // shape is upstream's — `expression` plus a separate `operator`, under
+    // `runtime`. The byte-level shape is pinned in yaml-runtime-blocks.test.ts.
+    expect(parseYamlRequest(roundTrip(FULL_REQUEST)).assert).toEqual([
       { name: 'res.status', value: 'eq 200' },
       { name: 'res.body.id', value: 'neq 0', disabled: true },
     ]);
+    expect(yamlParse(roundTrip(FULL_REQUEST)).assert).toBeUndefined();
   });
 });
 
@@ -129,10 +140,12 @@ describe('.yml round-trip preserves vars', () => {
       preRequest: [{ name: 'token', value: 'abc' }],
       postResponse: [{ name: 'orderId', value: 'res.body.id' }],
     });
-    expect(yamlParse(roundTrip(FULL_REQUEST)).vars).toEqual({
+    expect(parseYamlRequest(roundTrip(FULL_REQUEST)).vars).toEqual({
       preRequest: [{ name: 'token', value: 'abc' }],
       postResponse: [{ name: 'orderId', value: 'res.body.id' }],
     });
+    // Not at the top level, where Bruno would never look for them.
+    expect(yamlParse(roundTrip(FULL_REQUEST)).vars).toBeUndefined();
   });
 });
 
