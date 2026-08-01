@@ -14,9 +14,10 @@ import { BrunoMcpServer } from '../../../src/server';
 const mockMergeEnvironment = jest.fn();
 const mockSetEnvironmentVariable = jest.fn();
 const mockRemoveEnvironmentVariable = jest.fn();
+const mockCreateEnvironment = jest.fn();
 jest.mock('../../../src/bruno/environment', () => ({
   createEnvironmentManager: jest.fn(() => ({
-    createEnvironment: jest.fn(),
+    createEnvironment: (...args: unknown[]) => mockCreateEnvironment(...args),
     mergeEnvironment: (...args: unknown[]) => mockMergeEnvironment(...args),
     setEnvironmentVariable: (...args: unknown[]) => mockSetEnvironmentVariable(...args),
     removeEnvironmentVariable: (...args: unknown[]) => mockRemoveEnvironmentVariable(...args),
@@ -335,5 +336,87 @@ describe('environment merge tools', () => {
       const res = await getHandler(server, 'remove_environment_variable')({ collectionPath: '/col', environment: 'dev', name: 'k' });
       expect(res.content[0].text).toContain('Unknown error');
     });
+  });
+});
+
+describe('create_environment reports a refusal so the caller can decide', () => {
+  let server: BrunoMcpServer;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    server = new BrunoMcpServer();
+  });
+
+  it('renders the three name lists and the next steps', async () => {
+    // The point of the conflict report is that the CALLER sees it. Asserting only
+    // on the manager leaves the rendering untested, and dropping it there is
+    // invisible: the call still fails, just uninformatively.
+    mockCreateEnvironment.mockResolvedValue({
+      success: false,
+      path: '/col/environments/dev.yml',
+      error: 'Environment already exists at /col/environments/dev.yml',
+      conflict: {
+        path: '/col/environments/dev.yml',
+        existing: [{ name: 'token', secret: true }, { name: 'onlyOnDisk' }],
+        alreadyPresent: ['shared'],
+        added: ['brandNew'],
+        wouldBeLost: ['onlyOnDisk'],
+      },
+    });
+
+    const res = await getHandler(server, 'create_environment')({
+      collectionPath: '/col', name: 'dev', variables: { shared: 'x', brandNew: 'y' },
+    });
+
+    expect(res.isError).toBe(true);
+    const text = res.content[0].text as string;
+    expect(text).toContain('Already present: shared');
+    expect(text).toContain('Would be added: brandNew');
+    expect(text).toContain('Would be DELETED by a replace: onlyOnDisk');
+    expect(text).toContain('update_environment');
+    expect(text).toContain('overwrite: true');
+  });
+
+  it('spells out an empty list rather than trailing a bare colon', async () => {
+    mockCreateEnvironment.mockResolvedValue({
+      success: false,
+      error: 'Environment already exists',
+      conflict: { path: '/p', existing: [], alreadyPresent: [], added: ['a'], wouldBeLost: [] },
+    });
+
+    const res = await getHandler(server, 'create_environment')({
+      collectionPath: '/col', name: 'dev', variables: { a: '1' },
+    });
+    expect(res.content[0].text).toContain('Would be DELETED by a replace: (none)');
+  });
+
+  it('forwards overwrite to the manager', async () => {
+    // Dropping the flag here would silently restore the refusal for a caller who
+    // explicitly asked to replace, and the failure would look like the feature
+    // working as designed.
+    mockCreateEnvironment.mockResolvedValue({ success: true, path: '/p' });
+    await getHandler(server, 'create_environment')({
+      collectionPath: '/col', name: 'dev', variables: { a: '1' }, overwrite: true,
+    });
+    expect(mockCreateEnvironment).toHaveBeenCalledWith(
+      expect.objectContaining({ overwrite: true }),
+    );
+  });
+
+  it('omits overwrite entirely when the caller did not pass it', async () => {
+    mockCreateEnvironment.mockResolvedValue({ success: true, path: '/p' });
+    await getHandler(server, 'create_environment')({
+      collectionPath: '/col', name: 'dev', variables: { a: '1' },
+    });
+    expect(mockCreateEnvironment.mock.calls[0][0]).not.toHaveProperty('overwrite');
+  });
+
+  it('leaves an ordinary failure unadorned', async () => {
+    mockCreateEnvironment.mockResolvedValue({ success: false, error: 'disk on fire' });
+    const res = await getHandler(server, 'create_environment')({
+      collectionPath: '/col', name: 'dev', variables: { a: '1' },
+    });
+    expect(res.content[0].text).toContain('disk on fire');
+    expect(res.content[0].text).not.toContain('Would be added');
   });
 });
