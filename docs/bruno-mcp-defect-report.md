@@ -478,12 +478,32 @@ deliberate: a stats call over a whole collection is not where a caller should be
 Secrets remain name-only there and in `read_environment`, because no format stores a secret's value to
 return.
 
-### M7 — Request-level unknown-key passthrough. CONFIRMED.
+### M7 — Request-level unknown-key passthrough. CONFIRMED. FIXED.
 
 Both generators rebuild the document from scratch with no unknown-key passthrough, so any unmodelled key is
 **deleted** on read-modify-write, not ignored. The environment-level case was closed; the request level was
 not. A request authored in Bruno with a feature we do not model loses it the first time `modify_request`
 touches it.
+
+**FIXED.** The environment side's `extra` bag generalised into `src/bruno/extra-keys.ts` and applied per level
+— the document, `info`, `http`, `runtime`, `settings`, and each header and param entry — because a key's
+position is part of its meaning: a `description` on a header is not a top-level `description`. Measured before
+the fix, a single Bruno-authored `.yml` lost seven distinct classes of key on one rewrite, `examples` among
+them. Four notes worth keeping:
+
+- **The skip list is load-bearing, not defensive.** A carried key must lose to the typed model, or the stale
+  value read off the file being replaced overwrites the update the caller just asked for. Two tests pin it,
+  and dropping the check kills them.
+- **`parseRuntime` no longer returns undefined for a script-less `runtime` block.** It used to, which left a
+  block carrying only unmodelled keys with nowhere on the model to live.
+- **Carried blocks are spliced in ahead of `docs`**, which is where Bruno's own key order puts `examples`.
+- **The `.bru` dialect is bounded by upstream's grammar, and the bounds are asserted rather than hidden.**
+  Unmodelled keys inside a dictionary block (`meta`) are kept. An unknown *top-level* block cannot be:
+  `jsonToBruV2` drops it, as it would for Bruno itself. An unknown key inside `settings` cannot be either —
+  `bruToJsonV2` discards it at parse time, so it never reaches this code (that same read also injects
+  `timeout: 0`, which is where the `.bru` writer's phantom timeout comes from — upstream's, not ours). Both
+  are asserted, so a grammar upgrade that fixes either fails a test here instead of passing unnoticed.
+  See **L16** for the third `.bru` case, which had to be excluded deliberately.
 
 ### M8 — a script cannot wait: no `bru.sleep`, and top-level `await` is a SyntaxError. CONFIRMED. FIXED. *(User-reported)*
 
@@ -729,6 +749,35 @@ Only reachable now that M9 made the block authorable. It is upstream's behaviour
 `encodeUrl` explicitly, so a Bruno-authored request never sits in the ambiguous state, and ours always did.
 Stated in the tool's field description rather than compensated, because compensating means writing a default the
 caller did not ask for, which is the same open decision as M9's second half. Take the two together.
+
+### L16 — `.bru` `tags` cannot survive a rewrite: upstream's reader and writer disagree on its shape. CONFIRMED. *(Found while fixing M7)*
+
+`meta { tags: smoke }` is read by `bruToJsonV2` as the **string** `'smoke'`, and written back by
+`jsonToBruV2` as a **list**, which iterates whatever it is handed. A string iterates one character at a time,
+so the round-trip through upstream's own grammar produces:
+
+```
+tags: [
+    s
+    m
+    o
+    k
+    e
+]
+```
+
+Verified against the installed `@usebruno/lang` with both a single tag and `tags: smoke, fast` — the reader
+returns the raw string in each case, and a genuinely unknown key (`reviewedBy: qa`) round-trips verbatim,
+which is what isolates this to `tags` rather than to unknown keys in general.
+
+It is upstream's defect, not ours, and it bites here only because **M7 started carrying unmodelled `meta`
+keys.** Before M7 this server silently dropped `tags`; carrying it would have replaced a silent drop with a
+corrupted file, which is worse. So `tags` is excluded from the `.bru` carry list on purpose, with a test that
+pins the exclusion and the reason. `.yml` is unaffected — that document is serialized whole.
+
+The real fix is to model `tags` on both sides (parse the comma-separated string into a list, write a list
+back), which also removes the exclusion. Small, but it is a model change with its own round-trip fixtures
+rather than part of a passthrough, and `.yml` needs the same field for parity. Worth reporting upstream too.
 
 ### L1 — `setCookies` is captured but never exposed under a name. CONFIRMED. FIXED.
 
@@ -1147,9 +1196,10 @@ posture decisions.
    only fix. Verify the variable resolves at the wire *and* appears in no written file.~~ **Done.** Both
    checks are tested. Promoted above item 5 because leaving a valueless secret unbound (item 12) removed the
    last way, however wrong, to supply one — see the resolution note under H3.
-10. **L5** — document the allowlist caveat. Allowlisting a hostname disables the loopback and private-range
+10. ~~**L5** — document the allowlist caveat. Allowlisting a hostname disables the loopback and private-range
     checks for that name permanently, including if DNS later moves it. Correct behaviour, but an operator has
-    to be told. Ride along with any PR.
+    to be told. Ride along with any PR.~~ **Done**, and marked `FIXED.` on the finding itself; the strike here
+    was missed at the time.
 11. **Decision** — should the in-process runner stay the default for `options?.scriptRunner ?? TestRunner`?
     **FIXED.** Resolved as no: the default is now `forkingScriptRunner`, so omitting the option gets the
     process boundary and the in-process runner is reachable only by naming it. Retained rather than deleted,
@@ -1168,7 +1218,12 @@ posture decisions.
 
 ### Tier 3 — the rest
 
-13. **M7** — request-level unknown-key passthrough.
+13. ~~**M7** — request-level unknown-key passthrough.~~ **Done.** `extra-keys.ts` carries unmodelled keys per
+     level on both dialects. Measured first: one Bruno-authored `.yml` lost seven classes of key per rewrite.
+     Turned up **L16** on the way — carrying `.bru` `meta` keys exposed a reader/writer disagreement upstream
+     has on `tags`, so that one key is excluded rather than corrupted.
+13c. **L16** — model `.bru` `tags` on both sides so it stops being an exclusion. Also needs the same field on
+     `.yml` for parity, and is worth reporting upstream.
 13a. ~~**L11** — a typed variable value (`{type, data}`) renders as `[object Object]`. Blocks M3's root vars, and
      already wrong for request-level vars. Cheap, and it unlocks the next slice of M3.~~ **Done with H4**, which
      it turned out to depend on: its premise was wrong (we never wrote that shape ourselves) and its fix was
