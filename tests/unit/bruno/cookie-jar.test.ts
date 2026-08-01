@@ -11,6 +11,7 @@ import {
   applyCookiesToHeaders,
   storeResponseCookies,
   mergeCookieHeader,
+  shadowedCookieWarning,
 } from '../../../src/bruno/cookie-jar';
 
 function headersWithSetCookie(values: string[]): Response {
@@ -35,9 +36,31 @@ describe('mergeCookieHeader', () => {
     expect(mergeCookieHeader('mine=1', 'sid=2')).toBe('mine=1; sid=2');
   });
 
-  it('lets the jar win on a same-named cookie, as upstream does', () => {
-    // The server just set this value; the hand-written one is staler.
-    expect(mergeCookieHeader('sid=old', 'sid=new')).toBe('sid=new');
+  it('lets the request win on a same-named cookie, diverging from upstream', () => {
+    // An authored value states which credential the request is about; letting
+    // the stored one replace it runs the assertions against another identity.
+    expect(mergeCookieHeader('sid=authored', 'sid=stored')).toBe('sid=authored');
+  });
+
+  it('reports the names whose stored value the authored header outranked', () => {
+    const shadowed: string[] = [];
+
+    expect(mergeCookieHeader('sid=authored; mine=1', 'sid=stored; csrf=2', shadowed))
+      .toBe('sid=authored; mine=1; csrf=2');
+
+    // Only the clashing name: `csrf` was added, not dropped, and `mine` was
+    // never in the jar at all.
+    expect(shadowed).toEqual(['sid']);
+  });
+
+  it('reports nothing when the request authored no clashing cookie', () => {
+    const shadowed: string[] = [];
+
+    mergeCookieHeader(undefined, 'sid=stored', shadowed);
+    mergeCookieHeader('mine=1', 'sid=stored', shadowed);
+    mergeCookieHeader('mine=1', '', shadowed);
+
+    expect(shadowed).toEqual([]);
   });
 
   it('tolerates odd spacing and values containing =', () => {
@@ -136,7 +159,7 @@ describe('applyCookiesToHeaders', () => {
     jar.store('https://api.example.com/login', ['sid=abc; Path=/']);
     const headers: Record<string, string> = { Accept: 'application/json' };
 
-    applyCookiesToHeaders(headers, 'https://api.example.com/x', jar);
+    expect(applyCookiesToHeaders(headers, 'https://api.example.com/x', jar)).toEqual([]);
 
     expect(headers.Cookie).toBe('sid=abc');
   });
@@ -152,13 +175,35 @@ describe('applyCookiesToHeaders', () => {
     expect(headers.Cookie).toBeUndefined();
   });
 
+  it('keeps the authored value and names the stored one it displaced', () => {
+    const jar = createRunCookieJar();
+    jar.store('https://api.example.com/login', ['sid=stored; Path=/', 'csrf=xyz; Path=/']);
+    const headers: Record<string, string> = { Cookie: 'sid=authored' };
+
+    const shadowed = applyCookiesToHeaders(headers, 'https://api.example.com/x', jar);
+
+    expect(headers.Cookie).toBe('sid=authored; csrf=xyz');
+    expect(shadowed).toEqual(['sid']);
+  });
+
   it('leaves headers untouched when the jar has nothing for this URL', () => {
     const jar = createRunCookieJar();
     const headers: Record<string, string> = { Accept: '*/*' };
 
-    applyCookiesToHeaders(headers, 'https://api.example.com/x', jar);
+    expect(applyCookiesToHeaders(headers, 'https://api.example.com/x', jar)).toEqual([]);
 
     expect(headers).toEqual({ Accept: '*/*' });
+  });
+});
+
+describe('shadowedCookieWarning', () => {
+  it('names every displaced cookie and never its value', () => {
+    const warning = shadowedCookieWarning(['sid', 'csrf']);
+
+    expect(warning).toContain('"sid", "csrf"');
+    // A session cookie is a credential and warnings go back to the caller.
+    expect(warning).not.toContain('=');
+    expect(warning).toContain('cookie jar');
   });
 });
 
