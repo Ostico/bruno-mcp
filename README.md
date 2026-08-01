@@ -25,6 +25,7 @@ Requires **Node.js >= 18.0.0**.
 - **Collection Discovery**: Discover Bruno collections from workspace with zero config
 - **Request Modification**: Partial-merge updates to existing request files
 - **Variable Chaining**: `bru.setVar()`/`bru.getVar()` for cross-request variable flow
+- **Async Scripts**: top-level `await`, `bru.sleep(ms)`, and `setTimeout`/`setInterval` inside the sandbox
 - **Dependency Ordering**: Topological sort for test suite execution order
 - **Request Execution**: Execute requests and run tests with structured results, including captured response bodies
 - **Multipart Uploads**: `multipart/form-data` bodies with per-part `Content-Type` and multi-file fields
@@ -407,6 +408,29 @@ reported as a `Script error` failure.
 plus `.to.not.*` negations. Pre-request scripts instead get `req.getUrl()`,
 `req.setUrl()`, `req.getHeader()`, `req.setHeader()`, `req.getBody()`,
 `req.setBody()`, and `bru.setVar`/`getVar`.
+
+##### Waiting, and `await`
+
+Scripts of both kinds run as async functions, so `await` works at the top level
+— no wrapper needed. To wait, use `bru.sleep(ms)`, or `setTimeout` /
+`setInterval` with their `clear*` counterparts:
+
+```js
+await bru.sleep(500);            // poll politely
+const token = await Promise.resolve(bru.getVar("token"));
+```
+
+Time spent asleep **counts against the script's timeout**, which is
+`settings.timeout` on the request and 5000 ms when that is unset. `await
+bru.sleep(10000)` under the default therefore reports a timeout rather than
+waiting ten seconds — raise `settings.timeout` for anything longer than the
+default budget.
+
+The clock is virtual and driven by the runner, which is why timers work at all
+in a sandbox that deliberately exposes no host functions. Two consequences worth
+knowing: an uncleared `setInterval` does **not** hold a finished script open the
+way it would in Node, and a `setTimeout` callback that throws is reported as the
+script's error instead of vanishing.
 
 ##### Replace vs. append
 

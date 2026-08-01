@@ -397,6 +397,44 @@ Both generators rebuild the document from scratch with no unknown-key passthroug
 not. A request authored in Bruno with a feature we do not model loses it the first time `modify_request`
 touches it.
 
+### M8 — a script cannot wait: no `bru.sleep`, and top-level `await` is a SyntaxError. CONFIRMED. FIXED. *(User-reported)*
+
+Reported from the field on 2026-08-01, and the report is a good record of how the three symptoms present in
+sequence. An agent reached for upstream's `bru.sleep(ms)` and got `TypeError: bru.sleep is not a function`; it
+fell back to `await new Promise(r => setTimeout(r, ms))` and got a SyntaxError on the `await`; it settled on a
+synchronous busy-wait, which worked, at the cost of a pinned core and the same timeout budget it was trying to
+wait out.
+
+All three are one root cause. Scripts were compiled as a bare `vm.Script` and evaluated synchronously
+(`sandbox-worker.ts:513` and `:710`), so `await` at the top level could not parse; and the sandbox exposed no
+timers, so a promise-based wait had nothing that could ever resolve it — the fallback would have hung rather
+than waited if the wrapper had been async.
+
+Upstream has all of it: `(async function(){ ... })()` around every script
+(`bruno-js/src/utils/sandbox.js:12-18`), `setTimeout`/`setInterval` among its safe globals
+(`sandbox/node-vm/constants.js:29-30`), and `bru.sleep` as a promise over a real timer (`bruno-js/src/bru.js:416`).
+
+**Why it could not be copied directly**, which is the part worth keeping: a host `setTimeout` on the sandbox
+would hand script a host-realm function whose `.constructor` is the host `Function` — the exact escape
+`SANDBOX_BRU_LIB` exists to prevent — and awaiting a host timer would break `microtaskMode: 'afterEvaluate'`,
+whose whole point is that the microtask drain happens inside `runInContext` and stays under the V8 interrupt.
+A continuation resumed by a host timer would enqueue onto a queue nothing drains.
+
+**Fixed** with a virtual clock defined inside the sandbox realm (`sandbox-clock.ts`). Script schedules onto an
+in-context queue; the worker pumps it — read what is due, sleep that long on the host with `Atomics.wait`,
+then fire the due timers from inside a `runInContext` call so the callbacks and the drain that follows both
+stay interruptible. Nothing but JSON crosses the realm boundary. Blocking the worker is safe here because
+`runInWorker` forks one child per job, and the parent's deadline with its SIGTERM/SIGKILL escalation still
+bounds it from outside.
+
+Three deliberate divergences from Node's semantics, each tested: the clock advances by real elapsed time, so a
+sleep spends the script's timeout budget and `bru.sleep(10000)` under the default 5000ms reports a timeout
+rather than waiting; an uncleared `setInterval` does not hold a finished script open; and a throw inside a
+timer callback is reported as the script's error instead of vanishing, since no promise rejects for it.
+
+The wrapper opens on the same line as the script's first line, so stack line numbers still point at the lines
+the author wrote — upstream instead carries a `NODEVM_SCRIPT_WRAPPER_OFFSET` to subtract afterwards.
+
 ---
 
 ## Open — Low
@@ -740,6 +778,12 @@ What an agent needs and does not have. Direct field feedback first.
    PR. A Bruno collection using `.yaml` currently enumerates as empty.~~ Both fixed. L6's premise needed
    correcting first: upstream accepts `.yaml` in exactly one place and nowhere that mounts or runs a
    collection, so reading it comes with a run-level warning rather than silent acceptance. See L6.
+8a. ~~**M8** — scripts cannot wait. Direct field feedback, and it ranks here rather than in Tier 3 for the
+    reason this tier exists: an agent writing a polling or rate-limited flow hits it on its first attempt, and
+    the only workaround it can find on its own is a busy-wait that burns the very budget it is waiting out.
+    Placed above L11 because L11 needs a typed variable to be reachable at all, while this is reached by any
+    script that waits.~~ **Done.** A virtual in-context clock rather than upstream's host timers, for the
+    realm-boundary and microtask reasons under M8.
 
 ### Tier 2 — security
 

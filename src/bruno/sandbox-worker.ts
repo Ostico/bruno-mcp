@@ -13,6 +13,7 @@ import {
   runPostResponseVarsInContext,
 } from './sandbox-assert.js';
 import { SANDBOX_EXPECT_LIB } from './sandbox-expect-lib.js';
+import { SANDBOX_CLOCK_LIB, runScriptWithClock } from './sandbox-clock.js';
 
 export type { TestResult, ScriptResult, PreRequestScriptResult } from './types.js';
 // Re-exported so importers that reach for these through the sandbox keep their
@@ -505,20 +506,24 @@ export function runPreRequestJob(
       const preludeScript = new vm.Script(
         SANDBOX_BRU_LIB +
           '\n' +
+          // After the bru lib, which it extends with bru.sleep, and before the
+          // user script, which may await it.
+          SANDBOX_CLOCK_LIB +
+          '\n' +
           buildPreRequestSandboxScript(request) +
           '\n' +
           buildSeedVarsScript(variables),
         { filename: 'bruno-sandbox-prelude.js' },
       );
-      const userScript = new vm.Script(script, {
-        filename: 'bruno-pre-request-script.js',
-      });
 
       // microtaskMode 'afterEvaluate' is as load-bearing here as in runScript:
       // without it the context shares the host microtask queue, so a script
       // that defers work with Promise.resolve().then(...) runs that work after
       // runInContext returns, outside the V8 interrupt. A spin there hangs the
-      // process with no timeout able to stop it.
+      // process with no timeout able to stop it. The virtual clock in
+      // SANDBOX_CLOCK_LIB is built around the same rule: it fires timers from
+      // inside a runInContext call rather than from a host timer, so a sleeping
+      // script stays interruptible.
       context = vm.createContext(sandbox, {
         codeGeneration: { strings: false, wasm: false },
         microtaskMode: 'afterEvaluate',
@@ -529,8 +534,12 @@ export function runPreRequestJob(
       // user-level "let bru" a redeclaration SyntaxError.
       const started = Date.now();
       preludeScript.runInContext(context, { timeout });
-      const remaining = Math.max(1, timeout - (Date.now() - started));
-      userScript.runInContext(context, { timeout: remaining });
+      runScriptWithClock(
+        context,
+        script,
+        'bruno-pre-request-script.js',
+        started + timeout,
+      );
 
       return {
         variables: extractBruVars(context, timeout),
@@ -558,7 +567,8 @@ export function runPreRequestJob(
  */
 const PENDING_NEVER_SETTLED =
   'async test callback never settled: it is still awaiting a promise ' +
-  'that nothing in the sandbox can resolve (no timers or I/O are available)';
+  'that nothing in the sandbox can resolve (bru.sleep and setTimeout can ' +
+  'resolve one; network and file I/O are not available)';
 
 /**
  * Read back the results the sandbox recorded, mapping any test() callback that
@@ -653,6 +663,8 @@ export function runTestJob(
       const preludeScript = new vm.Script(
         SANDBOX_BRU_LIB +
           '\n' +
+          SANDBOX_CLOCK_LIB +
+          '\n' +
           SANDBOX_EXPECT_LIB +
           '\n' +
           buildSandboxSetupScript(response) +
@@ -673,8 +685,10 @@ export function runTestJob(
       // instead disarm the timeout: the V8 interrupt only covers work done
       // inside the call, so a CPU spin after an await, or a self-requeueing
       // microtask loop, would hang the host forever. Both stay interruptible
-      // this way, and the sandbox exposes no timers or I/O, so a promise still
-      // unsettled once the queue empties can never settle.
+      // this way. The sandbox's only timers are the virtual ones in
+      // SANDBOX_CLOCK_LIB, which fire from inside a runInContext call for the
+      // same reason, so a promise still unsettled once the queue empties and
+      // the clock has nothing scheduled can never settle.
       context = vm.createContext(sandbox, {
         codeGeneration: { strings: false, wasm: false },
         microtaskMode: 'afterEvaluate',
@@ -707,9 +721,11 @@ export function runTestJob(
       let scriptError: { label: string; message: string } | undefined;
       if (hasScript) {
         try {
-          new vm.Script(script, { filename: 'bruno-test-script.js' }).runInContext(
+          runScriptWithClock(
             context,
-            { timeout: budget() },
+            script,
+            'bruno-test-script.js',
+            started + timeout,
           );
         } catch (error: unknown) {
           const described = describeSandboxError(error);
