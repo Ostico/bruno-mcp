@@ -903,22 +903,38 @@ The real fix is to model `tags` on both sides (parse the comma-separated string 
 back), which also removes the exclusion. Small, but it is a model change with its own round-trip fixtures
 rather than part of a passthrough, and `.yml` needs the same field for parity. Worth reporting upstream too.
 
-### L17 — `copy_environment` flattens what it copies: secret and disabled flags do not survive. CONFIRMED. *(Found while fixing L7)*
+### L17 — `copyEnvironment` flattens what it copies: secret and disabled flags do not survive. CONFIRMED. CLOSED — code deleted.
 
-`copyEnvironment` (`environment.ts:625`) reads the source through `loadEnvironment`, which returns the flat
-`Record<string, scalar>` shape — it drops disabled variables outright and keeps no `secret` flag. It then hands
-that map to `createEnvironment`. So copying an environment that holds a secret produces one where the same name
-is an ordinary variable, and a disabled variable is not copied at all.
+`copyEnvironment` (`environment.ts:625`) read the source through `loadEnvironment`, which returns the flat
+`Record<string, scalar>` shape — it drops disabled variables outright and keeps no `secret` flag. It then handed
+that map to `createEnvironment`. So copying an environment that held a secret produced one where the same name
+was an ordinary variable with an **empty value** (no format stores a secret's value, so the flat read yields
+`''`), and a disabled variable was not copied at all. Top-level `color` and per-variable `type`/`description`
+were dropped too.
 
-Latent before **L7**, because `create_environment` could not express those flags either, so nothing was lost
-relative to what create could do. Now that create takes the full per-variable form, copy is the only path left
-that cannot, which is what makes this worth a number.
+**Closed by deleting the method rather than fixing it, because it had no callers.** This entry originally named
+the defect `copy_environment`, implying an exposed tool. There is no such tool. `src/tools/environment-tools.ts`
+registers exactly five: `create_environment`, `read_environment`, `update_environment`,
+`set_environment_variable`, `remove_environment_variable`. `copyEnvironment` was the manager half of a pair
+whose MCP wrapper was never written, referenced nowhere in `src/` outside its own definition — so no caller
+could reach the flattening.
 
-Fix: read the source with `loadEnvironmentFile` (the full-fidelity reader that already exists and is what the
-read-modify-write helpers use) and pass `EnvVariable[]` straight through. The work is in `variableOverrides`,
-which is a flat map and has to be merged **into** a typed list by name rather than spread over it — and a
-secret whose value is overridden stops being expressible, since no format stores a secret's value, so that case
-needs a decision rather than a merge. Small, but not a one-liner, and it wants its own round-trip test.
+Two things made deleting the better close:
+
+- **The capability already exists, correctly.** `update_environment` → `mergeEnvironment` does the
+  copy-adjacent work through the full-fidelity reader; `loadEnvironmentRaw`'s docblock names itself "the
+  full-fidelity read used by the merge/write path so disabled variables are never dropped." `copyEnvironment`
+  was a second-rate duplicate of a reachable path, not a missing capability.
+- **Fixing it needed a product decision for no user.** `variableOverrides` is `Record<string, scalar>` — it
+  carries values only, no flags — so an override against a secret source variable cannot express both "secret"
+  and "this value". Resolving that is a real decision, and there was no caller to resolve it for.
+
+Its four tests went with it. They asserted only `result.success === true` and never inspected the copied
+variables, which is why a flattening this total never went red — see the standing note that a test can pass
+through the exact defect it covers.
+
+If a copy tool is wanted later, build it on `loadEnvironmentFile` + `EnvVariable[]` and settle the
+override-vs-secret question first; do not restore this method.
 
 ### L1 — `setCookies` is captured but never exposed under a name. CONFIRMED. FIXED.
 
@@ -1084,7 +1100,7 @@ As filed:
 > rather than rejecting, which reads as "the file exists and is empty" to anything checking existence by
 > reading — so the fix appeared to break seven passing tests that were themselves not modelling an absent file.
 > It now rejects by default. New coverage uses real files in a temp directory rather than adding to the mocks.
-> See **L17** for the gap this left visible next door.
+> See **L17** for the gap this left visible next door — closed by deleting the unreachable method.
 
 ### L8 — `.bru` generator catch-all crashes on a well-typed file body. CONFIRMED. FIXED.
 
@@ -1545,9 +1561,10 @@ posture decisions.
      and no read, deleting unlisted variables *and* the unmodelled keys every other write path preserves. It
      now refuses with a merge-or-replace comparison, and takes the full per-variable form. `dataType` is left
      unwired on purpose — substitution is textual, so it has no observable effect.
-14a. **L17** — `copy_environment` reads its source through the flat loader, so secret and disabled flags do not
-     survive a copy. Latent until L7 made those flags authorable at create time. Needs a decision for an
-     overridden secret's value.
+14a. ~~**L17** — `copy_environment` reads its source through the flat loader.~~ **Done** — and there is no
+     `copy_environment`. The tool was never registered; `copyEnvironment` was an unreachable manager method with
+     zero callers, duplicating work `update_environment` already does correctly through the full-fidelity
+     reader. Deleted rather than fixed, so the override-vs-secret decision it needed is moot.
 15. ~~**L3** — the third auth enum.~~ **Done** — it was `create_test_suite`, not
     `create_crud_requests`; that tool takes no auth at all, now filed as **L19**.
 16. ~~**L8** — the `.bru` file-body catch-all.~~ **Done**, and it was wider than filed: `file` was one of four
