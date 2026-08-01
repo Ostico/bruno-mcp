@@ -200,6 +200,57 @@ credential names. An injected secret substituted into an unrecognised query-para
 result. That is pre-existing behaviour, identical for environment-file values, and is not made worse here —
 but it is the reason to prefer a header or a recognised parameter name.
 
+### H4 — `.yml` request vars and assertions are written under keys Bruno never reads. CONFIRMED. *(Found while checking L11's premise)*
+
+Upstream's `.yml` `runtime` block is `{ variables, scripts, assertions, actions }` —
+`stringifyHttpRequest.ts:83,90,97,105` writes those four, and `parseHttpRequest.ts` reads exactly
+`info`, `http`, `runtime`, `docs`, `settings` and `examples`. There is **no top-level `vars` and no
+top-level `assert`** anywhere in it.
+
+Ours writes `doc.runtime = { scripts }` (`yaml-generator.ts:193`) and then puts the other two blocks
+at the top level: `doc.vars = { preRequest, postResponse }` (`:221`) and `doc.assert` (`:205`). The
+parser is symmetric — `doc.vars` at `yaml-parser.ts:354`, `doc.runtime` at `:339` — and neither end
+mentions `variables`, `actions` or `assertions`. So the mapping is:
+
+| ours | upstream |
+| --- | --- |
+| `vars.preRequest` | `runtime.variables` |
+| `vars.postResponse` | `runtime.actions` |
+| top-level `assert` | `runtime.assertions` |
+| `runtime.scripts` | `runtime.scripts` — **matches** |
+
+**`runtime.scripts` matching is why this was invisible.** Scripts round-trip, so the dialect looks
+right where anyone would check first, and our own files round-trip perfectly because the writer and
+the parser share the same wrong key. Every test passes because both ends agree with each other
+rather than with Bruno — the same trap as the mocked-serializer environments and the
+read-the-bytes-not-the-round-trip lesson, in a third shape. Any test for the fix has to assert
+against upstream's parser or against literal bytes, not against our own round-trip.
+
+**H-level, on the register's own rule.** A Bruno-authored `.yml` request carrying
+`runtime.assertions` runs here with **zero declared assertions and reports green** — the same class
+as H1, and the same class as the empty-directory pass L14 turned up: a result that reads greener than
+reality and cannot be diagnosed from inside. Pre-request vars vanish in the same direction, and in
+the outbound direction every `.yml` request this server has ever written has vars and assertions that
+`bru run` cannot see.
+
+**It also corrects L11's premise, so fix this first.** L11 says the YAML dialect writes a typed
+variable as `value: {type, data}`. It does not: `toYamlVar` (`yaml-generator.ts:142`) writes
+`value: v.value`, already coerced to a string by the parser, so we never produce that shape. It can
+only arrive from an externally-authored file — which we read under the wrong key anyway, so L11 is
+currently unreachable and its fix cannot be exercised until the keys are right.
+
+**Upstream already has the helper L11 needs**, and it should be mirrored rather than reinvented:
+`yml/common/datatype.ts` exports `isTypedValue` (non-null non-array object with `type` and `data`),
+`fromOpenCollectionTypedValue` (validates the type, defaults to `string`, parses `data` by type) and
+`serializeVariableValue`, which renders a plain object as `JSON.stringify(value, null, 2)` rather
+than `String()`. Note `YamlVar` has no `dataType` field, so preserving a non-string type needs one
+added.
+
+**Migration is the open question, not the mapping.** Reading both shapes is unambiguously right.
+Writing the upstream shape means `.yml` files this server previously wrote stop being read by it
+unless the read side keeps accepting the old keys — which it should, and which is cheap. Whether to
+also *rewrite* an old file on modify is the only judgement call here.
+
 ---
 
 ## Open — Medium
@@ -784,6 +835,16 @@ Affects request-level `vars` and the collection/folder root vars M3 now reads, w
 vars as unapplied instead of applying them through a parser that would mangle a typed value. Fix once, in the
 var parser, and root vars can then use it. Filed 2026-07-31 while implementing M3.
 
+> **Premise partly wrong, and it makes this unreachable — do H4 first.** "The YAML dialect writes a non-string
+> variable as `value: {type, data}`" is true of *upstream's* dialect, not ours: `toYamlVar`
+> (`yaml-generator.ts:142`) writes `value: v.value`, already coerced to a string, so this server never produces
+> the shape. It can only arrive from an externally-authored file — and per **H4** we read request vars from
+> `doc.vars` while upstream writes them to `runtime.variables`, so such a file's vars do not reach this parser
+> at all. The `String(v.value)` call is still wrong and still worth fixing, but it cannot be exercised until the
+> keys are right. Upstream's `yml/common/datatype.ts` already has `isTypedValue`,
+> `fromOpenCollectionTypedValue` and `serializeVariableValue` — mirror those rather than writing new coercion.
+> Found 2026-08-01 while checking this finding's premise.
+
 ### L12 — collection- and folder-level scripts and tests are read but not run. CONFIRMED.
 
 M3 reads `script:pre-request`, `script:post-response` and `tests` from the root files and reports them per
@@ -1031,6 +1092,14 @@ SSRF bypasses and three missing IPv4 ranges, query-param credential redaction, t
 realm-boundary escape, and plaintext environment secrets. What remains is one documentation gap and two
 posture decisions.
 
+8f. **H4** — put `.yml` vars and assertions under the keys Bruno actually reads. **Now the top of this tier**,
+    ahead of everything left in it: a Bruno-authored request's declared assertions are dropped entirely and the
+    run reports green, which is the one outcome this list ranks above all others. Read both shapes, write
+    upstream's, keep accepting the old keys so files this server already wrote still load. It also blocks
+    **L11** — that finding's premise is wrong in a way that makes its fix unreachable until the keys are
+    right, so do not start there. Mirror upstream's `datatype.ts` helpers rather than writing new coercion,
+    and assert against upstream's parser or literal bytes: our own round-trip agrees with itself and will
+    stay green through the bug.
 9. ~~**H3** — a `variables` input on `run_collection`. Also a tier-1 blocker by impact; listed here because the
    driver is security. Any value a run needs must currently be persisted into the collection's own git
    repository, and there is no correct on-disk place for a secret **by design**, so an in-memory path is the
