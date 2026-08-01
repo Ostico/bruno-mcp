@@ -88,6 +88,54 @@ describe('sandbox fork (real child)', () => {
     expect(elapsed).toBeLessThan(3000);
   }, 10_000);
 
+  it('sleeps and awaits inside the built worker, not just in the source tree', async () => {
+    // The clock lives in its own module, so the unit tests would stay green even
+    // if the bundler dropped it from the chunk the worker imports — the same
+    // shape of failure as a dependency that is declared but not installed. This
+    // is the only test that runs bru.sleep through the artifact production
+    // forks.
+    const job: SandboxJob = {
+      kind: 'pre-request',
+      script:
+        'const before = await Promise.resolve("go");\n' +
+        'await bru.sleep(150);\n' +
+        'bru.setVar("state", before + "-slept");',
+      request: { url: 'https://example.test', method: 'GET', headers: {}, body: null },
+      timeout: 3000,
+    };
+
+    const started = Date.now();
+    const out = await runInWorker(job, { workerPath });
+    const elapsed = Date.now() - started;
+
+    expect(out.kind).toBe('pre-request');
+    if (out.kind !== 'pre-request') throw new Error('unreachable');
+    expect(out.result.error).toBeUndefined();
+    expect(out.result.variables.state).toBe('go-slept');
+    expect(elapsed).toBeGreaterThanOrEqual(140);
+  }, 10_000);
+
+  it('bounds a sleep that outruns its budget instead of waiting it out', async () => {
+    // The clamp is inside the child, so it reports a timeout itself rather than
+    // being killed by the parent — the difference between a diagnosable failure
+    // and "sandbox worker exceeded its budget and was terminated".
+    const job: SandboxJob = {
+      kind: 'pre-request',
+      script: 'await bru.sleep(9000);',
+      request: { url: 'https://example.test', method: 'GET', headers: {}, body: null },
+      timeout: 300,
+    };
+
+    const started = Date.now();
+    const out = await runInWorker(job, { workerPath });
+    const elapsed = Date.now() - started;
+
+    expect(out.kind).toBe('pre-request');
+    if (out.kind !== 'pre-request') throw new Error('unreachable');
+    expect(out.result.error).toContain('timed out');
+    expect(elapsed).toBeLessThan(5000);
+  }, 15_000);
+
   it('runs a script through the production forking runner against the real worker', async () => {
     // The same runner server.ts injects, pointed at the built worker — proves
     // the production path executes scripts in a forked child end to end.

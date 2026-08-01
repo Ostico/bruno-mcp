@@ -28,7 +28,7 @@ export function registerCreateRequestTool(ctx: ToolContext): void {
     'create_request',
     {
       title: 'Create Bruno Request',
-      description: 'Generate request files for API testing (supports .bru and .yml formats). Supports multipart/form-data with file uploads and per-part contentType (body.type "form-data" with formData entries of type "file"), and inline scripts (pre-request/post-response/tests) so no separate add_test_script call is needed.',
+      description: 'Generate request files for API testing (supports .bru and .yml formats). Supports multipart/form-data with file uploads and per-part contentType (body.type "form-data" with formData entries of type "file"), and inline scripts (pre-request/post-response/tests) so no separate add_test_script call is needed. Scripts run as async functions: top-level await works, and bru.sleep(ms)/setTimeout/setInterval are available, spending the script timeout (settings.timeout, default 5000ms).',
       inputSchema: {
         collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to existing collection directory.'),
         name: z.string().min(1, 'Request name is required'),
