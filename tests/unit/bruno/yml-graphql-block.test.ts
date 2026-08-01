@@ -175,6 +175,24 @@ describe('the body survives exactly as authored', () => {
     expect(out).toContain('query: "{ me { id } }"');
   });
 
+  it.each([
+    ['no body at all', undefined],
+    ['an empty string where the query should be', { type: 'graphql', data: '' }],
+    ['a null where the envelope should be', { type: 'graphql', data: null }],
+    ['a pair list, which belongs to a form body', { type: 'graphql', data: [{ name: 'a', value: '1' }] }],
+    ['a body of some other mode', { type: 'json', data: '{"a":1}' }],
+  ])('writes the block with no body given %s', (_label, body) => {
+    // Each of these still has to produce a usable request rather than throwing or
+    // emitting `body:` with nothing under it.
+    const out = generateYamlRequest({
+      info: { name: 'R', type: 'graphql' },
+      http: { method: 'POST', url: 'https://e.test/graphql', body: body as never },
+    });
+    expect(out).toMatch(/^graphql:/m);
+    expect(out).toContain('url: https://e.test/graphql');
+    expect(out).not.toMatch(/^\s+body:/m);
+  });
+
   it('defaults the method to POST, not GET, when the block omits it', () => {
     const parsed = parseYamlRequest(`info:
   name: R
