@@ -200,7 +200,7 @@ credential names. An injected secret substituted into an unrecognised query-para
 result. That is pre-existing behaviour, identical for environment-file values, and is not made worse here —
 but it is the reason to prefer a header or a recognised parameter name.
 
-### H4 — `.yml` request vars and assertions are written under keys Bruno never reads. CONFIRMED. *(Found while checking L11's premise)*
+### H4 — `.yml` request vars and assertions are written under keys Bruno never reads. CONFIRMED. FIXED. *(Found while checking L11's premise)*
 
 Upstream's `.yml` `runtime` block is `{ variables, scripts, assertions, actions }` —
 `stringifyHttpRequest.ts:83,90,97,105` writes those four, and `parseHttpRequest.ts` reads exactly
@@ -250,6 +250,37 @@ added.
 Writing the upstream shape means `.yml` files this server previously wrote stop being read by it
 unless the read side keeps accepting the old keys — which it should, and which is cheap. Whether to
 also *rewrite* an old file on modify is the only judgement call here.
+
+> **FIXED.** The mapping lives in `yaml-runtime-blocks.ts`, mirrored from
+> `bruno-filestore/src/formats/yml/common/*` rather than reimplemented. In-memory shapes are
+> unchanged, so nothing downstream of the parser needed to know. The operator table turned out to
+> already exist in `assert-operators.ts`, and was verified identical to upstream's list *and* in the
+> same order, so no second copy was added.
+>
+> **Migration went the cheap way, as predicted:** the old top-level keys are still read, upstream's
+> win when a document carries both, and the next write moves them. So nothing already on disk stops
+> loading, and no separate rewrite step was needed.
+>
+> **Two deliberate divergences from upstream, both because upstream loses data.** `local` is
+> recovered from an action's `variable.scope` — upstream writes that scope and then hardcodes
+> `local: false` when reading it back, so matching it would drop the flag on every file, including
+> ours. And `local` is carried on a pre-request variable, which upstream's `Variable` shape cannot
+> hold: `.bru` supports it there (`bruToJson.js` `varsreq`, the `@name` prefix), so omitting it would
+> make `.yml` lossy against `.bru` and lose the flag on any `bru-to-yaml` conversion.
+>
+> **L11 is fixed as a consequence**, not separately — see the note under it.
+>
+> One extra confirmation found while fixing: `BLOCK_KEYS` in `yaml-generator.ts`, the blank-line list
+> copied from Bruno's own writer, never contained `vars` or `assert`. The evidence that those keys do
+> not exist in the format was already in the file that wrote them.
+>
+> **Tests deliberately do not use a round-trip as their oracle** (`yaml-runtime-blocks.test.ts`, 25
+> cases). The writer and the parser agreed with each other for the whole life of this bug, which is
+> why the suite stayed green through it, so the assertions pin the literal on-disk structure and the
+> inbound cases start from documents shaped the way Bruno writes them. All 17 mutations were caught —
+> one only after a fix: the "not a `set-variable`" case originally omitted `variable.name`, so the
+> trailing name check dropped the action regardless of its type and the test passed with the type
+> filter deleted.
 
 ---
 
@@ -824,7 +855,7 @@ the catch-all — but it is a live trap for the next caller.
 
 Decide whether an empty query should be an error rather than an empty string sent to the server.
 
-### L11 — a typed variable value renders as `[object Object]`. CONFIRMED.
+### L11 — a typed variable value renders as `[object Object]`. CONFIRMED. FIXED.
 
 The YAML dialect writes a non-string variable as `value: {type: number, data: "100"}` (see upstream's
 `bruno-tests/yml-collection`). `parseYamlVarList` (`yaml-parser.ts:271-273`) does `String(v.value)`, which
@@ -844,6 +875,14 @@ var parser, and root vars can then use it. Filed 2026-07-31 while implementing M
 > keys are right. Upstream's `yml/common/datatype.ts` already has `isTypedValue`,
 > `fromOpenCollectionTypedValue` and `serializeVariableValue` — mirror those rather than writing new coercion.
 > Found 2026-08-01 while checking this finding's premise.
+>
+> **FIXED with H4, in the same change**, because reading `runtime.variables` reaches a typed value
+> immediately and fixing the keys without this would have put `"[object Object]"` on the wire on the
+> first Bruno-authored collection. A typed value is read as its `data` with the type recorded in a new
+> `YamlVar.dataType`, and written back as a typed value rather than silently retyped to a string; a
+> plain object value becomes pretty-printed JSON, as upstream's `serializeVariableValue` does. An
+> explicit `type: string` is treated as the default and not recorded, also as upstream. Root vars still
+> need **L12** before they are applied, but the parser they were waiting on is no longer the blocker.
 
 ### L12 — collection- and folder-level scripts and tests are read but not run. CONFIRMED.
 
@@ -1042,8 +1081,8 @@ What an agent needs and does not have. Direct field feedback first.
    request or gets 401s it cannot explain. Unblocks M2's real fix and makes `auth: inherit` resolvable. Start
    with warn-on-dropped-settings if the full read is too large for one change.~~ **Read done; headers and
    `auth: inherit` applied.** Root vars/scripts/tests are read and reported per request rather than dropped —
-   the warn-on-dropped-settings step, kept for what is not applied yet. Root vars are blocked on **L11**;
-   root scripts are **L12**. See the resolution note under M3.
+   the warn-on-dropped-settings step, kept for what is not applied yet. Root vars were blocked on **L11**,
+   now fixed with H4, so they wait only on **L12** along with root scripts. See the resolution note under M3.
 8. ~~**L4 + L6** — `seq` defaulting to "one past the folder maximum", and recognising `.yaml`. Papercuts, one
    PR. A Bruno collection using `.yaml` currently enumerates as empty.~~ Both fixed. L6's premise needed
    correcting first: upstream accepts `.yaml` in exactly one place and nowhere that mounts or runs a
@@ -1092,14 +1131,16 @@ SSRF bypasses and three missing IPv4 ranges, query-param credential redaction, t
 realm-boundary escape, and plaintext environment secrets. What remains is one documentation gap and two
 posture decisions.
 
-8f. **H4** — put `.yml` vars and assertions under the keys Bruno actually reads. **Now the top of this tier**,
+8f. ~~**H4** — put `.yml` vars and assertions under the keys Bruno actually reads. **Now the top of this tier**,
     ahead of everything left in it: a Bruno-authored request's declared assertions are dropped entirely and the
     run reports green, which is the one outcome this list ranks above all others. Read both shapes, write
     upstream's, keep accepting the old keys so files this server already wrote still load. It also blocks
     **L11** — that finding's premise is wrong in a way that makes its fix unreachable until the keys are
     right, so do not start there. Mirror upstream's `datatype.ts` helpers rather than writing new coercion,
     and assert against upstream's parser or literal bytes: our own round-trip agrees with itself and will
-    stay green through the bug.
+    stay green through the bug.~~ **Done, with L11 folded in** — it could not be exercised separately. The
+    mapping was three structural translations rather than three renames; both divergences from upstream exist
+    because upstream loses data. See the resolution note under H4.
 9. ~~**H3** — a `variables` input on `run_collection`. Also a tier-1 blocker by impact; listed here because the
    driver is security. Any value a run needs must currently be persisted into the collection's own git
    repository, and there is no correct on-disk place for a secret **by design**, so an in-memory path is the
@@ -1128,8 +1169,11 @@ posture decisions.
 ### Tier 3 — the rest
 
 13. **M7** — request-level unknown-key passthrough.
-13a. **L11** — a typed variable value (`{type, data}`) renders as `[object Object]`. Blocks M3's root vars, and
-     already wrong for request-level vars. Cheap, and it unlocks the next slice of M3.
+13a. ~~**L11** — a typed variable value (`{type, data}`) renders as `[object Object]`. Blocks M3's root vars, and
+     already wrong for request-level vars. Cheap, and it unlocks the next slice of M3.~~ **Done with H4**, which
+     it turned out to depend on: its premise was wrong (we never wrote that shape ourselves) and its fix was
+     unreachable until the variables were being read from the key Bruno writes them to. M3's root vars now wait
+     only on L12.
 13b. **L12** — run collection/folder scripts and tests. Needs the ordering decision upstream already makes
      (collection, then folder, then request).
 14. **L7** — environment authoring: secrets, and the unwired `dataType` / `disabled`.

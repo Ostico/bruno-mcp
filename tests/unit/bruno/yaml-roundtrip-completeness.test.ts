@@ -87,27 +87,31 @@ const FIXTURES: YamlFixture[] = [
 `,
   },
   {
-    name: 'assert with a disabled assertion',
+    name: 'runtime.assertions, including a disabled one',
     src: `${INFO}http:
   method: GET
   url: https://api.example.test/orders
-assert:
-  - name: res.status
-    value: eq 200
-  - name: res.body.total
-    value: gt 0
-  - name: res.body.id
-    value: neq 0
-    disabled: true
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+    - expression: res.body.total
+      operator: gt
+      value: "0"
+    - expression: res.body.id
+      operator: neq
+      value: "0"
+      disabled: true
 `,
   },
   {
-    name: 'vars: preRequest and postResponse, local and disabled',
+    name: 'runtime.variables and runtime.actions, local and disabled',
     src: `${INFO}http:
   method: GET
   url: https://api.example.test/orders
-vars:
-  preRequest:
+runtime:
+  variables:
     - name: token
       value: abc
     - name: localOnly
@@ -116,11 +120,23 @@ vars:
     - name: switchedOff
       value: nope
       disabled: true
-  postResponse:
-    - name: orderId
-      value: res.body.id
-    - name: staleVar
-      value: res.body.old
+  actions:
+    - type: set-variable
+      phase: after-response
+      selector:
+        expression: res.body.id
+        method: jsonq
+      variable:
+        name: orderId
+        scope: runtime
+    - type: set-variable
+      phase: after-response
+      selector:
+        expression: res.body.old
+        method: jsonq
+      variable:
+        name: staleVar
+        scope: request
       disabled: true
 `,
   },
@@ -271,30 +287,36 @@ docs: |-
     type: bearer
     token: "{{authToken}}"
 runtime:
+  variables:
+    - name: token
+      value: abc
+    - name: switchedOff
+      value: nope
+      disabled: true
   scripts:
     - type: before-request
       code: bru.setVar("x", 1);
     - type: after-response
       code: bru.setVar("y", 2);
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+    - expression: res.body.total
+      operator: gt
+      value: "0"
+  actions:
+    - type: set-variable
+      phase: after-response
+      selector:
+        expression: res.body.id
+        method: jsonq
+      variable:
+        name: orderId
+        scope: runtime
 settings:
   encodeUrl: true
   timeout: 5000
-assert:
-  - name: res.status
-    value: eq 200
-  - name: res.body.id
-    value: neq 0
-    disabled: true
-vars:
-  preRequest:
-    - name: token
-      value: abc
-    - name: off
-      value: nope
-      disabled: true
-  postResponse:
-    - name: orderId
-      value: res.body.id
 docs: Everything, in one document.
 `,
   },

@@ -10,16 +10,24 @@ import {
   type YamlRequest,
   type YamlCollection,
   type EnvFile,
-  type YamlVar,
   type YamlBody,
   type YamlScript,
   type MultipartFormPart,
 } from './types.js';
+import {
+  assertionsToYaml,
+  postResponseVarsToYaml,
+  variablesToYaml,
+} from './yaml-runtime-blocks.js';
 
 /**
  * Top-level keys Bruno separates with a blank line. Mirrors the list Bruno's own
  * writer uses, so a file we generate and a file Bruno generates for the same
  * request differ in no bytes.
+ *
+ * Note what is *not* here: `vars` and `assert`. This list was copied from
+ * Bruno and never had them, because Bruno has no such top-level keys — which is
+ * corroboration for moving those blocks into `runtime`, where it does read them.
  */
 const BLOCK_KEYS = [
   'info',
@@ -138,16 +146,6 @@ function stripEmpty(obj: unknown): unknown {
   return obj;
 }
 
-/** Serialise a vars entry, omitting flags that are not set. */
-function toYamlVar(v: YamlVar): Record<string, unknown> {
-  return {
-    name: v.name,
-    value: v.value,
-    ...(v.disabled === true ? { disabled: true } : {}),
-    ...(v.local === true ? { local: true } : {}),
-  };
-}
-
 /**
  * Generate YAML request file content from a YamlRequest object.
  */
@@ -188,37 +186,31 @@ export function generateYamlRequest(request: YamlRequest): string {
   }
   doc.http = http;
 
-  // runtime section
-  if (request.runtime && request.runtime.scripts && request.runtime.scripts.length > 0) {
-    doc.runtime = {
-      scripts: request.runtime.scripts.map((s) => ({ type: s.type, code: s.code })),
-    };
+  // runtime section — variables, scripts, assertions and actions, in upstream's
+  // own key order. Only `scripts` used to live here; the other three were
+  // written at the top level under names Bruno does not read, so a request this
+  // server wrote had its variables and assertions invisible to `bru run`.
+  const runtime: Record<string, unknown> = {};
+  if (request.vars?.preRequest?.length) {
+    runtime.variables = variablesToYaml(request.vars.preRequest);
+  }
+  if (request.runtime?.scripts?.length) {
+    runtime.scripts = request.runtime.scripts.map((s) => ({ type: s.type, code: s.code }));
+  }
+  if (request.assert?.length) {
+    runtime.assertions = assertionsToYaml(request.assert);
+  }
+  // Post-response variables are `set-variable` actions upstream, not variables.
+  if (request.vars?.postResponse?.length) {
+    runtime.actions = postResponseVarsToYaml(request.vars.postResponse);
+  }
+  if (Object.keys(runtime).length > 0) {
+    doc.runtime = runtime;
   }
 
   // settings section
   if (request.settings) {
     doc.settings = stripEmpty(request.settings);
-  }
-
-  // assert — write back what the parser now preserves
-  if (request.assert && request.assert.length > 0) {
-    doc.assert = request.assert.map((a) => ({
-      name: a.name,
-      value: a.value,
-      ...(a.disabled === true ? { disabled: true } : {}),
-    }));
-  }
-
-  // vars
-  if (request.vars?.preRequest?.length || request.vars?.postResponse?.length) {
-    const vars: Record<string, unknown> = {};
-    if (request.vars.preRequest && request.vars.preRequest.length > 0) {
-      vars.preRequest = request.vars.preRequest.map(toYamlVar);
-    }
-    if (request.vars.postResponse && request.vars.postResponse.length > 0) {
-      vars.postResponse = request.vars.postResponse.map(toYamlVar);
-    }
-    doc.vars = vars;
   }
 
   // docs
