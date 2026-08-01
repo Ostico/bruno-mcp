@@ -284,6 +284,29 @@ also *rewrite* an old file on modify is the only judgement call here.
 
 ---
 
+### H5 — a `.yml` file body is read as empty multipart parts, destroying it on rewrite. CONFIRMED. FIXED. *(Found while scoping L18)*
+
+Bruno stores a `.yml` file body as a list of `{filePath, contentType, selected}`
+(`bruno-filestore/src/formats/yml/common/body.ts`). `parseBody` branched on `Array.isArray(data)` and, past
+the form-urlencoded case, treated **every** array as multipart parts. None of a file entry's keys exist on a
+part, so a Bruno-authored file body parsed to this — measured, not inferred:
+
+```
+{"type":"file","data":[{"name":"","value":"","type":"text","contentType":"application/pdf"}]}
+```
+
+The file path is **gone**. Any later write emits those empty parts back, over a body this server never
+authored, in the user's own collection. No feature was needed to reach it: opening a collection containing a
+file upload and modifying that request for any unrelated reason was enough — which is why this is filed High
+rather than alongside L18.
+
+Same class as **L10** and **M11**: a dispatch chain where a broad shape test sits above a type-specific one,
+and the array shape alone never said what the entries were. The form-urlencoded branch immediately above
+exists for exactly this reason, which is the part that should have prompted the question earlier.
+
+**FIXED** with a `file` branch keyed on `type`, above the multipart catch-all. `selected` is recorded only
+when false, matching how the `.bru` side models the flag: absence means the part will be sent.
+
 ## Open — Medium
 
 ### M1 — Parse failures are counted, never identified. CONFIRMED. FIXED.
@@ -995,7 +1018,7 @@ Upstream expects `body.file` to be an **array** of `{filePath, contentType?, sel
 >
 > Found while fixing this: the tool surface cannot ask for most of these types at all — see **L18**.
 
-### L18 — the tool surface cannot ask for half the body types the writer supports. CONFIRMED. *(Found while fixing L8)*
+### L18 — the tool surface cannot ask for half the body types the writer supports. CONFIRMED. FIXED. *(Found while fixing L8)*
 
 `BodyType` has eleven members and the `.bru` and `.yml` writers handle all of them. The zod enums on
 `create_request`, `modify_request` and `create_test_suite` offer six:
@@ -1019,6 +1042,27 @@ Same class as **L3**, opposite direction: L3's surface over-promises a mode the 
 this one under-promises modes the writer implements. Not folded into the L8/L3 change because widening an
 enum makes previously-rejected input succeed — each newly accepted type needs its own end-to-end test that
 the file written is one Bruno reads, which is real work rather than a one-line edit.
+
+> **FIXED**, together with **H5**, which the file half depends on. All eleven types are accepted, and the two
+> that needed somewhere to put their payload got it:
+>
+> - `variables` carries a graphql body's variables as raw text, to `body:graphql:vars` and to the `.yml`
+>   graphql block. Text end to end, for the reason L10 established: re-serialising reflows the author's JSON
+>   and destroys a `{{placeholder}}` that is not valid JSON standing alone.
+> - `files` carries a file body's parts; `content` stays the one-file shorthand. Only the list can set a
+>   content type or deselect an entry, which is the shape both dialects actually store.
+>
+> Three things had to come with it, because a wider enum without them is a lie. `toYamlBody` writes a file
+> body as the list Bruno reads rather than a path string. A graphql request's `.bru` `meta` block now says
+> `type: graphql`, as Bruno's does — the `.bru` analogue of what **L10** fixed for `.yml`, and the `.yml` side
+> needs nothing because its generator already settles `info.type` from the body. And all three tools now share
+> **one** body schema: their copies had drifted, which is how `create_test_suite` came to accept a multipart
+> type while forwarding only `{type, content}` — the gap that made **L8**'s content fall-through reachable.
+>
+> Worth recording how nearly this shipped under-tested. Narrowing the enum back to six types killed exactly
+> one test, the surface snapshot, because every authoring test calls `createRequest` directly and never
+> touches zod — the same blind spot the defect itself lived in. Tests that parse through the registered
+> schemas took that mutant from 1 kill to 22. See [[cover-the-layer-the-caller-sees]].
 
 ### L19 — `create_crud_requests` accepts no auth. CONFIRMED. *(Found while fixing L3)*
 
@@ -1415,8 +1459,9 @@ posture decisions.
 18. **Test lint and typecheck debt**, in its own PR. The load-bearing part is not the error count — it is that
     `tests/` is neither linted nor type-checked, so **a type-only fix has no test that can go red**.
 
-19. **L18** — widen the body-type enums to the eleven the writer supports. Decision-free in principle but not a
-    one-liner: each newly accepted type needs an end-to-end test that the emitted file is one Bruno reads, and
-    `graphql` needs a way to carry variables, which `{type, content}` has no room for.
+19. ~~**L18** — widen the body-type enums to the eleven the writer supports.~~ **Done**, with `variables` and
+    `files` added to carry what the new types need, one shared body schema across the three tools, and
+    `meta { type: graphql }` on the `.bru` side. Scoping it turned up **H5**, live data loss in the `.yml`
+    file-body reader, which shipped in the same change because L18's file half sits on top of it.
 20. **L19** — give `create_crud_requests` an auth parameter. Small, and the only reason a generated CRUD set
     cannot be pointed at an authenticated API.
