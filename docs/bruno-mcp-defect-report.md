@@ -801,6 +801,36 @@ Only reachable now that M9 made the block authorable. It is upstream's behaviour
 Stated in the tool's field description rather than compensated, because compensating means writing a default the
 caller did not ask for, which is the same open decision as M9's second half. Take the two together.
 
+### L20 — a `.yml` request is written without the settings block Bruno always writes. CONFIRMED. FIXED. *(Found while withdrawing L15)*
+
+Upstream's `.yml` writer is unconditional: `stringifyHttpRequest.ts` builds `encodeUrl`, `timeout`,
+`followRedirects` and `maxRedirects` and assigns them for **every** request, defaulting to `true` / `0` /
+`true` / `5`. This server emitted the block only when the model carried one, which left two differences from a
+request Bruno created:
+
+- the block was missing, and
+- because the `.yml` reader treats an omitted `encodeUrl` as **true** while a *missing block* means false, the
+  request went out with its URL raw where Bruno sends it encoded.
+
+Same collection, two behaviours, decided by which tool wrote the request. This is the divergence L15 was
+reaching for from the wrong end — L15 blamed the reader, which is correct; the gap is in the writer.
+
+**FIXED**, with the keys assigned onto whatever the source already had rather than rebuilt from the four. A
+first cut constructed a fresh object and silently dropped `settings.tls` and `settings.proxy`; the round-trip
+fidelity guard caught it, which is the second time this session those guards have earned their place.
+Assigning to an existing property does not reorder it, so a document Bruno wrote is untouched and only its
+missing keys are appended.
+
+**The `.bru` writer is deliberately unchanged.** Upstream's `jsonToBru` is a passthrough, and 248 of the 275
+`.bru` files in upstream's own test collection carry no settings block at all. The dialects differ and this
+server differs with them — see the note under **L15**.
+
+**Behaviour change, stated plainly:** a `.yml` request created here now encodes its URL, and an existing `.yml`
+file gains the block on its next write, the same migrate-on-next-write pattern **L10** shipped.
+
+Uncovered **H6** on the way: writing `timeout: 0` faithfully made an existing execution test fail with a
+RangeError, which turned out to be a live crash on the `.bru` side that had nothing to do with this change.
+
 ### L16 — `.bru` `tags` cannot survive a rewrite: upstream's reader and writer disagree on its shape. CONFIRMED. *(Found while fixing M7)*
 
 `meta { tags: smoke }` is read by `bruToJsonV2` as the **string** `'smoke'`, and written back by
