@@ -273,15 +273,44 @@ describe('yaml-generator', () => {
       expect(yaml).not.toMatch(/data:/);
     });
 
-    it('drops an object field that becomes empty after cleaning', () => {
-      // settings is a truthy but empty object → stripEmpty returns undefined,
-      // so no `settings:` key is emitted.
+    it("carries an inherited timeout through rather than flattening it", () => {
+      // `inherit` is a legal timeout upstream (resolveTimeoutSetting returns it
+      // untouched). This server's input surface cannot produce one yet, but a
+      // file authored elsewhere can, and flattening it to 0 would silently
+      // change the request's meaning.
+      const yaml = generateYamlRequest({
+        info: { name: 'R' },
+        http: { method: 'GET', url: 'https://example.com' },
+        settings: { timeout: 'inherit' as unknown as number },
+      });
+
+      expect(yaml).toMatch(/timeout: inherit/);
+    });
+
+    it.each([-5, Number.NaN, Number.POSITIVE_INFINITY])(
+      'writes %p as 0, upstream\'s "no timeout"',
+      (timeout) => {
+        const yaml = generateYamlRequest({
+          info: { name: 'R' },
+          http: { method: 'GET', url: 'https://example.com' },
+          settings: { timeout },
+        });
+
+        expect(yaml).toMatch(/timeout: 0/);
+      },
+    );
+
+    it('still states the four settings for an empty settings object', () => {
+      // settings used to be pruned away when it cleaned down to nothing. It is
+      // no longer prunable: the .yml writer always states all four, as
+      // upstream's does, so an empty object is filled in rather than dropped.
       const yaml = generateYamlRequest({
         info: { name: 'R' },
         http: { method: 'GET', url: 'https://example.com' },
         settings: {},
       });
-      expect(yaml).not.toMatch(/settings:/);
+      expect(yaml).toMatch(/settings:/);
+      expect(yaml).toMatch(/encodeUrl: true/);
     });
   });
 

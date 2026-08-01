@@ -141,20 +141,41 @@ describe('authoring the settings block in .yml', () => {
     expect(doc.http).not.toHaveProperty('followRedirects');
   });
 
-  it('writes only the fields declared', async () => {
+  it('keeps the declared field and states the other three', async () => {
+    // The .yml writer is unconditional and complete, as upstream's is
+    // (stringifyHttpRequest.ts builds all four and assigns them for every
+    // request). Writing only the declared field left two differences from a
+    // request Bruno created: the missing keys, and — since the .yml reader
+    // treats an omitted encodeUrl as true while a missing block means false —
+    // a URL sent raw where Bruno sends it encoded.
     const collectionPath = await makeCollection('yaml');
     const { content } = await create(collectionPath, { settings: { timeout: 20000 } });
 
     const doc = parseYaml(content) as { settings?: Record<string, unknown> };
-    expect(doc.settings).toEqual({ timeout: 20000 });
+    expect(doc.settings).toEqual({
+      timeout: 20000,
+      encodeUrl: true,
+      followRedirects: true,
+      maxRedirects: 5,
+    });
   });
 
-  it('writes no settings mapping at all when none was declared', async () => {
+  it('writes the four defaults when none was declared', async () => {
     const collectionPath = await makeCollection('yaml');
     const { content } = await create(collectionPath);
 
-    const doc = parseYaml(content) as Record<string, unknown>;
-    expect(doc).not.toHaveProperty('settings');
+    const doc = parseYaml(content) as { settings?: Record<string, unknown> };
+    expect(doc.settings).toEqual({ encodeUrl: true, timeout: 0, followRedirects: true, maxRedirects: 5 });
+  });
+
+  it('leaves the .bru writer alone, which upstream keeps as a passthrough', async () => {
+    // The dialects differ and this server differs with them: jsonToBru writes
+    // only the keys the model holds, and 248 of the 275 .bru files in
+    // upstream's own test collection carry no settings block at all.
+    const collectionPath = await makeCollection('bru');
+    const { content } = await create(collectionPath);
+
+    expect(content).not.toContain('settings {');
   });
 });
 
@@ -184,7 +205,14 @@ describe('modify_request merges the settings block field by field', () => {
     expect(result.success).toBe(true);
 
     const doc = parseYaml(await fs.readFile(path, 'utf-8')) as { settings?: Record<string, unknown> };
-    expect(doc.settings).toEqual({ followRedirects: false, timeout: 20000 });
+    // The merge is still field by field; the other two are the writer's
+    // always-stated defaults, not something the merge invented.
+    expect(doc.settings).toEqual({
+      followRedirects: false,
+      timeout: 20000,
+      encodeUrl: true,
+      maxRedirects: 5,
+    });
   });
 
   it('overwrites a field that is declared again', async () => {
@@ -196,7 +224,12 @@ describe('modify_request merges the settings block field by field', () => {
     // 0 is falsy and is exactly the value worth writing down, so a
     // truthiness-guarded merge would drop it and leave the 3 in place.
     const doc = parseYaml(await fs.readFile(path, 'utf-8')) as { settings?: Record<string, unknown> };
-    expect(doc.settings).toEqual({ maxRedirects: 0 });
+    expect(doc.settings).toEqual({
+      maxRedirects: 0,
+      encodeUrl: true,
+      timeout: 0,
+      followRedirects: true,
+    });
   });
 
   it('leaves the settings block alone on an edit that does not mention it', async () => {
