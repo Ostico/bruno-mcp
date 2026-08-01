@@ -75,6 +75,9 @@ export function applyExtraKeys(
 export const YAML_REQUEST_KEYS: ReadonlySet<string> = new Set([
   'info',
   'http',
+  // Modelled as the request block for a graphql request. Omitting it here would
+  // carry the block in `extra` as well, emitting it twice.
+  'graphql',
   'runtime',
   'settings',
   'docs',

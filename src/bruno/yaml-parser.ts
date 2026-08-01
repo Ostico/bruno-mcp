@@ -38,6 +38,7 @@ import {
   YAML_RUNTIME_KEYS,
   YAML_SETTINGS_KEYS,
 } from './extra-keys.js';
+import { graphqlBodyFromYaml, YAML_GRAPHQL_KEYS } from './yaml-graphql-block.js';
 
 function safeParse(content: string, label: string): Record<string, unknown> {
   if (!content || !content.trim()) {
@@ -240,6 +241,38 @@ function parseHttpSection(raw: Record<string, unknown>): YamlHttp {
   return http;
 }
 
+/** Is this a plain object, as opposed to null, an array or a scalar? */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Read a top-level `graphql:` block into the same `YamlHttp` the rest of the code
+ * already works with.
+ *
+ * The block carries the request itself, so everything but the body is read exactly
+ * as the `http:` block's equivalent. Only the body differs: upstream stores
+ * `{ query, variables }` where the model uses a `{ type, data }` envelope.
+ */
+function parseGraphqlSection(raw: Record<string, unknown>): YamlHttp {
+  const http: YamlHttp = {
+    // Upstream defaults a graphql request to POST rather than GET.
+    method: typeof raw.method === 'string' && raw.method !== '' ? raw.method : 'POST',
+    url: String(raw.url ?? ''),
+    headers: parseHeaders(raw.headers),
+    body: graphqlBodyFromYaml(raw.body),
+    auth: parseAuth(raw.auth),
+  };
+
+  const params = parseParams(raw.params);
+  if (params.length > 0) http.params = params;
+
+  const extra = collectExtraKeys(raw, YAML_GRAPHQL_KEYS);
+  if (extra) http.extra = extra;
+
+  return http;
+}
+
 function parseParams(raw: unknown): YamlParam[] {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -366,11 +399,27 @@ function parseSettings(raw: unknown): YamlSettings | undefined {
 export function parseYamlRequest(content: string): YamlRequest {
   const doc = safeParse(content, 'request');
   const infoRaw = requireSection(doc, 'info', 'request');
-  const httpRaw = requireSection(doc, 'http', 'request');
+
+  // A graphql request lives in its own top-level `graphql:` block upstream, so
+  // either block satisfies the requirement. Both placements are accepted because
+  // every graphql `.yml` this server wrote before the writer was corrected put the
+  // request under `http:`, and those files still have to load.
+  const graphqlRaw = isRecord(doc.graphql) ? doc.graphql : undefined;
+  const httpRaw = isRecord(doc.http) ? doc.http : undefined;
+  if (!graphqlRaw && !httpRaw) {
+    throw new BrunoError(
+      'Missing required "http" section in request (or "graphql" for a graphql request)',
+      'PARSE_ERROR',
+    );
+  }
 
   const result: YamlRequest = {
     info: parseInfo(infoRaw),
-    http: parseHttpSection(httpRaw as Record<string, unknown>),
+    // Upstream's block wins when both are present: it is the one Bruno reads, so
+    // it is the one that describes the request as Bruno sees it.
+    http: graphqlRaw
+      ? parseGraphqlSection(graphqlRaw)
+      : parseHttpSection(httpRaw as Record<string, unknown>),
   };
 
   const runtime = parseRuntime(doc.runtime);

@@ -29,6 +29,11 @@ import {
   YAML_RUNTIME_KEYS,
   YAML_SETTINGS_KEYS,
 } from './extra-keys.js';
+import {
+  graphqlBodyToYaml,
+  isGraphqlRequest,
+  YAML_GRAPHQL_KEYS,
+} from './yaml-graphql-block.js';
 
 /**
  * Top-level keys Bruno separates with a blank line. Mirrors the list Bruno's own
@@ -163,42 +168,73 @@ export function generateYamlRequest(request: YamlRequest): string {
   const doc: Record<string, unknown> = {};
 
   // info section
+  const isGraphql = isGraphqlRequest(request.info.type, request.http.body);
+
   const info: Record<string, unknown> = { name: request.info.name };
-  if (request.info.type) info.type = request.info.type;
+  // `info.type` is what Bruno dispatches on, so it has to agree with the block
+  // written below. A graphql body under `info.type: http` would send the file to
+  // Bruno's http parser, which finds no `http:` block and reads the request as
+  // having no url and no query — so the type is settled from the body rather than
+  // trusted to match it.
+  if (isGraphql) {
+    info.type = 'graphql';
+  } else if (request.info.type) {
+    info.type = request.info.type;
+  }
   if (request.info.seq !== undefined) info.seq = request.info.seq;
   applyExtraKeys(info, request.info.extra, YAML_INFO_KEYS);
   doc.info = info;
 
-  // http section
-  const http: Record<string, unknown> = {
-    method: request.http.method,
-    url: request.http.url,
-  };
-  if (request.http.headers && request.http.headers.length > 0) {
-    http.headers = request.http.headers.map((h) => {
+  // http, or graphql — the request block. Bruno gives a graphql request its own
+  // top-level `graphql:` block and dispatches on `info.type` to choose a parser,
+  // so the two are alternatives rather than a body variant.
+  const headers = request.http.headers?.length
+    ? request.http.headers.map((h) => {
       const header: Record<string, unknown> = { name: h.name, value: h.value };
       if (h.disabled) header.disabled = true;
       applyExtraKeys(header, h.extra, YAML_HEADER_KEYS);
       return header;
-    });
-  }
-  if (request.http.body) {
-    http.body = stripEmpty(serialiseBody(request.http.body));
-  }
-  if (request.http.params && request.http.params.length > 0) {
-    http.params = request.http.params.map((p) => {
+    })
+    : undefined;
+
+  const params = request.http.params?.length
+    ? request.http.params.map((p) => {
       const param: Record<string, unknown> = { name: p.name, value: p.value };
       if (p.type) param.type = p.type;
       if (p.disabled) param.disabled = p.disabled;
       applyExtraKeys(param, p.extra, YAML_PARAM_KEYS);
       return param;
-    });
+    })
+    : undefined;
+
+  if (isGraphql) {
+    // Upstream's key order for this block, which differs from the http one:
+    // params come before body here, and after it there.
+    const graphql: Record<string, unknown> = {
+      method: request.http.method,
+      url: request.http.url,
+    };
+    if (headers) graphql.headers = headers;
+    if (params) graphql.params = params;
+    const graphqlBody = graphqlBodyToYaml(request.http.body);
+    if (graphqlBody) graphql.body = graphqlBody;
+    if (request.http.auth !== undefined) graphql.auth = request.http.auth;
+    applyExtraKeys(graphql, request.http.extra, YAML_GRAPHQL_KEYS);
+    doc.graphql = graphql;
+  } else {
+    const http: Record<string, unknown> = {
+      method: request.http.method,
+      url: request.http.url,
+    };
+    if (headers) http.headers = headers;
+    if (request.http.body) {
+      http.body = stripEmpty(serialiseBody(request.http.body));
+    }
+    if (params) http.params = params;
+    if (request.http.auth !== undefined) http.auth = request.http.auth;
+    applyExtraKeys(http, request.http.extra, YAML_HTTP_KEYS);
+    doc.http = http;
   }
-  if (request.http.auth !== undefined) {
-    http.auth = request.http.auth;
-  }
-  applyExtraKeys(http, request.http.extra, YAML_HTTP_KEYS);
-  doc.http = http;
 
   // runtime section — variables, scripts, assertions and actions, in upstream's
   // own key order. Only `scripts` used to live here; the other three were
