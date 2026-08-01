@@ -25,6 +25,7 @@ import {
 } from './types.js';
 import { toHttpMethod, normalizeBodyType } from './parse-guards.js';
 import { applyExtraKeys, BRU_META_KEYS, collectExtraKeys } from './extra-keys.js';
+import { toFormUrlEncodedEntries } from './request-inputs.js';
 
 const MAX_SCRIPT_SIZE = 50_000;
 
@@ -371,6 +372,70 @@ function carriedMetaKeys(extra: Record<string, unknown> | undefined): Record<str
   return carried;
 }
 
+/**
+ * What to emit for a body the model carries only as `content`.
+ *
+ * The generator's body chain is presence-based: it looks for `body.graphql`,
+ * `body.formUrlEncoded`, `body.file` and so on, and falls through to `content`
+ * for everything else. That fall-through used to write `{ [mode]: content }`
+ * with the model's own kebab-case mode as the key, which is right for exactly
+ * four of the eleven body types and wrong for the rest:
+ *
+ * - `file` — `@usebruno/lang` tests `body.file.length` and then calls
+ *   `enabled(body.file, 'selected')`. A string passes the length test and dies
+ *   in the filter with `items.filter is not a function`, so writing the file
+ *   threw instead of writing a body.
+ * - `form-urlencoded`, `multipart-form`, `form-data` — the key upstream reads
+ *   is camelCase (`formUrlEncoded`, `multipartForm`), so a kebab-case key
+ *   matched nothing and the body vanished silently. The mode token in the
+ *   `http` block stayed kebab-case too, which Bruno does not recognise; the
+ *   two structured branches above restore it for exactly this reason.
+ * - `graphql` — upstream reads `body.graphql.query`, absent on a string, so
+ *   the query was dropped.
+ *
+ * Nothing reaches this from the tool surface today: `toBruBody` in
+ * `request-inputs.ts` fills the structured field as well as `content`, so the
+ * branch above always wins. It is still the shape our own `BruBody` type
+ * declares legal, which makes it a live trap for the next caller.
+ *
+ * The conversions here are not invented: they mirror what `toBruBody` already
+ * decided for the same input — a `file` body's `content` is a file path, and a
+ * `graphql` body's `content` is the query — so both paths produce one file.
+ * `form-urlencoded` reuses `toFormUrlEncodedEntries` rather than parsing the
+ * string again, so the two cannot drift.
+ *
+ * Body types with no scalar reading (`multipart-form`, `form-data`) return the
+ * mode alone: a bare string cannot name parts, and emitting a block upstream
+ * drops is worse than emitting none. `binary` and `none` return nothing, since
+ * Bruno has no body block for either.
+ */
+function bodyFromContent(
+  mode: BodyType,
+  content: string,
+): { mode?: string; body?: Record<string, unknown> } {
+  switch (mode) {
+    case 'json':
+    case 'text':
+    case 'xml':
+    case 'sparql':
+      return { body: { [mode]: content } };
+    case 'graphql':
+      return { body: { graphql: { query: content } } };
+    case 'file':
+      return { body: { file: [{ filePath: content, contentType: '', selected: true }] } };
+    case 'form-urlencoded':
+      return {
+        mode: 'formUrlEncoded',
+        body: { formUrlEncoded: toFormUrlEncodedEntries({ type: 'form-urlencoded', content }) ?? [] },
+      };
+    case 'form-data':
+    case 'multipart-form':
+      return { mode: 'multipartForm' };
+    default:
+      return {};
+  }
+}
+
 export function generateBruRequest(bruFile: BruFile): string {
   const json: Record<string, unknown> = {
     meta: {
@@ -486,7 +551,9 @@ export function generateBruRequest(bruFile: BruFile): string {
       })),
     };
   } else if (bruFile.body?.content) {
-    json.body = { [bruFile.http.body]: bruFile.body.content };
+    const converted = bodyFromContent(bruFile.http.body, bruFile.body.content);
+    if (converted.mode) (json.http as Record<string, unknown>).body = converted.mode;
+    if (converted.body) json.body = converted.body;
   }
 
   const script: Record<string, string> = {};
