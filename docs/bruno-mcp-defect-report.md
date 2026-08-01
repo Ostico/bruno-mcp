@@ -132,6 +132,12 @@ skipped rather than failing the run; jar cookies merged over a `Cookie` header t
 the jar winning a same-name clash and the caller's own header name preserved; cookies stored from 4XX/5XX
 responses too, since a failed login still sets the cookie the next request needs.
 
+> **Superseded on the clash, and only on the clash.** The same-name precedence quoted above was accurate when
+> H2 landed and is no longer the behaviour: **M11** flipped it, so a `Cookie` header the request wrote itself
+> now wins that clash and the jar only adds names the request did not set. Everything else in this section still
+> holds — loose parsing, `ignoreError`, the preserved header name, 4XX/5XX storage. See M11's resolution note
+> for the argument, since the flip is a deliberate divergence from upstream rather than a correction to it.
+
 **Where it goes beyond copying upstream, and why:**
 
 - **Scope.** Upstream keeps a module-level singleton jar, which is right for a CLI process that exits after one
@@ -478,7 +484,7 @@ interleave.
 Cheapest honest shape: an opt-in shared-state mode on `run_collection`, explicitly non-Bruno and documented as
 such, with per-folder isolation staying the default.
 
-### M11 — the cookie jar overrides a `Cookie` header the request set itself. CONFIRMED. *(User-reported)*
+### M11 — the cookie jar overrides a `Cookie` header the request set itself. CONFIRMED. FIXED. *(User-reported)*
 
 Reported as "the jar replays stored cookies alongside explicit Cookie headers", and the mechanism is sharper
 than that: `mergeCookieHeader` (`cookie-jar.ts:63`) lets **the jar win on a same-named cookie**, by design —
@@ -496,6 +502,50 @@ Two candidate fixes, and the choice is a real one: flip the precedence so an exp
 (diverges from upstream, but the explicit value is the author's stated intent), or leave the jar alone for any
 request that writes its own `Cookie` header. Either way it needs saying in the tool description, which
 currently promises only that the jar is per-run and host-matched.
+
+**Resolution.** The first candidate, at cookie-name granularity rather than per request. `mergeCookieHeader`
+now keeps the **request's** value for a name the request wrote itself, still **adds** a name only the jar
+knows, and leaves a request carrying no `Cookie` header on its existing untouched path. Emission order is
+unchanged — the map is still seeded from the authored header, so authored names keep their positions and
+jar-only names are appended after them. Only which value wins changed, not the bytes' layout.
+
+The second candidate — leave the jar out of any request that writes its own `Cookie` header — was rejected
+because it is too blunt in the direction that costs a run: a request pinning one credential and *also* needing
+the CSRF token the jar holds would silently lose the token, which is H2's original symptom returning under a
+new cause.
+
+**Divergence from upstream, stated rather than absorbed.** Bruno's CLI builds
+`{ ...parseCookies(existingCookieString), ...parseCookies(cookieString) }`
+(`bruno-cli/src/runner/run-single-request.js:465-500`) — the jar spread last, so the jar wins. Freshness is the
+right tie-breaker for every name nobody authored, and the jar still owns those. Where the two disagree about a
+name, author intent is both the better guess at what the run is meant to test and the only one of the two a
+reader can see in the collection: a jar value came from a response several requests ago and appears nowhere in
+the files. Argued in the `mergeCookieHeader` docblock, in the enumerated divergence list at the top of
+`cookie-jar.ts` (which said "one" and now says two), and in the `cookieJar` tool description and README entry.
+
+**A warning was added, and the argument for it.** A request whose authored value displaced a stored one names
+the cookie — never its value — in that request's `warnings`, collected in a `Set` across redirect hops so a
+chain that re-applies the jar per hop reports one fact once. The reason is that this fix creates a mirror bug:
+an author who *wanted* the fresh server value and does not realise a hand-written header now outranks it hits
+the same silent-wrong-answer class as M11, pointing the other way, and the warning is its only signal. It is
+also the only place a reader learns the run diverged from what `bru run` would have sent on the same files.
+
+The objection considered was noise, specifically incoherence with `SINGLE_VALUE_HEADERS`
+(`request-headers.ts`), which excludes `cookie` from duplicate-header detection *on purpose* because repeating
+it is normal authoring. That exclusion is about repeated **field lines in one file** — a style choice with no
+behavioural consequence, since `appendHeader` joins them per RFC 6265 §5.4 and the wire bytes are correct
+either way. This warning is about a **precedence decision between two sources**, one of which is invisible in
+the collection. Different fact, so both rules stand unchanged. It cannot fire on an ordinary login flow, which
+authors no `Cookie` header at all and so never reaches the merge — pinned by a test asserting empty `warnings`
+for every request in exactly that run. The narrowest case that *does* warn is a hand-rolled `set-cookie` relay,
+which is the boilerplate H2 exists to remove, so naming it is the point rather than the cost.
+
+Two existing tests had pinned the *old* order — one at the unit level, one end-to-end — so the wrong precedence
+was deliberate and defended at both levels rather than merely untested; both now assert the opposite. Mutation
+tested: reverting the precedence turns six tests red, removing the warning collection turns four red while
+every precedence test stays green, and a third mutant (removing the per-hop de-duplication) initially
+**survived**, because asserting "one warning entry" cannot see a name repeated *inside* one warning string.
+That test now asserts the name appears exactly once in the message.
 
 ### Field report 2026-08-01 — the claims that were checked and NOT filed
 
@@ -897,11 +947,16 @@ What an agent needs and does not have. Direct field feedback first.
     It is also the blocker behind the script-timeout cap: 5000ms is liftable only through `settings.timeout`,
     and a script that exceeds it fails the whole request with `status: 0`, `tests: []` rather than warning. Two
     findings, one schema change.
-8c. **M11** — stop the cookie jar overwriting a `Cookie` header the request wrote itself, or leave the jar out
+8c. ~~**M11** — stop the cookie jar overwriting a `Cookie` header the request wrote itself, or leave the jar out
     of any request that writes one. Ranked here rather than lower because of its direction: it makes a
     contaminated run read **greener** than reality, and two of the reporter's assertions passed against the
     wrong identity before they noticed. Cheap next to M9, and it needs the tool description updated with
-    whichever precedence wins.
+    whichever precedence wins.~~ **Done.** The precedence was flipped rather than the jar bypassed, at cookie-name
+    granularity: an authored name keeps its value, a jar-only name is still added, so pinning one credential no
+    longer costs the CSRF token the jar holds. A deliberate divergence from upstream, argued in the code and in
+    the tool description and README as this list required. Cheap as predicted; the surprise was that two existing
+    tests had *pinned* the old order, so it was defended rather than merely untested. See the resolution note
+    under M11.
 8d. **M10** — an opt-in shared-state concurrency mode. Larger, and the only item here with no upstream answer to
     copy: Bruno has no concurrency at all, so folder parallelism is already ours and shared state means defining
     semantics upstream never had to. Do it after M9 and M11, and expect it to be a design discussion rather
