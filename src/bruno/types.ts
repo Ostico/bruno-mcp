@@ -122,6 +122,16 @@ export interface BruMeta {
   name: string;
   type: 'http' | 'graphql';
   seq?: number;
+  /**
+   * Keys of the `meta` block this model does not name, carried so a
+   * read-modify-write writes them back instead of deleting them.
+   *
+   * Only unmodelled keys *inside* a block can be carried on the `.bru` side:
+   * upstream's serializer emits a dictionary block key by key but drops a
+   * top-level block it does not recognise, so there is nowhere to put one. See
+   * `extra-keys.ts`.
+   */
+  extra?: Record<string, unknown>;
 }
 
 // HTTP request configuration
@@ -560,11 +570,15 @@ export interface YamlInfo {
   name: string;
   type?: 'http' | 'graphql' | 'folder';
   seq?: number;
+  /** Unmodelled `info` keys, carried through a write. See `extra-keys.ts`. */
+  extra?: Record<string, unknown>;
 }
 
 export interface YamlHeader {
   name: string;
   value: string;
+  /** Unmodelled keys on this header entry, carried through a write. */
+  extra?: Record<string, unknown>;
   /**
    * A header the author switched off. It must survive a round-trip and must not
    * be sent: dropping the flag silently re-armed a header the user
@@ -614,6 +628,8 @@ export interface YamlHttp {
   body?: YamlBody;
   params?: YamlParam[];
   auth?: YamlAuth;
+  /** Unmodelled `http` keys, carried through a write. See `extra-keys.ts`. */
+  extra?: Record<string, unknown>;
 }
 
 export interface YamlParam {
@@ -621,6 +637,8 @@ export interface YamlParam {
   value: string;
   type?: 'query' | 'path';
   disabled?: boolean;
+  /** Unmodelled keys on this param entry, carried through a write. */
+  extra?: Record<string, unknown>;
 }
 
 /**
@@ -635,6 +653,14 @@ export interface YamlScript {
 
 export interface YamlRuntime {
   scripts: YamlScript[];
+  /**
+   * Unmodelled `runtime` keys, carried through a write.
+   *
+   * The other three blocks upstream puts here — `variables`, `assertions` and
+   * `actions` — are modelled on `YamlRequest` itself rather than here, so they
+   * are named in `YAML_RUNTIME_KEYS` and never land in this bag.
+   */
+  extra?: Record<string, unknown>;
 }
 
 export interface TlsSettings {
@@ -651,6 +677,8 @@ export interface YamlSettings {
   maxRedirects?: number;
   tls?: TlsSettings;
   proxy?: string;
+  /** Unmodelled `settings` keys, carried through a write. */
+  extra?: Record<string, unknown>;
 }
 
 /** An `assert` entry in a .yml request. */
@@ -690,6 +718,14 @@ export interface YamlRequest {
   assert?: YamlAssertion[];
   /** Pre-request and post-response vars, preserved across a round-trip. */
   vars?: YamlVars;
+  /**
+   * Top-level blocks this model does not name, carried through a write.
+   *
+   * This is where `examples` lands, and every other block Bruno's grammar has
+   * or grows — `graphql`, `grpc`, `websocket`, `items`, `request`. Without it a
+   * `modify_request` on a Bruno-authored file deletes them. See `extra-keys.ts`.
+   */
+  extra?: Record<string, unknown>;
 }
 
 export interface YamlFolder {

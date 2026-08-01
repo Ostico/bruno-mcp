@@ -28,6 +28,16 @@ import {
   postResponseVarsFromYaml,
   variablesFromYaml,
 } from './yaml-runtime-blocks.js';
+import {
+  collectExtraKeys,
+  YAML_HEADER_KEYS,
+  YAML_HTTP_KEYS,
+  YAML_INFO_KEYS,
+  YAML_PARAM_KEYS,
+  YAML_REQUEST_KEYS,
+  YAML_RUNTIME_KEYS,
+  YAML_SETTINGS_KEYS,
+} from './extra-keys.js';
 
 function safeParse(content: string, label: string): Record<string, unknown> {
   if (!content || !content.trim()) {
@@ -74,11 +84,14 @@ function requireSection(
 }
 
 function parseInfo(raw: Record<string, unknown>): YamlInfo {
-  return {
+  const info: YamlInfo = {
     name: String(raw.name ?? ''),
     type: raw.type as YamlInfo['type'],
     seq: typeof raw.seq === 'number' ? raw.seq : undefined,
   };
+  const extra = collectExtraKeys(raw, YAML_INFO_KEYS);
+  if (extra) info.extra = extra;
+  return info;
 }
 
 function parseHeaders(raw: unknown): YamlHeader[] | undefined {
@@ -91,6 +104,8 @@ function parseHeaders(raw: unknown): YamlHeader[] | undefined {
     // Without this the flag was dropped at parse time and the header came back
     // enabled, so a disabled credential header got sent.
     if (h.disabled === true) header.disabled = true;
+    const extra = collectExtraKeys(h, YAML_HEADER_KEYS);
+    if (extra) header.extra = extra;
     return header;
   });
 }
@@ -219,6 +234,9 @@ function parseHttpSection(raw: Record<string, unknown>): YamlHttp {
   const params = parseParams(raw.params);
   if (params.length > 0) http.params = params;
 
+  const extra = collectExtraKeys(raw, YAML_HTTP_KEYS);
+  if (extra) http.extra = extra;
+
   return http;
 }
 
@@ -234,6 +252,8 @@ function parseParams(raw: unknown): YamlParam[] {
       };
       if (p.type === 'path' || p.type === 'query') param.type = p.type;
       if (p.disabled === true) param.disabled = true;
+      const extra = collectExtraKeys(p, YAML_PARAM_KEYS);
+      if (extra) param.extra = extra;
       return param;
     });
 }
@@ -286,18 +306,23 @@ function parseRuntime(raw: unknown): YamlRuntime | undefined {
 
   // Only the scripts half is modelled here. Variables, assertions and actions
   // live in the same block but are read straight off the raw document by the
-  // caller, so returning undefined for a script-less runtime block loses
-  // nothing — `YamlRuntime` is scripts and nothing else.
-  if (!Array.isArray(obj.scripts) || obj.scripts.length === 0) return undefined;
-
-  const scripts: YamlScript[] = obj.scripts.map(
+  // caller, so a script-less runtime block loses nothing by carrying no scripts.
+  const rawScripts = Array.isArray(obj.scripts) ? obj.scripts : [];
+  const scripts: YamlScript[] = rawScripts.map(
     (s: Record<string, unknown>) => ({
       type: String(s.type ?? 'after-response') as YamlScript['type'],
       code: String(s.code ?? ''),
     }),
   );
 
-  return { scripts };
+  // A runtime block carrying only keys we do not model still has to come back,
+  // or the generator has nowhere to write them from and they are deleted.
+  const extra = collectExtraKeys(obj, YAML_RUNTIME_KEYS);
+  if (scripts.length === 0 && !extra) return undefined;
+
+  const runtime: YamlRuntime = { scripts };
+  if (extra) runtime.extra = extra;
+  return runtime;
 }
 
 function parseTlsSettings(raw: unknown): TlsSettings | undefined {
@@ -332,6 +357,9 @@ function parseSettings(raw: unknown): YamlSettings | undefined {
   if (tls) settings.tls = tls;
   if (typeof obj.proxy === 'string') settings.proxy = obj.proxy;
 
+  const extra = collectExtraKeys(obj, YAML_SETTINGS_KEYS);
+  if (extra) settings.extra = extra;
+
   return settings;
 }
 
@@ -354,6 +382,12 @@ export function parseYamlRequest(content: string): YamlRequest {
   if (typeof doc.docs === 'string') {
     result.docs = doc.docs;
   }
+
+  // Top-level blocks this model does not name — `examples` above all, which
+  // Bruno's own reader understands. Rebuilding the document from the model on
+  // every write deleted them.
+  const docExtra = collectExtraKeys(doc, YAML_REQUEST_KEYS);
+  if (docExtra) result.extra = docExtra;
 
   // Variables, assertions and post-response actions live inside `runtime`, which
   // is where Bruno reads them. Earlier versions of this server wrote them at the

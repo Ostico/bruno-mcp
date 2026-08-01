@@ -24,6 +24,7 @@ import {
   type BruOAuth2ParamTarget,
 } from './types.js';
 import { toHttpMethod, normalizeBodyType } from './parse-guards.js';
+import { applyExtraKeys, BRU_META_KEYS, collectExtraKeys } from './extra-keys.js';
 
 const MAX_SCRIPT_SIZE = 50_000;
 
@@ -70,6 +71,8 @@ export function parseBruRequest(content: string): BruFile {
     const seq = typeof json.meta.seq === 'string' ? parseInt(json.meta.seq, 10) : json.meta.seq;
     if (!isNaN(seq)) meta.seq = seq;
   }
+  const metaExtra = collectExtraKeys(json.meta, BRU_META_KEYS);
+  if (metaExtra) meta.extra = metaExtra;
 
   // Checked, not asserted: the block name is whatever the file contained.
   const method = toHttpMethod(json.http?.method);
@@ -305,6 +308,10 @@ function readRequestSettings(value: unknown): BruRequestSettings | undefined {
   if (typeof raw.maxRedirects === 'number') {
     settings.maxRedirects = raw.maxRedirects;
   }
+  // No carried keys here, unlike the meta block: upstream's own .bru reader
+  // models this block's fields explicitly and drops an unrecognised one before
+  // we ever see it (it also injects `timeout: 0`). Nothing reaches this function
+  // to carry, so there is nothing to keep. See `extra-keys.ts`.
   return Object.keys(settings).length > 0 ? settings : undefined;
 }
 
@@ -357,6 +364,13 @@ function readOAuth2AdditionalParams(
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
+/** The carried meta keys, filtered the way the generator's own writes require. */
+function carriedMetaKeys(extra: Record<string, unknown> | undefined): Record<string, unknown> {
+  const carried: Record<string, unknown> = {};
+  applyExtraKeys(carried, extra, BRU_META_KEYS);
+  return carried;
+}
+
 export function generateBruRequest(bruFile: BruFile): string {
   const json: Record<string, unknown> = {
     meta: {
@@ -367,6 +381,13 @@ export function generateBruRequest(bruFile: BruFile): string {
       // the literal text "seq: undefined" — a value, and not a number. Absent
       // has to mean absent.
       ...(bruFile.meta.seq != null ? { seq: String(bruFile.meta.seq) } : {}),
+      // Keys of the meta block this model does not name. The serializer walks a
+      // dictionary block's keys, so an unmodelled one survives here — unlike an
+      // unmodelled top-level block, which it drops outright.
+      //
+      // Through applyExtraKeys rather than a spread: a spread would let a stale
+      // carried `name` win over the one the caller just set.
+      ...carriedMetaKeys(bruFile.meta.extra),
     },
     http: {
       method: bruFile.http.method.toLowerCase(),
