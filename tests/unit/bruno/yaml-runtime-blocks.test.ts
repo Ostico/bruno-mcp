@@ -197,6 +197,10 @@ describe('post-response variables are set-variable actions', () => {
   });
 
   it('ignores an action that is not a set-variable, rather than mistranslating it', () => {
+    // The action carries a usable `variable.name` on purpose. Without one it is
+    // dropped by the name check at the end regardless of its type, so the test
+    // passes with the type filter deleted — which is exactly what a mutation
+    // run caught.
     const parsed = parseYamlRequest(`${INFO}${HTTP}runtime:
   actions:
     - type: something-else
@@ -204,6 +208,9 @@ describe('post-response variables are set-variable actions', () => {
       selector:
         expression: res.body.id
         method: jsonq
+      variable:
+        name: orderId
+        scope: runtime
 `);
 
     expect(parsed.vars).toBeUndefined();
