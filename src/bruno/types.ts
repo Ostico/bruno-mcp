@@ -381,6 +381,27 @@ export interface RequestVarInput {
   local?: boolean;
 }
 
+/**
+ * The request-level `settings` block as the MCP tools accept it.
+ *
+ * Unusually for this file there is no polarity or naming difference between the
+ * two dialects: `.bru` writes these four as bare `key: value` lines inside a
+ * `settings { }` block, `.yml` writes them as a top-level `settings:` mapping,
+ * and both spell every key and type the same way. So this shape needs no
+ * conversion on either path — it is carried through as-is.
+ *
+ * Every field is optional and an omitted field means an absent key, not a
+ * default written down. A request authored with no settings at all carries no
+ * settings block, which is what Bruno itself writes; the executor's fallbacks
+ * (redirects followed, 10-hop cap, 5000ms script budget) then apply.
+ */
+export interface RequestSettingsInput {
+  timeout?: number;
+  followRedirects?: boolean;
+  maxRedirects?: number;
+  encodeUrl?: boolean;
+}
+
 export interface CreateRequestInput {
   collectionPath: string;
   name: string;
@@ -422,6 +443,14 @@ export interface CreateRequestInput {
     preRequest?: RequestVarInput[];
     postResponse?: RequestVarInput[];
   };
+  /**
+   * The request-level `settings` block: transport behaviour, not payload.
+   *
+   * Merged field-by-field on update rather than replaced, so raising the timeout
+   * does not silently re-enable redirect following. Omitted entirely on create
+   * unless the caller asks for it.
+   */
+  settings?: RequestSettingsInput;
   folder?: string;
   sequence?: number;
   /**

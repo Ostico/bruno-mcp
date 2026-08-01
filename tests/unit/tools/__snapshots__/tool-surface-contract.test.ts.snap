@@ -3,7 +3,7 @@
 exports[`MCP tool surface contract matches the recorded surface exactly (titles, descriptions, schemas): mcp-tool-surface 1`] = `
 {
   "add_test_script": {
-    "description": "Add pre-request, post-response, or tests scripts to a Bruno request. Canonical scriptType values are pre-request/post-response/tests; the aliases before-request (→ pre-request) and after-response (→ post-response) are also accepted. Appends to any existing script of that type by default — pass scriptMode:"replace" to overwrite it, or use remove_script to clear it. Assertions must be wrapped in test("name", function() { ... }) to be reported. Scripts run as async functions: top-level await works, and bru.sleep(ms), setTimeout and setInterval are available. Time spent waiting counts against the script timeout (settings.timeout, default 5000ms).",
+    "description": "Add pre-request, post-response, or tests scripts to a Bruno request. Canonical scriptType values are pre-request/post-response/tests; the aliases before-request (→ pre-request) and after-response (→ post-response) are also accepted. Appends to any existing script of that type by default — pass scriptMode:"replace" to overwrite it, or use remove_script to clear it. Assertions must be wrapped in test("name", function() { ... }) to be reported. Scripts run as async functions: top-level await works, and bru.sleep(ms), setTimeout and setInterval are available. Time spent waiting counts against the script timeout (settings.timeout, default 5000ms); raise it with modify_request's settings argument.",
     "schema": {
       "bruFilePath": "string",
       "script": "string",
@@ -44,7 +44,7 @@ exports[`MCP tool surface contract matches the recorded surface exactly (titles,
     "title": "Create Bruno Environment",
   },
   "create_request": {
-    "description": "Generate request files for API testing (supports .bru and .yml formats). Supports multipart/form-data with file uploads and per-part contentType (body.type "form-data" with formData entries of type "file"), and inline scripts (pre-request/post-response/tests) so no separate add_test_script call is needed. Scripts run as async functions: top-level await works, and bru.sleep(ms)/setTimeout/setInterval are available, spending the script timeout (settings.timeout, default 5000ms).",
+    "description": "Generate request files for API testing (supports .bru and .yml formats). Supports multipart/form-data with file uploads and per-part contentType (body.type "form-data" with formData entries of type "file"), and inline scripts (pre-request/post-response/tests) so no separate add_test_script call is needed. Scripts run as async functions: top-level await works, and bru.sleep(ms)/setTimeout/setInterval are available, spending the script timeout (settings.timeout, default 5000ms) — raise it via the settings argument.",
     "schema": {
       "assert": "{ disabled: boolean?; name: string; value: string }[]?",
       "auth": "{ config: record<string>; type: enum(none|bearer|basic|oauth2|api-key|digest|inherit) }?",
@@ -58,6 +58,7 @@ exports[`MCP tool surface contract matches the recorded surface exactly (titles,
       "query": "record<union(string | number | boolean)>?",
       "scripts": "{ after-response: string?; before-request: string?; post-response: string?; pre-request: string?; tests: string? }?",
       "sequence": "number?",
+      "settings": "{ encodeUrl: boolean?; followRedirects: boolean?; maxRedirects: number?; timeout: number? }?",
       "url": "string",
       "vars": "{ postResponse: { disabled: boolean?; local: boolean?; name: string; value: string }[]?; preRequest: { disabled: boolean?; local: boolean?; name: string; value: string }[]? }?",
     },
@@ -116,6 +117,7 @@ exports[`MCP tool surface contract matches the recorded surface exactly (titles,
       "query": "record<union(string | number | boolean)>?",
       "scriptMode": "enum(replace|append)? = "replace"",
       "scripts": "{ after-response: string?; before-request: string?; post-response: string?; pre-request: string?; tests: string? }?",
+      "settings": "{ encodeUrl: boolean?; followRedirects: boolean?; maxRedirects: number?; timeout: number? }?",
       "url": "string?",
       "vars": "{ postResponse: { disabled: boolean?; local: boolean?; name: string; value: string }[]?; preRequest: { disabled: boolean?; local: boolean?; name: string; value: string }[]? }?",
     },

@@ -75,3 +75,51 @@ export const requestVarsSchema = z.object({
   preRequest: z.array(varEntrySchema).optional(),
   postResponse: z.array(varEntrySchema).optional(),
 }).optional();
+
+/**
+ * The request-level `settings` block, shared by create_request and
+ * modify_request. Transport behaviour, not payload.
+ *
+ * Every field is optional and omitting one writes no key for it, leaving the
+ * runtime fallback described in each field below. On modify_request the fields
+ * are merged one by one over what the file already had, so setting one does not
+ * clear the others.
+ */
+export const requestSettingsSchema = z.object({
+  timeout: z.number().int().nonnegative().optional().describe(
+    'Milliseconds, capping two separate things. The HTTP request itself, which ' +
+    'defaults to 30000ms when unset. And the per-script budget shared by ' +
+    'pre-request, post-response and tests code, including time spent in bru.sleep, ' +
+    'setTimeout and setInterval, which defaults to 5000ms when unset — a script ' +
+    'that waits longer than its budget is aborted, and setting this is the only way ' +
+    'to lift that 5000ms cap. 0 means no timeout at all.'
+  ),
+  followRedirects: z.boolean().optional().describe(
+    'Whether a 3xx Location is followed. REDIRECTS ARE FOLLOWED WHEN THIS IS UNSET. ' +
+    'Set false to receive the 3xx response itself. This matters for more than the ' +
+    'status code: a Set-Cookie issued on the 3xx is consumed by the redirect hop and ' +
+    'is not visible on the final response, so a login or password-reset endpoint that ' +
+    'returns its session cookie alongside a 302 looks like it issued no cookie at all, ' +
+    'and the following request fails as unauthenticated. Set false whenever you need ' +
+    'to read the headers of the redirect itself.'
+  ),
+  maxRedirects: z.number().int().nonnegative().optional().describe(
+    'Maximum redirect hops to follow. Defaults to 10 when unset. Irrelevant once ' +
+    'followRedirects is false; 0 likewise stops the first hop being followed.'
+  ),
+  encodeUrl: z.boolean().optional().describe(
+    'Whether the URL and query string are percent-encoded before the request is sent. ' +
+    'Read the whole of this before setting any other field here, because the default ' +
+    'is two-valued and reproduces upstream Bruno: a request with NO settings block ' +
+    'sends its URL raw (off), but a request that HAS a settings block not mentioning ' +
+    'encodeUrl encodes it (on). So adding a settings block for some other reason — ' +
+    'say to set timeout on a request that had no settings before — turns URL encoding ' +
+    'on as a side effect. Pass encodeUrl: false alongside to keep the URL raw.'
+  ),
+}).optional().describe(
+  'Request-level settings: transport behaviour (timeouts, redirects, URL encoding), ' +
+  'not payload. Written only when supplied — a request authored without it carries no ' +
+  'settings block, matching what Bruno itself writes. On modify_request the fields are ' +
+  'merged individually over the existing block, so setting one does not clear the rest. ' +
+  'Note the encodeUrl field: creating a block at all changes the URL-encoding default.'
+);

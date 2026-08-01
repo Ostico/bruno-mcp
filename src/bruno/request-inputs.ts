@@ -23,6 +23,7 @@ import {
   FormUrlEncodedPart,
   MultipartFormPart,
   RequestAssertionInput,
+  RequestSettingsInput,
   RequestVarInput,
   YamlAssertion,
   YamlBody,
@@ -436,4 +437,37 @@ export function varsToYamlVars(
     ...(vars.preRequest ? { preRequest: convert(vars.preRequest) } : {}),
     ...(vars.postResponse ? { postResponse: convert(vars.postResponse) } : {}),
   };
+}
+
+/**
+ * Merge a declared `settings` block over whatever the file already had.
+ *
+ * Per-field merge, following `varsToBruVarSets` above: an absent field leaves
+ * the stored value alone rather than deleting it. `assert` is the other
+ * available precedent and replaces its whole block, but that fits a list whose
+ * entries are only meaningful together — settings are four unrelated switches,
+ * and replacing the block would mean raising the script timeout silently turned
+ * redirect following back on, which is the kind of edit whose damage only shows
+ * up as a lost cookie one request later.
+ *
+ * `undefined` is tested for explicitly rather than relying on the key being
+ * absent: `followRedirects: false` and `maxRedirects: 0` are exactly the values
+ * worth writing down and both are falsy, and a handler invoked directly rather
+ * than through schema validation can hand us a key that is present and
+ * undefined.
+ *
+ * Generic over the stored shape so both dialects share it. `.yml` settings also
+ * carry `tls` and `proxy`, which are not authorable here; spreading the existing
+ * block first preserves them.
+ */
+export function mergeRequestSettings<T extends RequestSettingsInput>(
+  existing: T | undefined,
+  updates: RequestSettingsInput,
+): T {
+  const merged = { ...(existing ?? {}) } as T;
+  if (updates.timeout !== undefined) merged.timeout = updates.timeout;
+  if (updates.followRedirects !== undefined) merged.followRedirects = updates.followRedirects;
+  if (updates.maxRedirects !== undefined) merged.maxRedirects = updates.maxRedirects;
+  if (updates.encodeUrl !== undefined) merged.encodeUrl = updates.encodeUrl;
+  return merged;
 }

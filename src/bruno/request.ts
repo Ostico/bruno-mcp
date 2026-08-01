@@ -35,6 +35,7 @@ import {
   assertionsToBru,
   assertionsToYaml,
   mergeBruHeaderList,
+  mergeRequestSettings,
   mergeYamlHeaderList,
   pathParamsToBruParams,
   pathParamsToYamlParams,
@@ -224,6 +225,9 @@ export class RequestBuilder {
         }
         if (updates.vars) {
           yamlReq.vars = varsToYamlVars(updates.vars, yamlReq.vars);
+        }
+        if (updates.settings) {
+          yamlReq.settings = mergeRequestSettings(yamlReq.settings, updates.settings);
         }
 
         const updatedContent = generateYamlRequest(yamlReq);
@@ -478,6 +482,14 @@ export class RequestBuilder {
       bruFile.varSets = varsToBruVarSets(input.vars, bruFile.varSets);
     }
 
+    // Only when asked for. A request created without settings gets no settings
+    // block, matching what Bruno's own writer produces; writing the executor's
+    // fallbacks out as explicit keys would make every created request differ
+    // from a hand-authored one.
+    if (input.settings) {
+      bruFile.settings = mergeRequestSettings(bruFile.settings, input.settings);
+    }
+
     // Add body if provided
     if (input.body && input.body.type !== 'none') {
       bruFile.body = toBruBody(input.body);
@@ -566,6 +578,11 @@ export class RequestBuilder {
 
     if (input.vars) {
       yamlRequest.vars = varsToYamlVars(input.vars, yamlRequest.vars);
+    }
+
+    // Same as the .bru path: no block at all unless the caller declared one.
+    if (input.settings) {
+      yamlRequest.settings = mergeRequestSettings(yamlRequest.settings, input.settings);
     }
 
     // Add auth
@@ -714,6 +731,10 @@ export class RequestBuilder {
 
     if (updates.vars) {
       updated.varSets = varsToBruVarSets(updates.vars, updated.varSets);
+    }
+
+    if (updates.settings) {
+      updated.settings = mergeRequestSettings(updated.settings, updates.settings);
     }
 
     if (updates.body) {

@@ -166,6 +166,20 @@ describe('modify_request tool handler', () => {
       );
     });
 
+    it('passes the settings block through to updateRequest', async () => {
+      // Its own test rather than a field on the one above: the settings block is
+      // the only argument whose whole purpose is to reach the file, and a handler
+      // that quietly dropped it would leave the schema advertising a field that
+      // does nothing.
+      await handler({
+        filePath: '/workspace/collection/get-users.yml',
+        settings: { followRedirects: false, timeout: 20000 },
+      });
+
+      const [, updates] = mockUpdateRequest.mock.calls[0];
+      expect(updates.settings).toEqual({ followRedirects: false, timeout: 20000 });
+    });
+
     it('passes only provided fields (partial merge)', async () => {
       await handler({
         filePath: '/workspace/collection/get-users.yml',

@@ -986,6 +986,12 @@ async function executeSingleRequest(
     // out would leave those vars parsed, written back and never evaluated.
     if (testScript || assertions.length > 0 || postResponseVars.length > 0) {
       const scriptResult = await scriptRunner.runScript(testScript ?? '', wrappedResponse, {
+        // Same budget the pre-request script gets. Omitting it here left the
+        // post-response and tests scripts pinned to the runner's internal 5000ms
+        // default, so a request that raised settings.timeout still had its tests
+        // aborted at five seconds — and since tests are the slot most likely to
+        // wait on something, the setting looked like it did nothing at all.
+        timeout: yaml.settings?.timeout ?? 5000,
         // Seed the current merged vars (env/collection/runtime plus anything the
         // pre-request script wrote into the store) so a post-response script can
         // read them via bru.getVar, and so a declared assertion's `{{var}}`
