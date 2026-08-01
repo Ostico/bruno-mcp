@@ -36,6 +36,7 @@
  * not wait for.
  */
 import vm from 'node:vm';
+import { describeSandboxError, isTimeoutMessage } from './sandbox-errors.js';
 
 /**
  * How many timers one __advanceClock call will fire before handing control back
@@ -263,11 +264,19 @@ function readClockState(context: vm.Context, budget: number): ClockState | undef
     return JSON.parse(
       vm.runInContext('__clockStateJson()', context, { timeout: budget }) as string,
     ) as ClockState;
-  } catch {
+  } catch (error: unknown) {
+    // A timeout is NOT a broken clock and must not be swallowed. This read runs
+    // under whatever budget is left, which can be the 1ms floor, so on a loaded
+    // machine the interrupt can fire here rather than anywhere interesting —
+    // and reporting that as "no clock, stop pumping" turns a script that timed
+    // out into a script that succeeded. CI found exactly that.
+    if (isTimeoutMessage(describeSandboxError(error).message)) {
+      throw error;
+    }
     // __clockStateJson is a plain global, so a script can overwrite it with
-    // something that does not return JSON. Losing the clock is not fatal: the
-    // caller stops pumping and reads back whatever the script did manage to do,
-    // exactly as it would for a script that scheduled nothing.
+    // something that does not return JSON. Losing the clock that way is not
+    // fatal: the caller stops pumping and reads back whatever the script did
+    // manage to do, exactly as it would for a script that scheduled nothing.
     return undefined;
   }
 }
@@ -310,6 +319,9 @@ export function runScriptWithClock(
     }
     if (state.settled && state.awaiting === 0) return;
     if (state.nextDelay < 0) return;
+    // Checked here rather than only before sleeping: a script still waiting on
+    // a timer it will never reach has timed out, whether or not there is time
+    // left to sleep for.
     if (remaining() <= 0) {
       // Worded to match the V8 interrupt so isTimeoutMessage catches it and the
       // callers report a timeout the same way whether the script spun or slept.

@@ -155,6 +155,28 @@ describe('bru.sleep', () => {
     expect(elapsed).toBeLessThan(2000);
   });
 
+  it('reports a timeout that lands on the clock read itself', () => {
+    // The pump reads the clock under whatever budget is left, so on a loaded
+    // machine the V8 interrupt can fire on that read rather than anywhere
+    // interesting. Swallowing it as "the script broke the clock" turned a
+    // script that had timed out into one that reported success — CI caught
+    // exactly that, at a timing this suite could not reproduce.
+    //
+    // Forced deterministically here by having the script sabotage the read, in
+    // which shape it is also worth pinning on its own: a script must not be
+    // able to convert its own timeout into a clean result.
+    const started = Date.now();
+    const result = runPreRequestJob(
+      '__clockStateJson = function () { while (true) {} };\n' +
+        'await bru.sleep(50);',
+      request,
+      300,
+    );
+
+    expect(result.error).toContain('timed out');
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
   it('resolves an async test() callback that awaits it', () => {
     // The pump has to keep going while a test callback is outstanding, even
     // though the top-level script settled immediately after registering it.
