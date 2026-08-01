@@ -177,4 +177,32 @@ describe('resolveRunTargets', () => {
   it('throws for a path that does not exist', async () => {
     await expect(resolveRunTargets(join(dir, 'nope'), dir)).rejects.toThrow();
   });
+
+  it('warns when a named directory holds no runnable requests', async () => {
+    // Zero requests, zero failures and no explanation reads as a pass, which is
+    // how a misaimed subset hides.
+    await mkdir(join(dir, 'Empty'));
+
+    const { requests, warnings } = await resolveRunTargets(join(dir, 'Empty'), dir);
+
+    expect(requests).toHaveLength(0);
+    expect(warnings.join('\n')).toContain('No runnable requests were found');
+    expect(warnings.join('\n')).toContain(join(dir, 'Empty'));
+  });
+
+  it('warns when the whole collection holds no runnable requests', async () => {
+    const { requests, warnings } = await resolveRunTargets(undefined, dir);
+
+    expect(requests).toHaveLength(0);
+    expect(warnings.join('\n')).toContain('No runnable requests were found');
+  });
+
+  it('does not warn when the directory does hold requests', async () => {
+    await write('sub/Get.yml', YML);
+
+    const { requests, warnings } = await resolveRunTargets(join(dir, 'sub'), dir);
+
+    expect(requests).toHaveLength(1);
+    expect(warnings.join('\n')).not.toContain('No runnable requests were found');
+  });
 });

@@ -1,3 +1,6 @@
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { BrunoMcpServer, createBrunoMcpServer } from '../../../src/server';
 
 jest.mock('../../../src/bruno/collection', () => ({
@@ -479,14 +482,20 @@ describe('Server tool handlers', () => {
       (RequestExecutor.executeCollection as jest.Mock).mockResolvedValue({
         summary: { total: 1, passed: 1, failed: 0, duration_ms: 50 }, results: [],
       });
+      // A real file: run_collection confirms the named request exists before
+      // running, so an invented path is rejected rather than forwarded.
+      const col = await mkdtemp(join(tmpdir(), 'server-tools-run-'));
+      const request = join(col, 'test.yml');
+      await writeFile(request, 'info:\n  name: T\n');
       const handler = getHandler(server, 'run_collection');
       await handler({
-        collectionPath: '/col', environment: 'dev',
-        collectionRoot: '/col', requestPath: '/col/test.yml',
+        collectionPath: col, environment: 'dev',
+        collectionRoot: col, requestPath: request,
       });
       expect(RequestExecutor.executeCollection).toHaveBeenCalledWith(
-        '/col', expect.objectContaining({ environment: 'dev', requestPath: '/col/test.yml' }),
+        col, expect.objectContaining({ environment: 'dev', requestPath: request }),
       );
+      await rm(col, { recursive: true, force: true });
     });
 
     it('injects the forking script runner so production runs scripts behind a process boundary', async () => {
