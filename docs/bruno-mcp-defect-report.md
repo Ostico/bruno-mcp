@@ -1005,7 +1005,7 @@ request as not applied. Running them needs decisions the read did not: where a r
 request's own (upstream runs collection, then folder, then request), and whether a root `tests` block
 contributes assertions to every request's result. Filed 2026-07-31 while implementing M3.
 
-### L10 — a `.yml` graphql request is written under `http:`, not in its own `graphql:` block. CONFIRMED.
+### L10 — a `.yml` graphql request is written under `http:`, not in its own `graphql:` block. CONFIRMED. FIXED.
 
 Found while fixing H1, and deliberately left out of that change so the body-chain fix stayed one thing.
 
@@ -1025,6 +1025,36 @@ Same class as M4: byte-parity with upstream, read from the source rather than in
 a reader that accepts both placements (every graphql `.yml` this tool has already written uses `http:`), and
 a round-trip test against a Bruno-authored file. `info.type: graphql` is already written correctly and is
 what a reader should switch on.
+
+**FIXED.** The block lives in `src/bruno/yaml-graphql-block.ts`. Five things worth keeping:
+
+- **It is three shape changes, not a move.** The body is `{ query, variables }` directly rather than the
+  `{ type, data }` envelope every other body uses — the block *is* the type. `variables` stays the authored
+  string, because parsing it would force a re-serialisation on write that reflows the author's JSON and
+  corrupts a `{{placeholder}}` which is not valid JSON alone. And the key order inside the block differs from
+  `http:`: **params come before body here and after it there.**
+- **`info.type` is settled from the body, not trusted to match it.** A graphql body under `info.type: http`
+  routes the file to Bruno's http parser, which finds no `http:` block and reads the request as having no url
+  and no query. The two can no longer disagree.
+- **A graphql body whose `data` is a bare string had to be handled explicitly.** That is what this server's own
+  authoring path stores for a query passed as `content`, and the first cut treated it as "not a graphql body",
+  which dropped the query of every graphql request created here. An existing send-path test caught it — the
+  same branch-order trap as elsewhere in this register: **the shape that hits the wrong branch is the one our
+  own writer produces.**
+- **`graphql` had to be added to `YAML_REQUEST_KEYS`.** M7's passthrough was already carrying the unmodelled
+  block in `extra`, so modelling it without removing it from the bag would have emitted it twice.
+- **Verified against a file Bruno generated**, copied from upstream's own test collection
+  (`tests/graphql/query-builder/fixtures/collection/test-graphql.yml`), not only against a fixture inferred
+  from reading the writer.
+
+**One deliberate divergence.** Upstream writes all four `settings` defaults for a graphql request
+(`encodeUrl`, `timeout`, `followRedirects`, `maxRedirects`). This server still writes `settings` only when the
+model carries one, because emitting defaults a caller never asked for is exactly **M9's second half** and
+**L15**, which are the open product decision. Matching upstream here would pre-empt that decision, so it is
+left alone.
+
+Both placements are still read and old files migrate on the next write; upstream's block wins if a file
+somehow carries both. **L9 is untouched** — whether an empty query should be an error is still open.
 
 ---
 
@@ -1311,5 +1341,10 @@ posture decisions.
     next caller.
 17. **L9 + L10** — the two graphql items, together: decide whether a body with no query should error, and
     move the request into the top-level `graphql:` block upstream writes. Same file, same round-trip test.
+    **Split, because only one of them was decision-free.** ~~**L10** is done~~ — the block is written and read
+    where Bruno reads it, old `http:`-placed files migrate on the next write, and it is verified against a file
+    Bruno generated. **L9 is still open**: whether an empty query should error rather than send `''` is a
+    product call, and this change deliberately did not settle it. Upstream's habit of writing all four
+    `settings` defaults for a graphql request was also left unmatched on purpose — that is M9's second half.
 18. **Test lint and typecheck debt**, in its own PR. The load-bearing part is not the error count — it is that
     `tests/` is neither linted nor type-checked, so **a type-only fix has no test that can go red**.
