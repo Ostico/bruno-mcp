@@ -620,39 +620,6 @@ export class EnvironmentManager {
   }
 
   /**
-   * Copy environment with new name
-   */
-  async copyEnvironment(
-    collectionPath: string,
-    sourceEnv: string,
-    targetEnv: string,
-    variableOverrides?: Record<string, string | number | boolean>
-  ): Promise<FileOperationResult> {
-    try {
-      // Load source environment
-      const sourceEnvironment = await this.loadEnvironment(collectionPath, sourceEnv);
-      
-      // Merge variables with overrides
-      const variables = variableOverrides 
-        ? { ...sourceEnvironment.variables, ...variableOverrides }
-        : sourceEnvironment.variables;
-
-      // Create new environment
-      return await this.createEnvironment({
-        collectionPath,
-        name: targetEnv,
-        variables
-      });
-
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      };
-    }
-  }
-
-  /**
    * Get environment variables as key-value pairs
    */
   async getEnvironmentVariables(

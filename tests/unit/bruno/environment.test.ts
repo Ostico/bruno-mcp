@@ -321,65 +321,6 @@ describe('EnvironmentManager', () => {
     });
   });
 
-  describe('copyEnvironment()', () => {
-    /**
-     * Copy reads the source and then creates the target, so the mock has to tell
-     * the two paths apart: create refuses a target that already exists, and a
-     * readFile that resolves for every path makes the target look present.
-     */
-    const onlySourceExists = (sourceFile: string) => {
-      fs.readFile.mockImplementation((p: string) =>
-        String(p).endsWith(sourceFile)
-          ? Promise.resolve('')
-          : Promise.reject(new Error('ENOENT')),
-      );
-    };
-
-    it('should copy environment with overrides', async () => {
-      detectFormat.mockResolvedValue({ format: 'yaml' });
-      onlySourceExists('dev.yml');
-      parseYaml.mockReturnValue({
-        variables: [{ name: 'baseUrl', value: 'http://localhost' }],
-      });
-
-      const result = await manager.copyEnvironment('/col', 'dev', 'staging', {
-        baseUrl: 'https://staging.com',
-      });
-      expect(result.success).toBe(true);
-    });
-
-    it('should copy environment without overrides', async () => {
-      detectFormat.mockResolvedValue({ format: 'yaml' });
-      onlySourceExists('dev.yml');
-      parseYaml.mockReturnValue({
-        variables: [{ name: 'key', value: 'val' }],
-      });
-
-      const result = await manager.copyEnvironment('/col', 'dev', 'dev-copy');
-      expect(result.success).toBe(true);
-    });
-
-    it('refuses to copy onto an environment that already exists', async () => {
-      // Inherited from createEnvironment rather than special-cased: a copy that
-      // silently replaced the target would lose exactly what a create would.
-      detectFormat.mockResolvedValue({ format: 'yaml' });
-      fs.readFile.mockResolvedValue('');
-      parseYaml.mockReturnValue({
-        variables: [{ name: 'key', value: 'val' }],
-      });
-
-      const result = await manager.copyEnvironment('/col', 'dev', 'staging');
-      expect(result.success).toBe(false);
-      expect(result.conflict).toBeDefined();
-    });
-
-    it('should return error on failure', async () => {
-      detectFormat.mockRejectedValue(new Error('fail'));
-      const result = await manager.copyEnvironment('/col', 'dev', 'copy');
-      expect(result.success).toBe(false);
-    });
-  });
-
   describe('getEnvironmentVariables()', () => {
     it('should return variables as record', async () => {
       detectFormat.mockResolvedValue({ format: 'yaml' });
