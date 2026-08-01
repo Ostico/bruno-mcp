@@ -28,6 +28,7 @@ import {
   appendQueryCredential,
 } from './request-redaction.js';
 import { encodeRequestUrl, shouldEncodeUrl, hasExplicitScheme } from './url-encoder.js';
+import { scriptTimeoutMs } from './script-timeout.js';
 import {
   SINGLE_VALUE_HEADERS,
   appendHeader,
@@ -565,6 +566,7 @@ function scriptPhaseOrder(type: YamlScript['type']): number {
 
 const DEFAULT_TIMEOUT_MS = 30000;
 
+
 /**
  * The largest delay a timer honours. Above this Node does not refuse the value:
  * it emits a TimeoutOverflowWarning and silently uses 1 ms instead, which turns
@@ -671,7 +673,7 @@ async function executeSingleRequest(
       body: options.body ?? null,
     };
     const preResult = await scriptRunner.runPreRequestScript(preScript, mockReqData, {
-      timeout: yaml.settings?.timeout ?? 5000,
+      timeout: scriptTimeoutMs(yaml.settings),
       // Seed the merged env/collection/runtime vars so the script can read them
       // via bru.getVar. effectiveVars is the same set fed to
       // buildFetchOptions, so getVar and {{placeholder}} substitution see one
@@ -1004,7 +1006,7 @@ async function executeSingleRequest(
         // default, so a request that raised settings.timeout still had its tests
         // aborted at five seconds — and since tests are the slot most likely to
         // wait on something, the setting looked like it did nothing at all.
-        timeout: yaml.settings?.timeout ?? 5000,
+        timeout: scriptTimeoutMs(yaml.settings),
         // Seed the current merged vars (env/collection/runtime plus anything the
         // pre-request script wrote into the store) so a post-response script can
         // read them via bru.getVar, and so a declared assertion's `{{var}}`
