@@ -19,6 +19,16 @@ import {
   postResponseVarsToYaml,
   variablesToYaml,
 } from './yaml-runtime-blocks.js';
+import {
+  applyExtraKeys,
+  YAML_HEADER_KEYS,
+  YAML_HTTP_KEYS,
+  YAML_INFO_KEYS,
+  YAML_PARAM_KEYS,
+  YAML_REQUEST_KEYS,
+  YAML_RUNTIME_KEYS,
+  YAML_SETTINGS_KEYS,
+} from './extra-keys.js';
 
 /**
  * Top-level keys Bruno separates with a blank line. Mirrors the list Bruno's own
@@ -156,6 +166,7 @@ export function generateYamlRequest(request: YamlRequest): string {
   const info: Record<string, unknown> = { name: request.info.name };
   if (request.info.type) info.type = request.info.type;
   if (request.info.seq !== undefined) info.seq = request.info.seq;
+  applyExtraKeys(info, request.info.extra, YAML_INFO_KEYS);
   doc.info = info;
 
   // http section
@@ -167,6 +178,7 @@ export function generateYamlRequest(request: YamlRequest): string {
     http.headers = request.http.headers.map((h) => {
       const header: Record<string, unknown> = { name: h.name, value: h.value };
       if (h.disabled) header.disabled = true;
+      applyExtraKeys(header, h.extra, YAML_HEADER_KEYS);
       return header;
     });
   }
@@ -178,12 +190,14 @@ export function generateYamlRequest(request: YamlRequest): string {
       const param: Record<string, unknown> = { name: p.name, value: p.value };
       if (p.type) param.type = p.type;
       if (p.disabled) param.disabled = p.disabled;
+      applyExtraKeys(param, p.extra, YAML_PARAM_KEYS);
       return param;
     });
   }
   if (request.http.auth !== undefined) {
     http.auth = request.http.auth;
   }
+  applyExtraKeys(http, request.http.extra, YAML_HTTP_KEYS);
   doc.http = http;
 
   // runtime section — variables, scripts, assertions and actions, in upstream's
@@ -204,13 +218,19 @@ export function generateYamlRequest(request: YamlRequest): string {
   if (request.vars?.postResponse?.length) {
     runtime.actions = postResponseVarsToYaml(request.vars.postResponse);
   }
+  applyExtraKeys(runtime, request.runtime?.extra, YAML_RUNTIME_KEYS);
   if (Object.keys(runtime).length > 0) {
     doc.runtime = runtime;
   }
 
-  // settings section
+  // settings section. `extra` is destructured off rather than left to the skip
+  // list, because the whole rest of the object is passed through verbatim and
+  // the bag would otherwise be written to the file as a literal `extra:` key.
   if (request.settings) {
-    doc.settings = stripEmpty(request.settings);
+    const { extra: settingsExtra, ...modelledSettings } = request.settings;
+    const settings = (stripEmpty(modelledSettings) ?? {}) as Record<string, unknown>;
+    applyExtraKeys(settings, settingsExtra, YAML_SETTINGS_KEYS);
+    if (Object.keys(settings).length > 0) doc.settings = settings;
   }
 
   // docs
@@ -219,7 +239,38 @@ export function generateYamlRequest(request: YamlRequest): string {
   }
 
   const cleaned = stripEmpty(doc) as Record<string, unknown>;
-  return stringifyYamlDocument(cleaned);
+  return stringifyYamlDocument(withCarriedBlocks(cleaned, request.extra));
+}
+
+/**
+ * Put the carried top-level blocks back into a generated document.
+ *
+ * They go in after `stripEmpty` rather than before, because that pass is about
+ * the fields this generator builds: run over carried data it would delete a
+ * block whose author left it empty, which is a second way of losing the very
+ * keys this is here to keep.
+ *
+ * Position is not cosmetic either. Bruno's own key order puts `examples` — the
+ * realistic occupant of this bag — between `settings` and `docs`, so the blocks
+ * are spliced in ahead of `docs` rather than appended after it.
+ */
+function withCarriedBlocks(
+  cleaned: Record<string, unknown>,
+  extra: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  if (!extra) return cleaned;
+
+  const carried: Record<string, unknown> = {};
+  applyExtraKeys(carried, extra, YAML_REQUEST_KEYS);
+  if (Object.keys(carried).length === 0) return cleaned;
+
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(cleaned)) {
+    if (key === 'docs') Object.assign(out, carried);
+    out[key] = value;
+  }
+  if (!('docs' in cleaned)) Object.assign(out, carried);
+  return out;
 }
 
 /**
@@ -263,7 +314,7 @@ export function generateYamlEnvironment(env: EnvFile): string {
     doc.name = env.name;
   }
 
-  copyExtraKeys(doc, env.extra, ENV_FILE_KEYS);
+  applyExtraKeys(doc, env.extra, ENV_FILE_KEYS);
 
   if (env.variables && env.variables.length > 0) {
     doc.variables = env.variables.map((v) => {
@@ -276,7 +327,7 @@ export function generateYamlEnvironment(env: EnvFile): string {
         if (v.value !== undefined) entry.value = v.value;
       }
       if (v.disabled !== undefined) entry.disabled = v.disabled;
-      copyExtraKeys(entry, v.extra, ENV_VARIABLE_KEYS);
+      applyExtraKeys(entry, v.extra, ENV_VARIABLE_KEYS);
       return entry;
     });
   }
@@ -290,25 +341,6 @@ const ENV_FILE_KEYS = new Set(['name', 'variables']);
 
 /** Fields of EnvVariable that generateYamlEnvironment writes itself. */
 const ENV_VARIABLE_KEYS = new Set(['name', 'value', 'disabled', 'secret']);
-
-/**
- * Copy carried-through keys onto a document, skipping any the caller writes
- * from the typed model.
- *
- * The skip list is what stops a stale carried `value` from resurrecting the
- * plaintext of a variable that has since become secret.
- */
-function copyExtraKeys(
-  target: Record<string, unknown>,
-  extra: Record<string, unknown> | undefined,
-  modelled: Set<string>,
-): void {
-  if (!extra) return;
-  for (const [key, value] of Object.entries(extra)) {
-    if (modelled.has(key)) continue;
-    target[key] = value;
-  }
-}
 
 /**
  * Remove every script of the given type from YAML request file content.

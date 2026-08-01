@@ -52,6 +52,45 @@ const FIXTURES: YamlFixture[] = [
 `,
   },
   {
+    // Every level that can carry a key this model does not name. Bruno's grammar
+    // has `tags` and `examples` today and will grow more; rebuilding the document
+    // from the model on each write deleted them, so they belong in this table.
+    name: 'keys the model does not name, at every level that can carry one',
+    src: `info:
+  name: Fixture
+  type: http
+  seq: 7
+  tags:
+    - smoke
+
+http:
+  method: GET
+  url: https://api.example.test/orders
+  headers:
+    - name: Accept
+      value: application/json
+      description: negotiated by the caller
+  params:
+    - name: q
+      value: "1"
+      type: query
+      description: free-text search
+  retryPolicy: none
+
+runtime:
+  hooks:
+    - name: audit
+
+settings:
+  encodeUrl: true
+  customSetting: 42
+
+examples:
+  - name: happy path
+    status: 200
+`,
+  },
+  {
     name: 'params: query and path, duplicates and a disabled entry',
     src: `${INFO}http:
   method: GET
