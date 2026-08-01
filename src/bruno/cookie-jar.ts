@@ -23,12 +23,17 @@ import { Cookie, CookieJar } from 'tough-cookie';
  *    than copied, since a silently-ignored option would have looked identical;
  *  - cookies are stored from error responses too, since a 4XX can set one.
  *
- * **One deliberate divergence.** Upstream keeps a module-level singleton jar,
- * which is right for a CLI that exits after one run. This server is
- * long-lived and runs unrelated collections, so a process-wide jar would send
- * one collection's session cookie to whatever host a later, unrelated run
- * happened to match. The jar is therefore created per run and discarded with
- * it — nothing is persisted, and nothing is shared between runs.
+ * **Two deliberate divergences from upstream.**
+ *
+ *  1. Upstream keeps a module-level singleton jar, which is right for a CLI that
+ *     exits after one run. This server is long-lived and runs unrelated
+ *     collections, so a process-wide jar would send one collection's session
+ *     cookie to whatever host a later, unrelated run happened to match. The jar
+ *     is therefore created per run and discarded with it — nothing is persisted,
+ *     and nothing is shared between runs.
+ *  2. When the jar and a `Cookie` header the request wrote itself both have a
+ *     value for the same cookie name, the request's value wins rather than the
+ *     jar's. `mergeCookieHeader` below carries the argument.
  */
 export interface RunCookieJar {
   /** Cookie header value for this URL, or '' when nothing matches. */
@@ -56,11 +61,35 @@ function parseCookieHeader(header: string): Map<string, string> {
 /**
  * Merge jar cookies into a `Cookie` header the request already carried.
  *
- * The jar wins on a same-named cookie, which is upstream's order: a value the
- * server just set is fresher than one written into the request by hand. An
- * explicit cookie the jar knows nothing about is preserved.
+ * An explicitly-authored cookie wins, per name. A name the request wrote itself
+ * keeps the request's value; a name only the jar knows is still added, which is
+ * what makes a login flow work at all.
+ *
+ * **A deliberate divergence from upstream.** Bruno's CLI spreads the jar's
+ * cookies over the authored ones, so the jar wins the clash — the reasoning
+ * being that a value the server just set is fresher than one written into the
+ * request by hand. That reasoning fails the case an authored `Cookie` header
+ * exists for. A request that writes `Cookie: session=<some credential>` is not
+ * carrying a stale copy of the session the jar already holds; it is stating
+ * which identity the assertions under it are about. Replacing that value ran
+ * those assertions against whatever identity the run last logged in as, and they
+ * PASSED — a contaminated run reads greener than reality, which is the worst
+ * direction a wrong answer can point.
+ *
+ * Freshness remains the jar's job for every name nobody authored, and it still
+ * does that job here, so a flow that writes no `Cookie` header behaves exactly
+ * as before. Where the two sources disagree, author intent is both the better
+ * guess at what the run is meant to test and the only one of the two a reader
+ * can see in the collection.
+ *
+ * `shadowed` collects the names whose stored value was dropped, so a caller can
+ * report a precedence decision the collection alone does not reveal.
  */
-export function mergeCookieHeader(existing: string | undefined, fromJar: string): string {
+export function mergeCookieHeader(
+  existing: string | undefined,
+  fromJar: string,
+  shadowed?: string[],
+): string {
   if (!existing || existing.trim().length === 0) {
     return fromJar;
   }
@@ -68,12 +97,37 @@ export function mergeCookieHeader(existing: string | undefined, fromJar: string)
     return existing;
   }
 
+  // Seeded from the authored header so its names keep both their values AND
+  // their positions; jar-only names are appended after them, which is the same
+  // emission order upstream produces.
   const merged = parseCookieHeader(existing);
   for (const [name, value] of parseCookieHeader(fromJar)) {
+    if (merged.has(name)) {
+      shadowed?.push(name);
+      continue;
+    }
     merged.set(name, value);
   }
 
   return Array.from(merged, ([name, value]) => `${name}=${value}`).join('; ');
+}
+
+/**
+ * Warning text for cookie names the request kept against a stored value.
+ *
+ * Names only, never values: a session cookie is a credential, and warnings are
+ * returned to the caller. Worth reporting because nothing in the collection
+ * shows that a stored cookie was in play, and because the same collection run
+ * through Bruno's CLI would have sent the other value.
+ */
+export function shadowedCookieWarning(names: string[]): string {
+  const quoted = names.map((name) => `"${name}"`).join(', ');
+  return (
+    `Cookie ${quoted} is set both by this request and by an earlier response in ` +
+    'this run; the value the request authors was sent and the stored one was not. ' +
+    "Bruno's CLI would send the stored value instead — remove the Cookie entry to " +
+    'defer to the run\'s cookie jar.'
+  );
 }
 
 /**
@@ -82,22 +136,29 @@ export function mergeCookieHeader(existing: string | undefined, fromJar: string)
  * Writes back under the header name the request already used, so a collection
  * that wrote `cookie` in lower case keeps it — matching upstream, which looks
  * the name up case-insensitively and reuses it.
+ *
+ * Returns the cookie names whose stored value the authored header outranked, for
+ * the caller to warn about. Empty for the ordinary case where the request wrote
+ * no `Cookie` header of its own.
  */
 export function applyCookiesToHeaders(
   headers: Record<string, string>,
   url: string,
   jar: RunCookieJar,
-): void {
+): string[] {
   const fromJar = jar.cookieHeaderFor(url);
   if (fromJar.length === 0) {
-    return;
+    return [];
   }
 
+  const shadowed: string[] = [];
   const existingName = Object.keys(headers).find((name) => name.toLowerCase() === 'cookie');
   headers[existingName ?? 'Cookie'] = mergeCookieHeader(
     existingName ? headers[existingName] : undefined,
     fromJar,
+    shadowed,
   );
+  return shadowed;
 }
 
 /**

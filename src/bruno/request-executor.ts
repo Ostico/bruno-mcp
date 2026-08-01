@@ -19,6 +19,7 @@ import {
   applyCookiesToHeaders,
   createRunCookieJar,
   storeResponseCookies,
+  shadowedCookieWarning,
   type RunCookieJar,
 } from './cookie-jar.js';
 import {
@@ -839,8 +840,18 @@ async function executeSingleRequest(
     if (timeoutMs > 0) {
       currentOpts = { ...fetchOpts, signal: AbortSignal.timeout(timeoutMs) };
     }
+    // Collected across every hop and reported once: a redirect chain to the same
+    // host re-applies the jar on each hop, and the same name three times over is
+    // one fact, not three warnings.
+    const shadowedCookies = new Set<string>();
     if (cookieJar) {
-      applyCookiesToHeaders(currentOpts.headers as Record<string, string>, url, cookieJar);
+      for (const shadowedName of applyCookiesToHeaders(
+        currentOpts.headers as Record<string, string>,
+        url,
+        cookieJar,
+      )) {
+        shadowedCookies.add(shadowedName);
+      }
     }
     let response = await fetchFn(url, currentOpts);
     // Stored even for a 4XX/5XX, as upstream does: a failed login still sets
@@ -913,11 +924,13 @@ async function executeSingleRequest(
       // a login redirect. A hop to another origin gets that origin's cookies,
       // or none.
       if (cookieJar) {
-        applyCookiesToHeaders(
+        for (const shadowedName of applyCookiesToHeaders(
           currentOpts.headers as Record<string, string>,
           redirectUrl,
           cookieJar,
-        );
+        )) {
+          shadowedCookies.add(shadowedName);
+        }
       }
 
       const hop = await dispatcherFor(redirectUrl, redirectCheck.addresses);
@@ -1023,6 +1036,7 @@ async function executeSingleRequest(
     const combinedWarnings = [
       ...(authWarnings ?? []),
       ...(timeoutWarning ? [timeoutWarning] : []),
+      ...(shadowedCookies.size > 0 ? [shadowedCookieWarning([...shadowedCookies])] : []),
       ...(scriptWarnings ?? []),
     ];
     const result: RequestExecutionResult = {

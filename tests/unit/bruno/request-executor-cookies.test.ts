@@ -77,6 +77,25 @@ http:
       value: "mine=1"
 `;
 
+/**
+ * A pair of requests that each pin their own credential under the SAME cookie
+ * name — the multi-credential shape the precedence rule exists for.
+ */
+function credentialRequest(seq: number, credential: string): string {
+  return `
+info:
+  name: As${credential}
+  type: http
+  seq: ${seq}
+http:
+  method: GET
+  url: "https://api.example.com/whoami"
+  headers:
+    - name: Cookie
+      value: "sid=${credential}"
+`;
+}
+
 function response(
   { status = 200, setCookie = [], location }:
   { status?: number; setCookie?: string[]; location?: string },
@@ -185,7 +204,7 @@ describe('RequestExecutor — cookie jar', () => {
     expect(sentCookie(1)).toBe('sid=abc');
   });
 
-  it('merges with a Cookie header the request wrote itself, jar winning on a clash', async () => {
+  it('merges with a Cookie header the request wrote itself, the request winning a clash', async () => {
     setupFs(
       { 'Login.yml': LOGIN_YAML, 'Profile.yml': EXPLICIT_COOKIE_YAML },
       ['Login.yml', 'Profile.yml'],
@@ -194,13 +213,95 @@ describe('RequestExecutor — cookie jar', () => {
       .mockResolvedValueOnce(response({ setCookie: ['sid=abc; Path=/', 'mine=fromserver; Path=/'] }))
       .mockResolvedValueOnce(response({}));
 
-    await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
+    const result = await RequestExecutor.executeCollection(
+      '/test-collection',
+      { scriptRunner: TestRunner },
+    );
 
     const cookie = sentCookie(1)!;
+    // A name only the jar knows is still added — that is what the jar is for.
     expect(cookie).toContain('sid=abc');
-    // The server's value replaces the hand-written one.
-    expect(cookie).toContain('mine=fromserver');
-    expect(cookie).not.toContain('mine=1');
+    // The authored value survives the stored one.
+    expect(cookie).toContain('mine=1');
+    expect(cookie).not.toContain('mine=fromserver');
+
+    // And the caller is told, because nothing in the collection shows that a
+    // stored value was in play at all.
+    const warnings = result.results[1].warnings ?? [];
+    expect(warnings.some((w) => w.includes('"mine"'))).toBe(true);
+    expect(warnings.some((w) => w.includes('"sid"'))).toBe(false);
+  });
+
+  it('does not let the second credential inherit the first request\'s session', async () => {
+    // The reported failure: two requests assert what two different credentials
+    // can see, and the jar quietly replaced the second one's identity with the
+    // first's — so both assertions passed against the same user.
+    setupFs(
+      { 'AsA.yml': credentialRequest(1, 'cred-a'), 'AsB.yml': credentialRequest(2, 'cred-b') },
+      ['AsA.yml', 'AsB.yml'],
+    );
+    mockFetch
+      // The first response rotates the session under the very name both
+      // requests pin, which is what used to contaminate the second.
+      .mockResolvedValueOnce(response({ setCookie: ['sid=session-of-a; Path=/'] }))
+      .mockResolvedValueOnce(response({}));
+
+    const result = await RequestExecutor.executeCollection(
+      '/test-collection',
+      { scriptRunner: TestRunner },
+    );
+
+    expect(result.summary.total).toBe(2);
+    expect(sentCookie(0)).toBe('sid=cred-a');
+    expect(sentCookie(1)).toBe('sid=cred-b');
+    expect(sentCookie(1)).not.toContain('session-of-a');
+  });
+
+  it('warns once for a name re-applied on every hop of a redirect chain', async () => {
+    setupFs({ 'Profile.yml': EXPLICIT_COOKIE_YAML }, ['Profile.yml']);
+    mockFetch
+      .mockResolvedValueOnce(response({
+        status: 302,
+        setCookie: ['mine=fromserver; Path=/'],
+        location: 'https://api.example.com/one',
+      }))
+      .mockResolvedValueOnce(response({
+        status: 302,
+        location: 'https://api.example.com/two',
+      }))
+      .mockResolvedValueOnce(response({}));
+
+    const result = await RequestExecutor.executeCollection(
+      '/test-collection',
+      { scriptRunner: TestRunner },
+    );
+
+    // Both hops kept the authored value against the stored one...
+    expect(sentCookie(1)).toBe('mine=1');
+    expect(sentCookie(2)).toBe('mine=1');
+    // ...and that is one fact, reported once — one warning naming the cookie
+    // once, not the same name repeated per hop inside it.
+    const cookieWarnings = (result.results[0].warnings ?? [])
+      .filter((w) => w.includes('"mine"'));
+    expect(cookieWarnings).toHaveLength(1);
+    expect(cookieWarnings[0].match(/"mine"/g)).toHaveLength(1);
+  });
+
+  it('does not warn on an ordinary login flow that authors no Cookie header', async () => {
+    setupFs(TWO_REQUEST_COLLECTION, ['Login.yml', 'Profile.yml']);
+    mockFetch
+      .mockResolvedValueOnce(response({ setCookie: ['sid=abc; Path=/'] }))
+      .mockResolvedValueOnce(response({}));
+
+    const result = await RequestExecutor.executeCollection(
+      '/test-collection',
+      { scriptRunner: TestRunner },
+    );
+
+    expect(sentCookie(1)).toBe('sid=abc');
+    for (const request of result.results) {
+      expect(request.warnings ?? []).toEqual([]);
+    }
   });
 
   it('sends nothing when the caller turns the jar off', async () => {
