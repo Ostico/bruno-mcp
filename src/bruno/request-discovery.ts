@@ -101,6 +101,28 @@ export async function discoverRequests(dirPath: string): Promise<DiscoveryResult
 }
 
 /**
+ * Say so when a directory walk found nothing to run.
+ *
+ * A run over an empty directory otherwise reports zero requests, zero failures
+ * and no explanation, which reads as a pass. The directory exists — it is a
+ * misaimed subset, not a bad path — so this is a warning on the result rather
+ * than a thrown error.
+ */
+function warnIfNothingToRun(result: DiscoveryResult, dirPath: string): DiscoveryResult {
+  if (result.requests.length > 0) {
+    return result;
+  }
+  return {
+    ...result,
+    warnings: [
+      ...result.warnings,
+      `No runnable requests were found under ${dirPath}, so this run executed nothing. ` +
+        'Zero requests is not a pass.',
+    ],
+  };
+}
+
+/**
  * What a run should execute: one named request, one named directory, or the
  * whole collection.
  *
@@ -119,7 +141,7 @@ export async function resolveRunTargets(
   collectionPath: string,
 ): Promise<DiscoveryResult> {
   if (!requestPath) {
-    return discoverRequests(collectionPath);
+    return warnIfNothingToRun(await discoverRequests(collectionPath), collectionPath);
   }
 
   if (!isRequestFile(requestPath)) {
@@ -129,7 +151,7 @@ export async function resolveRunTargets(
     if (!pathStat.isDirectory()) {
       throw new Error(`Unsupported request file format: ${requestPath}`);
     }
-    return discoverRequests(requestPath);
+    return warnIfNothingToRun(await discoverRequests(requestPath), requestPath);
   }
 
   const content = await readFile(requestPath, 'utf-8');

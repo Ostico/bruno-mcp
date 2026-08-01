@@ -9,6 +9,7 @@ import { RequestExecutor } from '../bruno/request-executor.js';
 import { forkingScriptRunner } from '../bruno/sandbox-host.js';
 import { normalizeVariableOverrides } from '../bruno/runtime-variables.js';
 import { validateToolPath } from './tool-path.js';
+import { resolveRunTarget } from './run-target.js';
 import type { ToolContext } from './context.js';
 
 export function registerRunCollectionTool(ctx: ToolContext): void {
@@ -16,12 +17,13 @@ export function registerRunCollectionTool(ctx: ToolContext): void {
     'run_collection',
     {
       title: 'Run Collection',
-      description: 'Execute requests in a Bruno collection and run test scripts. Omit requestPath to run ALL requests. Provide requestPath as a .yml/.bru file to run one request, or as a subdirectory to run all requests in that folder. Each result includes the response body (response_body, response_content_type, response_body_truncated) by default — disable with includeResponseBody=false or cap the size with maxResponseBodyBytes. Execution order is a single global sort on each request\'s seq across everything the run covers — folders do NOT scope it, so two requests both numbered seq 1 in different folders are ordered by filesystem enumeration, which is not stable. Give requests distinct seq values, or run one folder at a time, when order matters. A request file that cannot be parsed is skipped rather than failing the run: the count is parseErrors and each skipped file is named with its reason in parseFailures, so a run over a whole collection can be a subset without looking like one. Outbound requests are SSRF-filtered: targets resolving to private, loopback, link-local or otherwise reserved addresses are refused unless the server operator has allowlisted them, and a refusal is reported per-request as an "SSRF blocked" error with status 0.',
+      description: 'Execute requests in a Bruno collection and run test scripts. HOW TO RUN A SUBSET — there are exactly two arguments for it and no others: folder runs every request under one directory, requestPath runs one .yml/.bru request file (or, for backwards compatibility, a directory, exactly as folder does). Both accept either an absolute path or a path relative to collectionPath, so folder="Auth" and folder="/abs/collection/Auth" are the same request. Supplying both folder and requestPath is REJECTED rather than resolved for you. Omit both to run ALL requests. Any other key you might reach for — a name, a tag, a glob — does not exist and is silently discarded before this tool sees it, which would run the whole collection while looking like a subset, so use folder or requestPath. A folder or requestPath that does not exist is an error, not a whole-collection run. Each result includes the response body (response_body, response_content_type, response_body_truncated) by default — disable with includeResponseBody=false or cap the size with maxResponseBodyBytes. Execution order is a single global sort on each request\'s seq across everything the run covers — folders do NOT scope it, so two requests both numbered seq 1 in different folders are ordered by filesystem enumeration, which is not stable. Give requests distinct seq values, or run one folder at a time, when order matters. A request file that cannot be parsed is skipped rather than failing the run: the count is parseErrors and each skipped file is named with its reason in parseFailures, so a run over a whole collection can be a subset without looking like one. Outbound requests are SSRF-filtered: targets resolving to private, loopback, link-local or otherwise reserved addresses are refused unless the server operator has allowlisted them, and a refusal is reported per-request as an "SSRF blocked" error with status 0.',
       inputSchema: {
         collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to collection root directory. Use the path returned by list_collections.'),
         environment: z.string().optional().describe('Environment name to use (e.g. "dev", "staging"). Get available names from get_collection_stats.'),
         collectionRoot: z.string().optional().describe('Path to collection root for environment resolution (if different from collectionPath)'),
-        requestPath: z.string().optional().describe('Path to a specific .yml or .bru request file, or a subdirectory within the collection. Get file paths from list_requests or get_collection_stats. Omit to run all requests in the collection.'),
+        requestPath: z.string().optional().describe('One .yml or .bru request file to run, or a subdirectory to run all requests under it (same effect as folder). Absolute, or relative to collectionPath. Get paths from list_requests or get_collection_stats. Omit — and omit folder — to run all requests in the collection. Cannot be combined with folder.'),
+        folder: z.string().min(1, 'Folder must not be empty').optional().describe('One folder to run, e.g. "Auth" or "Auth/Login". Absolute, or relative to collectionPath. Runs every request underneath it, recursively. Equivalent to passing the same directory as requestPath; supply one or the other, never both. A value naming a file, or naming nothing, is an error rather than a whole-collection run.'),
         parallel: z.boolean().optional().default(false).describe('Run folders in parallel. Requests within each folder still run sequentially by seq order. Default: false.'),
         includeResponseBody: z.boolean().optional().default(true).describe('Include the response body of each request in the results. Default: true.'),
         maxResponseBodyBytes: z.number().optional().default(10240).describe('Maximum response body size (bytes) to return per request; longer bodies are truncated and response_body_truncated is set. Default: 10240.'),
@@ -40,15 +42,18 @@ export function registerRunCollectionTool(ctx: ToolContext): void {
           };
         }
 
-        // Validate requestPath is within collectionPath if provided
-        if (args.requestPath) {
-          const requestCheck = validateToolPath(args.requestPath, args.collectionPath);
-          if (!requestCheck.valid) {
-            return {
-              content: [{ type: 'text', text: `Invalid requestPath: ${requestCheck.reason}` }],
-              isError: true,
-            };
-          }
+        // One target from the two arguments that can name one: validated,
+        // anchored to the collection, and confirmed to exist.
+        const target = await resolveRunTarget(
+          args.collectionPath,
+          args.requestPath,
+          args.folder,
+        );
+        if (!target.ok) {
+          return {
+            content: [{ type: 'text', text: target.message }],
+            isError: true,
+          };
         }
 
         // Validate collectionRoot if provided (no traversal, no null bytes)
@@ -78,7 +83,7 @@ export function registerRunCollectionTool(ctx: ToolContext): void {
           {
             environment: args.environment,
             collectionRoot: args.collectionRoot,
-            requestPath: args.requestPath,
+            requestPath: target.requestPath,
             parallel: args.parallel,
             includeResponseBody: args.includeResponseBody,
             maxResponseBodyBytes: args.maxResponseBodyBytes,
