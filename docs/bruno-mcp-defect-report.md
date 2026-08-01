@@ -441,7 +441,7 @@ timer callback is reported as the script's error instead of vanishing, since no 
 The wrapper opens on the same line as the script's first line, so stack line numbers still point at the lines
 the author wrote — upstream instead carries a `NODEVM_SCRIPT_WRAPPER_OFFSET` to subtract afterwards.
 
-### M9 — request `settings` can be read but never written, and no request is created with one. CONFIRMED. *(User-reported)*
+### M9 — request `settings` can be read but never written, and no request is created with one. CONFIRMED. FIXED (first half). *(User-reported)*
 
 Reported 2026-08-01 from a session that went through the MCP for everything else — create, modify, delete,
 read, run — and had to hand-edit YAML for exactly this.
@@ -464,6 +464,31 @@ result the agent cannot diagnose from inside — the register's own severity rul
 Fixing it is two things, and the second is the one that matters: accept `settings` on create and modify, and
 decide what a created request should carry. Emitting Bruno's own defaults explicitly is not obviously right —
 Bruno omits the block too — but silently inheriting `followRedirects: true` is what caused this.
+
+> **First half done in PR #100; the second half is still open and is a product decision.** `settings` is now
+> accepted on `create_request` and `modify_request` and written in both dialects. The block spells the same in
+> both — a `settings { }` dictionary in `.bru`, a top-level `settings:` mapping in `.yml`, four camelCase keys,
+> identical types — so there is no per-dialect translation, unlike auth or script types. Merging is per field
+> (an absent field leaves the stored value alone), following `varsToBruVarSets` rather than `assert`, which
+> replaces its whole block: settings are four unrelated switches, not a list meaningful only as a whole.
+> `undefined` is tested explicitly, because `followRedirects: false` and `maxRedirects: 0` are the values worth
+> writing and both are falsy.
+>
+> One premise in the paragraph above was wrong and is worth correcting: the *generators* already emitted the
+> block (`bru-parser.ts:509`, `yaml-generator.ts:198`), added for round-trip preservation. Only the input path
+> was missing, so this was a smaller change than the finding implies.
+>
+> **A second defect was found by the test this required, and fixed with it.** Of the two `runScript` call sites,
+> only one passed a `timeout`: `request-executor.ts:673` did, and `:988` — post-response and tests — did not, so
+> the file contained exactly one `5000` where it needed two. `settings.timeout` therefore reached
+> only the *pre-request* script — the other two stayed pinned to the runner's internal 5000ms. Tests are the
+> slot most likely to wait on something, so raising the setting appeared to do nothing at all. That is the half
+> of item 8b that made the cap look immovable.
+>
+> **Still open:** a created request carries no `settings` block, so it still inherits `followRedirects: true` —
+> exactly the default that cost the reporter a session cookie. Emitting explicit defaults on create is a wider
+> decision than this change, and it now has a workaround the reporter did not have (set it on create). It also
+> interacts with **L15**, filed out of this work.
 
 ### M10 — no shared-state concurrency, so a credential race cannot be exercised. CONFIRMED. *(User-reported)*
 
@@ -588,12 +613,40 @@ one place they are certain to be logged and echoed back.
 Worth deciding alongside redaction: the values most worth returning are exactly the ones most worth not
 printing.
 
-### L14 — `folder` is not a parameter, and passing it runs the whole collection. CONFIRMED. *(User-reported)*
+### L14 — `folder` is not a parameter, and passing it runs the whole collection. CONFIRMED. FIXED. *(User-reported)*
 
 The filter is `requestPath`, which takes either a request file or a subdirectory. An agent that reaches for the
 obvious name gets a silent whole-collection run instead of an error, because an unknown key is dropped rather
 than rejected. Either accept `folder` as an alias or reject unknown keys; the current behaviour is the only one
 that cannot be noticed.
+
+> **Done in PR #99, by the alias route rather than the rejection route.** Rejecting unknown keys is not
+> available per-tool: every `registerTool` call passes a Zod *raw shape*, so stripping unknown keys is the
+> behaviour of the whole surface, not of this tool. `resolveRunTarget` (`src/tools/run-target.ts`) accepts
+> `folder` as an alias of `requestPath`, rejects passing both as ambiguous rather than silently preferring one,
+> and refuses a `folder` that names a file with a message pointing at `requestPath`.
+>
+> **Two further defects turned up while fixing it, both fixed in the same PR.** First, relative paths were
+> resolved against the *server process's* cwd — `path.resolve(inputPath)` with a single argument
+> (`tool-path.ts:34`) — so `folder: "Auth"` meant something different depending on where the MCP client
+> happened to launch the server, and the caller had no way to know. They now anchor to `collectionPath`, and the
+> ENOENT message states that rule rather than leaving it to be inferred. Second, a run aimed at a directory
+> containing no requests reported a clean pass: `warnIfNothingToRun` (`request-discovery.ts`) now warns on both
+> the named-directory and whole-collection paths, ending "Zero requests is not a pass." A warning rather than a
+> throw, deliberately — the directory exists, so this is a misaimed subset, not a bad path.
+
+### L15 — authoring any `settings` field silently turns URL encoding on. CONFIRMED. *(Filed out of M9)*
+
+`shouldEncodeUrl` has a two-valued default (`url-encoder.ts:156-158`): with no `settings` block it returns
+`false`, and with a block that does not mention `encodeUrl` it returns `settings.encodeUrl ?? true`. So the
+presence of the block, not the presence of the field, decides. Authoring `{ timeout: 20000 }` on a request that
+previously had no block therefore flips URL encoding from off to on as a side effect, and the caller asked about
+timeouts.
+
+Only reachable now that M9 made the block authorable. It is upstream's behaviour — Bruno's own GUI always writes
+`encodeUrl` explicitly, so a Bruno-authored request never sits in the ambiguous state, and ours always did.
+Stated in the tool's field description rather than compensated, because compensating means writing a default the
+caller did not ask for, which is the same open decision as M9's second half. Take the two together.
 
 ### L1 — `setCookies` is captured but never exposed under a name. CONFIRMED. FIXED.
 
@@ -946,7 +999,10 @@ What an agent needs and does not have. Direct field feedback first.
     `followRedirects: true` — cost a session cookie on a 302 and presented as the endpoint issuing no session.
     It is also the blocker behind the script-timeout cap: 5000ms is liftable only through `settings.timeout`,
     and a script that exceeds it fails the whole request with `status: 0`, `tests: []` rather than warning. Two
-    findings, one schema change.
+    findings, one schema change. **Accepting it is done** in PR #100, and the timeout cap turned out to be
+    partly a second defect rather than only a missing schema: `settings.timeout` was reaching the pre-request
+    script alone. **What a created request carries is still open**, together with **L15** which the same change
+    made reachable — one product decision covering both, and the only part of this item left.
 8c. ~~**M11** — stop the cookie jar overwriting a `Cookie` header the request wrote itself, or leave the jar out
     of any request that writes one. Ranked here rather than lower because of its direction: it makes a
     contaminated run read **greener** than reality, and two of the reporter's assertions passed against the
@@ -961,9 +1017,12 @@ What an agent needs and does not have. Direct field feedback first.
     copy: Bruno has no concurrency at all, so folder parallelism is already ours and shared state means defining
     semantics upstream never had to. Do it after M9 and M11, and expect it to be a design discussion rather
     than a patch.
-8e. **L13 + L14** — a return channel for captured values, and `folder` either accepted or rejected instead of
-    silently ignored. Both cheap, both agent-visible; L13 needs a redaction decision at the same time, since
-    the values worth returning are the ones worth not printing.
+8e. **L13** — a return channel for captured values. Cheap and agent-visible, but it needs a redaction decision
+    taken at the same time, since the values worth returning are the ones worth not printing. That decision is
+    why it is still here; **L14**, which shared this slot, was split off and is done (PR #99, by the alias
+    route — per-tool rejection of unknown keys is not available, since the whole surface strips them). Two
+    defects found underneath it are fixed with it: relative paths anchored to the server's cwd, and an
+    empty-directory run reporting a clean pass.
 
 ### Tier 2 — security
 
