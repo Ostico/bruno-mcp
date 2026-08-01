@@ -114,9 +114,59 @@ describe('the setting decides whether the URL is encoded', () => {
     expect(url).toBe('https://e.com/a b');
   });
 
-  it('encodes when a settings block exists but omits encodeUrl', async () => {
-    // The half of the default that is easy to get backwards: present-but-silent
-    // means on, while absent means off.
+  it('sends a Bruno-authored .bru request raw when its block sets only a timeout', async () => {
+    // The shape that was actually diverging in the field. This file is one Bruno
+    // wrote; the old rule encoded its URL while Bruno sends it raw, so the same
+    // collection behaved differently depending on which tool ran it.
+    const bru = `meta {
+  name: R
+  type: http
+  seq: 1
+}
+
+get {
+  url: https://e.com/a b
+  auth: none
+}
+
+settings {
+  timeout: 20000
+}
+`;
+    const url = await sentUrl({ 'R.bru': bru });
+
+    expect(url).toBe('https://e.com/a b');
+  });
+
+  it('still encodes a .bru request that asks for it', async () => {
+    const bru = `meta {
+  name: R
+  type: http
+  seq: 1
+}
+
+get {
+  url: https://e.com/a b
+  auth: none
+}
+
+settings {
+  encodeUrl: true
+}
+`;
+    const url = await sentUrl({ 'R.bru': bru });
+
+    expect(url).toBe('https://e.com/a%20b');
+  });
+
+  it('encodes a .yml request whose settings block omits encodeUrl', async () => {
+    // Present-but-silent means ON for this dialect, and only this one. Upstream's
+    // .yml reader says so outright — parseHttpRequest.ts:
+    //
+    //   if (typeof settings.encodeUrl === 'boolean') { ... } else { encodeUrl = true }
+    //
+    // The .bru side is the opposite, and the two tests below the .yml ones cover
+    // it. The asymmetry is upstream's, not ours.
     const url = await sentUrl({
       'R.yml': yml('  url: "https://e.com/a b"', '\nsettings:\n  timeout: 5000'),
     });

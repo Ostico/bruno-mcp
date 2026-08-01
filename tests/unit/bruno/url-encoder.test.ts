@@ -88,16 +88,22 @@ describe('the query side is content blind', () => {
   });
 });
 
-describe('the two-valued default', () => {
+describe('the default, which is one rule and not two', () => {
   it('is off when there is no settings block at all', () => {
     // The runtime reads settings?.encodeUrl and gets undefined, so the URL is
     // sent raw. A collection that has never been saved by Bruno's UI lands here.
     expect(shouldEncodeUrl(undefined)).toBe(false);
   });
 
-  it('is on when a settings block exists but does not mention encodeUrl', () => {
-    // The parser fills in true in that case, so the two defaults genuinely differ
-    // depending on whether the block is present.
+  it('is on for a settings object that reached here without the key', () => {
+    // Only a .yml request can be in this state, and for it the answer is `true`
+    // — upstream's yml reader defaults the key to true when a block omits it.
+    //
+    // A .bru request never arrives shaped like this: @usebruno/lang resolves the
+    // key while parsing and hands over `encodeUrl: false`, which bru-to-yaml
+    // passes through verbatim. So this branch is the .yml default, not a guess
+    // about blocks in general. See settings-parser-oracle.test.ts for the
+    // measurement that makes the .bru half unreachable.
     expect(shouldEncodeUrl({})).toBe(true);
   });
 

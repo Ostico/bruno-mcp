@@ -113,8 +113,8 @@ describe('authoring the settings block in .bru', () => {
   it('writes no settings block at all when none was declared', async () => {
     // Deliberate: Bruno also omits the block, and emitting the executor's
     // fallbacks as explicit keys would make every request we create differ from
-    // a hand-authored one. It also matters for encodeUrl, whose default is
-    // two-valued — no block means off, an empty block means on.
+    // a hand-authored one. Upstream's writer is a passthrough — 248 of the 275
+    // .bru files in its own test collection carry no settings block at all.
     const collectionPath = await makeCollection('bru');
     const { content } = await create(collectionPath);
 
