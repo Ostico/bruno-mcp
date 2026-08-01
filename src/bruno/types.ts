@@ -492,7 +492,53 @@ export interface CreateCollectionInput {
 export interface CreateEnvironmentInput {
   collectionPath: string;
   name: string;
-  variables: Record<string, string | number | boolean>;
+  /**
+   * Either the flat `name -> scalar` map this tool has always taken, or the full
+   * per-variable form.
+   *
+   * The flat map cannot express `secret`, `disabled` or `dataType`, so creating an
+   * environment through it could only ever produce plain, enabled, string-typed
+   * variables and a secret took a second `set_environment_variable` call to
+   * declare. Both shapes are accepted rather than the map being replaced, because
+   * the map is the whole existing surface and it stays correct for the common case.
+   */
+  variables: Record<string, string | number | boolean> | EnvVariable[];
+  /**
+   * Replace an environment that already exists. Without it an existing name is
+   * refused, because this call replaces the whole file: any variable the caller
+   * did not list is gone, and a secret cannot be re-declared from the file alone
+   * since no format stores a secret's value.
+   *
+   * Unmodelled keys in the file are carried either way — refusing is about the
+   * caller's variables, not about the keys we do not model.
+   */
+  overwrite?: boolean;
+}
+
+/**
+ * Why a create was refused, and enough to choose what to do instead.
+ *
+ * Carried as structured data rather than only prose so the tool layer renders it
+ * one way and tests assert on fields. Values are deliberately absent: a secret
+ * has none stored, `get_collection_stats` withholds them by design, and an error
+ * message is the wrong channel for a token. `read_environment` is where a caller
+ * that needs values goes.
+ */
+export interface EnvironmentConflict {
+  /** The file that would have been replaced. */
+  path: string;
+  /** Every variable already in the file, by name, with its flags. */
+  existing: Array<{ name: string; secret?: boolean; disabled?: boolean }>;
+  /** Names in both the file and the request — merging leaves these alone. */
+  alreadyPresent: string[];
+  /** Names only in the request — merging adds these. */
+  added: string[];
+  /**
+   * Names only in the file. **This is the one that decides.** Empty means the
+   * request is a superset and replacing loses nothing; non-empty means replacing
+   * deletes real variables, so the caller should merge or pick another name.
+   */
+  wouldBeLost: string[];
 }
 
 // Test script addition input
@@ -1070,6 +1116,12 @@ export interface FileOperationResult {
   success: boolean;
   path?: string;
   error?: string;
+  /**
+   * Set only by createEnvironment, and only when it refused because the
+   * environment already exists. `error` still carries a readable summary, so a
+   * caller that ignores this field is no worse off than before.
+   */
+  conflict?: EnvironmentConflict;
 }
 
 export interface DirectoryStructure {

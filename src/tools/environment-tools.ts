@@ -12,16 +12,31 @@ import { toEnvironmentView } from '../bruno/request-view.js';
 import { validateToolPath } from './tool-path.js';
 import type { ToolContext } from './context.js';
 
+/** Render one of the conflict report's name lists, spelling out an empty one. */
+function describeNames(names: string[]): string {
+  return names.length > 0 ? names.join(', ') : '(none)';
+}
+
 export function registerCreateEnvironmentTool(ctx: ToolContext): void {
   ctx.server.registerTool(
     'create_environment',
     {
       title: 'Create Bruno Environment',
-      description: 'Create environment configuration files for Bruno collection',
+      description: 'Create an environment file for a Bruno collection. Writes the WHOLE file, so it REFUSES a name that already exists rather than overwriting it — the error names the existing variables and says which ones a replace would delete, so you can choose between merging with update_environment, picking another name, and retrying with overwrite: true.',
       inputSchema: {
         collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to existing collection directory.'),
         name: z.string().min(1, 'Environment name is required'),
-        variables: z.record(z.union([z.string(), z.number(), z.boolean()]))
+        variables: z.union([
+          z.record(z.union([z.string(), z.number(), z.boolean()])),
+          z.array(z.object({
+            name: z.string().min(1),
+            value: z.union([z.string(), z.number(), z.boolean()]).optional(),
+            secret: z.boolean().optional(),
+            disabled: z.boolean().optional(),
+            dataType: z.string().optional(),
+          })),
+        ]).describe('Either a flat name-to-value map, or a list of variable objects when you need flags. Use the list form to declare a secret at create time: a secret variable is stored as a name only (no format persists a secret\'s value), so `value` is dropped for it.'),
+        overwrite: z.boolean().optional().describe('Replace an environment that already exists. Without this an existing name is refused. Keys in the file that this tool does not model are preserved either way.'),
       }
     },
     async (args) => {
@@ -39,6 +54,7 @@ export function registerCreateEnvironmentTool(ctx: ToolContext): void {
           name: args.name,
           variables: args.variables
         };
+        if (args.overwrite !== undefined) input.overwrite = args.overwrite;
 
         const result = await ctx.environmentManager.createEnvironment(input);
 
@@ -52,11 +68,21 @@ export function registerCreateEnvironmentTool(ctx: ToolContext): void {
             ]
           };
         } else {
+          // A refused create is reported with its comparison attached, so the
+          // caller can decide between merging and a new name without a second
+          // call. Values are never included — only names and flags.
+          const conflict = result.conflict
+            ? `\n\nAlready present: ${describeNames(result.conflict.alreadyPresent)}`
+              + `\nWould be added: ${describeNames(result.conflict.added)}`
+              + `\nWould be DELETED by a replace: ${describeNames(result.conflict.wouldBeLost)}`
+              + '\n\nNext: update_environment to merge, a different name for a new environment, '
+              + 'or overwrite: true to replace.'
+            : '';
           return {
             content: [
               {
                 type: 'text',
-                text: `❌ Failed to create environment: ${result.error}`
+                text: `❌ Failed to create environment: ${result.error}${conflict}`
               }
             ],
             isError: true

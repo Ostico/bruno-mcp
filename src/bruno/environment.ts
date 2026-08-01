@@ -15,9 +15,10 @@ import {
   BruFileError,
   EnvFile,
   EnvVariable,
+  EnvironmentConflict,
 } from './types.js';
 import { parse as parseYaml } from 'yaml';
-import { detectFormat } from './format-detector.js';
+import { detectFormat, type CollectionFormat } from './format-detector.js';
 import { generateYamlEnvironment } from './yaml-generator.js';
 import { parseBruEnvironment, parseBruEnvironmentFile, generateBruEnvironmentFull } from './bru-parser.js';
 
@@ -42,6 +43,86 @@ function collectUnmodelledKeys(
     extra[key] = value;
   }
   return Object.keys(extra).length > 0 ? extra : undefined;
+}
+
+/**
+ * Accept either shape `CreateEnvironmentInput.variables` allows.
+ *
+ * The array branch is tested first. An array is also an object, so a
+ * `Object.entries` branch placed above it would claim the array case and index it
+ * by position — writing variables named `0`, `1`, `2` from the very shape the
+ * richer callers pass.
+ */
+function toEnvVariables(
+  variables: Record<string, string | number | boolean> | EnvVariable[],
+): EnvVariable[] {
+  if (Array.isArray(variables)) {
+    return variables.filter((v) => typeof v?.name === 'string' && v.name !== '');
+  }
+  return Object.entries(variables).map(([name, value]): EnvVariable => ({ name, value }));
+}
+
+/**
+ * Build the refusal for a name that already exists.
+ *
+ * The three lists are what let a caller decide without reading the file: nothing
+ * in `wouldBeLost` means replacing is safe and the caller can retry with
+ * `overwrite`, while anything in it means merging through
+ * `update_environment` — or a different name — is the correct move.
+ */
+function refuseExistingEnvironment(
+  path: string,
+  existingVars: EnvVariable[] | undefined,
+  requested: EnvVariable[],
+): FileOperationResult {
+  const existing = (existingVars ?? []).map((v) => {
+    const entry: { name: string; secret?: boolean; disabled?: boolean } = { name: v.name };
+    if (v.secret === true) entry.secret = true;
+    if (v.disabled === true) entry.disabled = true;
+    return entry;
+  });
+
+  const existingNames = new Set(existing.map((v) => v.name));
+  const requestedNames = new Set(requested.map((v) => v.name));
+
+  const conflict: EnvironmentConflict = {
+    path,
+    existing,
+    alreadyPresent: [...requestedNames].filter((n) => existingNames.has(n)),
+    added: [...requestedNames].filter((n) => !existingNames.has(n)),
+    wouldBeLost: [...existingNames].filter((n) => !requestedNames.has(n)),
+  };
+
+  const lost = conflict.wouldBeLost.length;
+  const verdict = lost === 0
+    ? 'Replacing it would lose no variables, so retry with overwrite: true if that is what you meant.'
+    : `Replacing it would DELETE ${lost} variable(s) not in this request: ${conflict.wouldBeLost.join(', ')}. `
+      + 'Merge with update_environment, or create a new environment under a different name.';
+
+  return {
+    success: false,
+    path,
+    error:
+      `Environment already exists at ${path}, and create_environment replaces the whole file. `
+      + `It currently holds ${existing.length} variable(s): ${describeExistingVars(existing)}. `
+      + verdict,
+    conflict,
+  };
+}
+
+/** Name the existing variables and their flags. Never their values. */
+function describeExistingVars(
+  existing: Array<{ name: string; secret?: boolean; disabled?: boolean }>,
+): string {
+  if (existing.length === 0) return '(none readable)';
+  return existing
+    .map((v) => {
+      const flags = [v.secret ? 'secret' : undefined, v.disabled ? 'disabled' : undefined]
+        .filter(Boolean)
+        .join(', ');
+      return flags ? `${v.name} (${flags})` : v.name;
+    })
+    .join(', ');
 }
 
 /**
@@ -125,31 +206,69 @@ export class EnvironmentManager {
       const envDir = join(input.collectionPath, 'environments');
       await this.ensureDirectory(envDir);
 
+      const ext = detection.format === 'yaml' ? '.yml' : '.bru';
+      const envFilePath = join(envDir, `${input.name}${ext}`);
+      const variables = toEnvVariables(input.variables);
+
+      // This call replaces the whole file, so an existing name is refused rather
+      // than overwritten: a variable the caller did not list would be deleted, and
+      // a secret could not be put back from the file alone because no format stores
+      // a secret's value. The refusal carries the comparison the caller needs to
+      // choose between merging and a different name, so deciding costs no extra
+      // round-trip.
+      const existing = await this.readForConflict(envFilePath, detection.format);
+      if (existing && input.overwrite !== true) {
+        return refuseExistingEnvironment(envFilePath, existing.variables, variables);
+      }
+
+      // Whether replacing or creating, keys the model does not name have to come
+      // back: every other write path reads them first, and this one used not to,
+      // which deleted them on each overwrite.
+      const carriedExtra = existing?.extra;
+
       if (detection.format === 'yaml') {
-        // Build EnvFile and write .yml
-        const envFile: EnvFile = {
-          name: input.name,
-          variables: Object.entries(input.variables).map(
-            ([name, value]): EnvVariable => ({ name, value }),
-          ),
-        };
-        const yamlContent = generateYamlEnvironment(envFile);
-        const envFilePath = join(envDir, `${input.name}.yml`);
-        await writeFileAtomic(envFilePath, yamlContent);
-        return { success: true, path: envFilePath };
-      } else {
-        // Existing BRU behavior
-        const envFilePath = join(envDir, `${input.name}.bru`);
-        const envContent = this.generateEnvironmentFile(input.variables);
-        await writeFileAtomic(envFilePath, envContent);
+        const envFile: EnvFile = { name: input.name, variables };
+        if (carriedExtra) envFile.extra = carriedExtra;
+        await writeFileAtomic(envFilePath, generateYamlEnvironment(envFile));
         return { success: true, path: envFilePath };
       }
+
+      await writeFileAtomic(envFilePath, generateBruEnvironmentFull(variables, carriedExtra));
+      return { success: true, path: envFilePath };
 
     } catch (error) {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error'
       };
+    }
+  }
+
+  /**
+   * Read an environment that is about to be replaced, for the conflict report and
+   * for its unmodelled keys.
+   *
+   * A file that exists but does not parse still counts as existing — refusing to
+   * clobber it is the whole point, and reporting no variables is honest about what
+   * could be read. Only a genuinely absent file yields undefined.
+   */
+  private async readForConflict(
+    envFilePath: string,
+    format: CollectionFormat,
+  ): Promise<EnvFile | undefined> {
+    let content: string;
+    try {
+      content = await fs.readFile(envFilePath, 'utf-8');
+    } catch {
+      return undefined;
+    }
+
+    try {
+      return format === 'yaml'
+        ? parseYamlEnvironmentFile(content, '')
+        : parseBruEnvironmentFile(content);
+    } catch {
+      return {};
     }
   }
 
