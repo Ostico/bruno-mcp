@@ -422,6 +422,22 @@ export interface CreateRequestInput {
     type: BodyType;
     content?: string;
     formData?: MultipartFormPart[];
+    /**
+     * A graphql body's variables, as the raw JSON text the author wrote.
+     *
+     * Kept as text on purpose, all the way to disk: both dialects store it that
+     * way, and parsing it here would force a re-serialisation on write that
+     * reflows the author's JSON and destroys a `{{placeholder}}` which is not
+     * valid JSON standing alone.
+     */
+    variables?: string;
+    /**
+     * A file body's parts. `content` remains the one-file shorthand — it is
+     * read as a single `filePath` — but only this can carry a content type, a
+     * deselected entry, or more than one file, which is the shape both dialects
+     * actually store.
+     */
+    files?: BruFilePart[];
   };
   auth?: {
     type: AuthType;
@@ -654,7 +670,7 @@ export interface YamlBody {
    * break an already-stringified JSON envelope. Encoding after substitution is
    * the only order that cannot forge structure.
    */
-  data?: string | MultipartFormPart[] | FormUrlEncodedPart[] | BruGraphql;
+  data?: string | MultipartFormPart[] | FormUrlEncodedPart[] | BruFilePart[] | BruGraphql;
 }
 
 export type YamlAuth =

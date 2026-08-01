@@ -12,14 +12,13 @@ import {
   CreateRequestInput,
   HttpMethod,
   AuthType,
-  BodyType,
 } from '../bruno/types.js';
 import { createReader } from '../bruno/format-factory.js';
 import { toRequestView } from '../bruno/request-view.js';
 import { validateToolPath, resolveRequestFile } from './tool-path.js';
 import { withPathLock } from '../bruno/path-mutex.js';
 import { topologicalSort } from './topological-sort.js';
-import { inlineScriptsSchema, assertionEntrySchema, requestVarsSchema, requestSettingsSchema } from './schemas.js';
+import { inlineScriptsSchema, assertionEntrySchema, requestBodySchema, requestVarsSchema, requestSettingsSchema } from './schemas.js';
 import type { ToolContext } from './context.js';
 import { isRequestExtension, isYamlExtension, REQUEST_EXTENSIONS } from '../bruno/request-extensions.js';
 
@@ -35,16 +34,7 @@ export function registerCreateRequestTool(ctx: ToolContext): void {
         method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']),
         url: z.string().min(1, 'URL is required'),
         headers: z.record(z.string()).optional(),
-        body: z.object({
-          type: z.enum(['none', 'json', 'text', 'xml', 'form-data', 'form-urlencoded', 'binary']),
-          content: z.string().optional(),
-          formData: z.array(z.object({
-            name: z.string(),
-            value: z.union([z.string(), z.array(z.string())]),
-            type: z.enum(['text', 'file']).optional(),
-            contentType: z.string().optional()
-          })).optional()
-        }).optional(),
+        body: requestBodySchema,
         auth: z.object({
           type: z.enum(['none', 'bearer', 'basic', 'oauth2', 'api-key', 'digest', 'inherit'])
             .describe('Auth mode. "inherit" defers to the folder or collection auth block and takes no config; pass {} for it.'),
@@ -78,11 +68,7 @@ export function registerCreateRequestTool(ctx: ToolContext): void {
           method: args.method as HttpMethod,
           url: args.url,
           headers: args.headers,
-          body: args.body ? {
-            type: args.body.type as BodyType,
-            content: args.body.content,
-            formData: args.body.formData
-          } : undefined,
+          body: args.body as CreateRequestInput['body'],
           auth: args.auth ? {
             type: args.auth.type as AuthType,
             config: args.auth.config
@@ -146,16 +132,7 @@ export function registerModifyRequestTool(ctx: ToolContext): void {
         method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']).optional(),
         url: z.string().optional(),
         headers: z.record(z.string()).optional(),
-        body: z.object({
-          type: z.enum(['none', 'json', 'text', 'xml', 'form-data', 'form-urlencoded', 'binary']),
-          content: z.string().optional(),
-          formData: z.array(z.object({
-            name: z.string(),
-            value: z.union([z.string(), z.array(z.string())]),
-            type: z.enum(['text', 'file']).optional(),
-            contentType: z.string().optional()
-          })).optional()
-        }).optional(),
+        body: requestBodySchema,
         auth: z.object({
           type: z.enum(['none', 'bearer', 'basic', 'oauth2', 'api-key', 'digest', 'inherit'])
             .describe('Auth mode. "inherit" defers to the folder or collection auth block and takes no config; pass {} for it.'),
@@ -228,11 +205,7 @@ export function registerModifyRequestTool(ctx: ToolContext): void {
         if (args.url !== undefined) updates.url = args.url;
         if (args.headers !== undefined) updates.headers = args.headers;
         if (args.body !== undefined) {
-          updates.body = {
-            type: args.body.type as BodyType,
-            content: args.body.content,
-            formData: args.body.formData,
-          };
+          updates.body = args.body as CreateRequestInput['body'];
         }
         if (args.auth !== undefined) {
           updates.auth = {
@@ -365,10 +338,7 @@ export function registerCreateTestSuiteTool(ctx: ToolContext): void {
           method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']),
           url: z.string(),
           headers: z.record(z.string()).optional(),
-          body: z.object({
-            type: z.enum(['none', 'json', 'text', 'xml', 'form-data', 'form-urlencoded']),
-            content: z.string().optional()
-          }).optional(),
+          body: requestBodySchema,
           auth: z.object({
             // Same seven modes as create_request and update_request. This enum
             // used to stop at api-key, so a CRUD set could not be given the
@@ -409,10 +379,13 @@ export function registerCreateTestSuiteTool(ctx: ToolContext): void {
             method: req.method as HttpMethod,
             url: req.url,
             headers: req.headers,
-            body: req.body ? {
-              type: req.body.type as BodyType,
-              content: req.body.content
-            } : undefined,
+            // The whole body, not just `{type, content}`. Forwarding two of
+            // its fields meant a suite request could name a multipart or file
+            // body and then have no way to say what was in it: the parts were
+            // dropped here and the body reached the writer as a bare string,
+            // which is the shape that made the generator's content fall-through
+            // reachable in the first place.
+            body: req.body as CreateRequestInput['body'],
             auth: req.auth ? {
               type: req.auth.type as AuthType,
               config: req.auth.config

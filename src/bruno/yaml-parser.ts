@@ -17,6 +17,7 @@ import {
   type YamlInfo,
   type MultipartFormPart,
   type FormUrlEncodedPart,
+  type BruFilePart,
   type TlsSettings,
   type YamlParam,
   type YamlAssertion,
@@ -179,6 +180,25 @@ function parseBody(raw: unknown): YamlBody | undefined {
         value: String(pair.value ?? ''),
       };
       if (pair.disabled === true) item.enabled = false;
+      return item;
+    });
+  } else if (Array.isArray(obj.data) && type === 'file') {
+    // A file body, which is not a multipart part either. Bruno stores it as a
+    // list of `{ filePath, contentType, selected }` (see
+    // `bruno-filestore/src/formats/yml/common/body.ts`), and none of those keys
+    // exist on a part — so reading one through the multipart mapper below
+    // produced `{ name: '', value: '' }` and **dropped the file path entirely**.
+    // Rewriting the request then wrote those empty parts back over a file body
+    // this server never authored. Same failure the form-urlencoded branch above
+    // exists to prevent: the array shape alone does not say what the entries are,
+    // only `type` does.
+    data = obj.data.map((entry) => {
+      const part = (entry ?? {}) as Record<string, unknown>;
+      const item: BruFilePart = { filePath: String(part.filePath ?? '') };
+      if (part.contentType !== undefined) item.contentType = String(part.contentType);
+      // Recorded only when false, matching how the .bru side models it: a part
+      // with no flag is one that will be sent.
+      if (part.selected === false) item.selected = false;
       return item;
     });
   } else if (Array.isArray(obj.data)) {
