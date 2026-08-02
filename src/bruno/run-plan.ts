@@ -16,7 +16,13 @@ import type { ParseFailure } from './types.js';
 
 export interface GroupInput {
   name?: string;
-  requests: string[];
+  /**
+   * Absent and empty mean different things. Absent is "everything in the
+   * collection", which is how one collection gets run under two identities.
+   * An empty array is a selection that came out empty, and running the whole
+   * collection for it would be the opposite of what the caller computed.
+   */
+  requests?: string[];
   environment?: string;
   variables?: Record<string, string>;
   parallel?: boolean;
@@ -59,7 +65,7 @@ export interface RunPlan {
  * or is not a runnable shape at all, still throws with the file named — the
  * caller asked for that specific request and there is no partial answer to it.
  *
- * A group with no references at all is the whole collection, and a collection
+ * A group that names no list at all is the whole collection, and a collection
  * path that will not open is a real error — it is not routed through here.
  */
 async function resolveReference(
@@ -98,23 +104,26 @@ export async function buildRunPlan(
   // settings directly rather than through a defaulting rule further down.
   const groupInputs: GroupInput[] = input.groups?.length
     ? input.groups
-    : [{ requests: input.requests ?? [], parallel: input.parallel }];
+    : [{ requests: input.requests, parallel: input.parallel }];
 
   const groups: ResolvedGroup[] = [];
   for (const [index, group] of groupInputs.entries()) {
     const requests: ParsedRequest[] = [];
     const missingRequests: string[] = [];
+    const references = group.requests;
 
-    if (group.requests.length === 0) {
-      // No references at all means the whole collection, which discovery spells
-      // as an undefined target.
+    if (references === undefined) {
+      // No list at all means the whole collection, which discovery spells as an
+      // undefined target. A list that is present and empty falls through to the
+      // empty-group warning below instead: the caller said which requests they
+      // wanted and the answer was none of them.
       const discovered = await resolveRunTargets(undefined, collectionPath);
       requests.push(...discovered.requests);
       parseFailures.push(...discovered.parseFailures);
       warnings.push(...discovered.warnings);
     }
 
-    for (const reference of group.requests) {
+    for (const reference of references ?? []) {
       const discovered = await resolveReference(collectionPath, reference);
       if (discovered === undefined) {
         missingRequests.push(reference);

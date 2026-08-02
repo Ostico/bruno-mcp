@@ -57,6 +57,15 @@ describe('with no groups', () => {
     expect(plan.groups[0]!.requests.map((r) => r.yaml.info.name)).toEqual(['login', 'refresh']);
   });
 
+  it('runs nothing for a top-level requests list that is present and empty', async () => {
+    // Same rule as a group: omitting the key is the whole collection, supplying
+    // an empty list is a selection of nothing.
+    const plan = await buildRunPlan(root, { requests: [] });
+
+    expect(plan.groups[0]!.requests).toHaveLength(0);
+    expect(plan.warnings.join(' ')).toContain('no requests');
+  });
+
   it('accepts an absolute path as well as a collection-relative one', async () => {
     const plan = await buildRunPlan(root, { requests: [join(root, 'users', 'list.bru')] });
 
@@ -185,6 +194,28 @@ describe('with explicit groups', () => {
 
   it('reports an empty group rather than passing silently', async () => {
     const plan = await buildRunPlan(root, { groups: [{ requests: ['nowhere'] }] });
+
+    expect(plan.groups[0]!.requests).toHaveLength(0);
+    expect(plan.warnings.join(' ')).toContain('no requests');
+  });
+
+  it('runs the whole collection for a group that omits requests entirely', async () => {
+    // The flagship shape: the same collection under two identities. Nothing to
+    // list, so the list is absent rather than empty.
+    const plan = await buildRunPlan(root, {
+      groups: [{ name: 'alice' }, { name: 'bob' }],
+    });
+
+    expect(plan.groups[0]!.requests).toHaveLength(3);
+    expect(plan.groups[1]!.requests).toHaveLength(3);
+    expect(plan.warnings.filter((w) => w.includes('no requests'))).toHaveLength(0);
+  });
+
+  it('runs nothing for a group whose requests list is present and empty', async () => {
+    // An empty list is a statement, not an omission. Reading it as "everything"
+    // meant a caller who computed a selection down to nothing ran the whole
+    // collection under that group's identity instead.
+    const plan = await buildRunPlan(root, { groups: [{ name: 'nobody', requests: [] }] });
 
     expect(plan.groups[0]!.requests).toHaveLength(0);
     expect(plan.warnings.join(' ')).toContain('no requests');

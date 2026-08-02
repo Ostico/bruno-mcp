@@ -37,6 +37,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `maxConcurrency` caps requests in flight across the whole run; omit it and one
   is derived from this machine's cores and memory, `0` lifts it entirely.
 
+- **An empty `requests` list means nothing, not everything.** Omitting
+  `requests` — at the run level or on a group — still runs the whole collection,
+  which is how one collection runs under two identities. Supplying `requests:
+  []` now runs no requests and warns, where before it ran the entire collection.
+  A caller that filters a selection down to nothing was getting the widest
+  possible run at the moment it asked for the narrowest.
+
 - **Results are group-shaped: there is no top-level `results` array.** Each entry
   of `groups[]` carries its own `summary`, `results`, `capturedVariableNames`,
   `capturedVariables` and `warnings`; the top-level `summary` covers the run.

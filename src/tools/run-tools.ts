@@ -23,10 +23,10 @@ export function registerRunCollectionTool(ctx: ToolContext): void {
         collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to collection root directory. Use the path returned by list_collections.'),
         environment: z.string().optional().describe('Environment name to use (e.g. "dev", "staging"). Get available names from get_collection_stats.'),
         collectionRoot: z.string().optional().describe('Path to collection root for environment resolution (if different from collectionPath)'),
-        requests: z.array(z.string().min(1, 'A request entry must not be empty')).optional().describe('The requests to run, IN THE ORDER GIVEN. Each entry is a .yml or .bru request file, or a directory, which expands to every request under it, recursively. Absolute, or relative to collectionPath. Get paths from list_requests or get_collection_stats. Duplicates are allowed: naming the same request twice runs it twice. Omit to run every request in the collection. Cannot be combined with groups. An entry naming nothing is reported in missingRequests rather than failing the run, so you can see which subset ran.'),
+        requests: z.array(z.string().min(1, 'A request entry must not be empty')).optional().describe('The requests to run, IN THE ORDER GIVEN. Each entry is a .yml or .bru request file, or a directory, which expands to every request under it, recursively. Absolute, or relative to collectionPath. Get paths from list_requests or get_collection_stats. Duplicates are allowed: naming the same request twice runs it twice. Omit to run every request in the collection; an empty [] is a selection of nothing and runs nothing. Cannot be combined with groups. An entry naming nothing is reported in missingRequests rather than failing the run, so you can see which subset ran.'),
         groups: z.array(z.object({
           name: z.string().optional().describe('Your label for this group, echoed back on its result. Omit and the group is addressed by its index.'),
-          requests: z.array(z.string().min(1, 'A request entry must not be empty')).describe('This group\'s requests, in the order given. Same forms as the top-level requests: a file, or a directory that expands. Duplicates allowed.'),
+          requests: z.array(z.string().min(1, 'A request entry must not be empty')).optional().describe('This group\'s requests, in the order given. Same forms as the top-level requests: a file, or a directory that expands. Duplicates allowed. OMIT to run the whole collection under this group\'s identity — that is how one collection runs as two users. An empty [] is not the same thing: it is a selection of nothing, and runs nothing.'),
           environment: z.string().optional().describe('Environment file for this group, REPLACING the run-level environment rather than merging with it. Bruno\'s UI runs one environment per run; here two groups can run two.'),
           variables: z.record(z.union([z.string(), z.number(), z.boolean()])).optional().describe('Variables for this group, MERGED over the run-level variables with this group winning per name. So a run-level baseUrl survives a group that only overrides user.'),
           parallel: z.boolean().optional().describe('Run this group\'s own requests concurrently. Default false, whatever the run-level parallel says. Two concurrent requests in one group share that group\'s store, so they can genuinely contend on a bru.setVar — which is the point when reproducing a race, and a reason to keep a group serial when it is not.'),
@@ -56,7 +56,7 @@ export function registerRunCollectionTool(ctx: ToolContext): void {
         // here, at the boundary where the caller's string first arrives.
         const escaped = [
           ...(args.requests ?? []),
-          ...(args.groups ?? []).flatMap((group) => group.requests),
+          ...(args.groups ?? []).flatMap((group) => group.requests ?? []),
         ]
           .map((reference) => ({
             reference,
