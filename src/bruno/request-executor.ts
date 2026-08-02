@@ -1142,8 +1142,14 @@ export class RequestExecutor {
         folderMap.get(folder)!.push(req);
       }
 
-      // Sort folder names alphabetically for deterministic merge order
-      const sortedFolders = [...folderMap.keys()].sort();
+      // Merge in the order discovery produced, which is the order a serial run
+      // would execute: folder `seq` first, alphabetical only as the fallback
+      // within that. A plain alphabetical sort here was deterministic but
+      // disagreed with the serial ordering, so the same collection reported its
+      // folders in two different orders depending on `parallel`. Map preserves
+      // insertion order and `requests` is already ordered, so first appearance
+      // is the answer.
+      const sortedFolders = [...folderMap.keys()];
 
       // Execute folders in parallel, serial within each folder
       const folderResults = await Promise.allSettled(

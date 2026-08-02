@@ -4,6 +4,7 @@ import { parseYamlRequest } from './yaml-parser.js';
 import { parseBruRequest } from './bru-parser.js';
 import { bruFileToYamlRequest } from './bru-to-yaml.js';
 import { isMetadataFile } from './metadata-files.js';
+import { readFolderSeq, sortFoldersByNameThenSequence } from './request-order.js';
 import { describeParseFailure } from './parse-failure.js';
 import {
   isRequestFile,
@@ -42,7 +43,28 @@ const EXCLUDED_DIRS = new Set([
   'environments',
 ]);
 
-async function findYmlFilesRecursive(dirPath: string, results: string[], collectionPath: string): Promise<void> {
+/**
+ * One directory's own request files, in the order that directory contributes
+ * them to the run.
+ */
+interface DirectoryGroup {
+  dirPath: string;
+  files: string[];
+}
+
+/**
+ * Walk the tree, returning directories in the order they contribute requests.
+ *
+ * A directory's subfolders are emitted before the directory itself, because
+ * upstream's `traverse` returns `folders.concat(requests)` — so a request at
+ * the collection root runs after every folder. See `request-order.ts` for why
+ * this is a port rather than a design.
+ */
+async function walkInExecutionOrder(
+  dirPath: string,
+  collectionPath: string,
+  groups: DirectoryGroup[],
+): Promise<void> {
   let entries;
   try {
     entries = await readdir(dirPath, { withFileTypes: true });
@@ -50,53 +72,78 @@ async function findYmlFilesRecursive(dirPath: string, results: string[], collect
     return;
   }
 
-  for (const entry of entries) {
-    const fullPath = join(dirPath, entry.name);
+  const subdirectories = entries.filter(
+    (entry) => entry.isDirectory() && !EXCLUDED_DIRS.has(entry.name),
+  );
+  const files = entries
+    .filter((entry) => entry.isFile() && isRequestFile(entry.name))
+    .map((entry) => join(dirPath, entry.name))
+    .filter((fullPath) => !isMetadataFile(fullPath, collectionPath));
 
-    if (entry.isDirectory() && !EXCLUDED_DIRS.has(entry.name)) {
-      await findYmlFilesRecursive(fullPath, results, collectionPath);
-    } else if (entry.isFile() && isRequestFile(entry.name)) {
-      if (!isMetadataFile(fullPath, collectionPath)) {
-        results.push(fullPath);
-      }
-    }
+  const ordered = sortFoldersByNameThenSequence(
+    await Promise.all(
+      subdirectories.map(async (entry) => ({
+        name: entry.name,
+        path: join(dirPath, entry.name),
+        seq: await readFolderSeq(join(dirPath, entry.name)),
+      })),
+    ),
+  );
+
+  for (const folder of ordered) {
+    await walkInExecutionOrder(folder.path, collectionPath, groups);
   }
+
+  groups.push({ dirPath, files });
 }
 
 export async function discoverRequests(dirPath: string): Promise<DiscoveryResult> {
-  const requestFiles: string[] = [];
-  await findYmlFilesRecursive(dirPath, requestFiles, dirPath);
+  const groups: DirectoryGroup[] = [];
+  await walkInExecutionOrder(dirPath, dirPath, groups);
 
   const requests: ParsedRequest[] = [];
   const parseFailures: ParseFailure[] = [];
+  const allFiles: string[] = [];
 
-  for (const filePath of requestFiles) {
-    try {
-      const content = await readFile(filePath, 'utf-8');
-      let yaml: YamlRequest;
-      if (isYamlRequestFile(filePath)) {
-        yaml = parseYamlRequest(content);
-      } else {
-        yaml = bruFileToYamlRequest(parseBruRequest(content));
+  for (const group of groups) {
+    const inThisDirectory: ParsedRequest[] = [];
+
+    for (const filePath of group.files) {
+      allFiles.push(filePath);
+      try {
+        const content = await readFile(filePath, 'utf-8');
+        let yaml: YamlRequest;
+        if (isYamlRequestFile(filePath)) {
+          yaml = parseYamlRequest(content);
+        } else {
+          yaml = bruFileToYamlRequest(parseBruRequest(content));
+        }
+        inThisDirectory.push({ yaml, filePath });
+      } catch (error) {
+        parseFailures.push(describeParseFailure(filePath, error));
       }
-      requests.push({ yaml, filePath });
-    } catch (error) {
-      parseFailures.push(describeParseFailure(filePath, error));
     }
-  }
 
-  requests.sort((a, b) => {
-    const seqA = a.yaml.info.seq ?? Number.MAX_SAFE_INTEGER;
-    const seqB = b.yaml.info.seq ?? Number.MAX_SAFE_INTEGER;
-    return seqA - seqB;
-  });
+    // Sorted per directory, because `seq` is scoped to a folder. Ties break on
+    // filename, which upstream does not do: it leaves them in `readdir` order.
+    // That is a deliberate divergence — an arbitrary-but-stable order is the
+    // point of this fix, and two requests sharing a `seq` have no intended
+    // order to preserve, so nothing observable is lost by making it repeatable.
+    inThisDirectory.sort((a, b) => {
+      const seqA = a.yaml.info.seq ?? Number.MAX_SAFE_INTEGER;
+      const seqB = b.yaml.info.seq ?? Number.MAX_SAFE_INTEGER;
+      return seqA - seqB || a.filePath.localeCompare(b.filePath);
+    });
+
+    requests.push(...inThisDirectory);
+  }
 
   return {
     requests,
     parseFailures,
     // Every discovered file, not only the ones that parsed: a `.yaml` file that
     // also failed to parse is still a `.yaml` file the user should rename.
-    warnings: unconventionalExtensionWarning(requestFiles),
+    warnings: unconventionalExtensionWarning(allFiles),
   };
 }
 
