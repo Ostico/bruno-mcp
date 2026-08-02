@@ -1250,12 +1250,32 @@ the file written is one Bruno reads, which is real work rather than a one-line e
 > touches zod — the same blind spot the defect itself lived in. Tests that parse through the registered
 > schemas took that mutant from 1 kill to 22. See [[cover-the-layer-the-caller-sees]].
 
-### L19 — `create_crud_requests` accepts no auth. CONFIRMED. *(Found while fixing L3)*
+### L19 — `create_crud_requests` accepts no auth. CONFIRMED. FIXED. *(Found while fixing L3)*
 
 `createCrudRequests(collectionPath, entityName, baseUrl, folder?)` takes no auth parameter, so every request
 in a generated CRUD set is written with `auth: none`. Against any authenticated API the whole set has to be
 edited afterwards, one request at a time. Surfaced when correcting L3's attribution — the register named this
 tool as the one with the short auth enum; it in fact has no auth enum at all.
+
+**FIXED.** `auth` is now a parameter with the same shape and the same seven modes as `create_request`, and it
+defaults to **`inherit`**, not `none`.
+
+*The default is the substance of the fix.* Writing `none` is not "no opinion" — in both dialects it is an
+opt-OUT of the collection's own auth block. `.bru` writes an explicit `auth: none` line; `.yml` writes no auth
+key at all, and the runner treats absence identically (`applyAuth` in `request-executor.ts` returns `undefined`
+for a falsy auth rather than falling back to the collection). So the old behaviour did not merely fail to set
+auth, it actively suppressed the collection's. `inherit` is what Bruno itself gives a new request —
+`auth ?? { mode: 'inherit' }` in bruno-app's collections actions — so this needed no judgment call.
+`{ type: 'none' }` still opts out, deliberately.
+
+*The tests read the bytes.* `inherit` is declared partly by a line in the http block and partly by the
+*absence* of an auth block, so a test that asserts on the object handed to the writer can agree with itself
+while the file on disk says something else. `tests/unit/bruno/crud-request-auth.test.ts` creates real
+collections in both dialects and reads the five generated files back.
+
+*One contract test moved.* `auth-enum-agreement.test.ts` pinned the count of auth-taking tools at three; it is
+four now. Its second test — that every such tool offers the same modes — needed no change, which is the test
+that was doing the work.
 
 ### L9 — graphql body with no query falls back to `''`. SUSPECTED.
 
@@ -1657,5 +1677,6 @@ posture decisions.
     `files` added to carry what the new types need, one shared body schema across the three tools, and
     `meta { type: graphql }` on the `.bru` side. Scoping it turned up **H5**, live data loss in the `.yml`
     file-body reader, which shipped in the same change because L18's file half sits on top of it.
-20. **L19** — give `create_crud_requests` an auth parameter. Small, and the only reason a generated CRUD set
-    cannot be pointed at an authenticated API.
+20. **L19** — give `create_crud_requests` an auth parameter. DONE. It also needed its default changed to
+    `inherit`, since the old absent-auth encoding actively suppressed the collection's auth block rather
+    than leaving it alone.

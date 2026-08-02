@@ -454,12 +454,18 @@ export function registerCreateCrudRequestsTool(ctx: ToolContext): void {
     'create_crud_requests',
     {
       title: 'Create CRUD Requests',
-      description: 'Generate a complete set of CRUD operations for an entity',
+      description: 'Generate a complete set of CRUD operations for an entity: list, get by id, create, update, delete. All five inherit the collection or folder auth block unless you pass auth.',
       inputSchema: {
         collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to existing collection directory.'),
         entityName: z.string().min(1, 'Entity name is required'),
         baseUrl: z.string().min(1, 'Base URL is required'),
-        folder: z.string().optional()
+        folder: z.string().optional(),
+        auth: z.object({
+          type: z.enum(['none', 'bearer', 'basic', 'oauth2', 'api-key', 'digest', 'inherit'])
+            .describe('Auth mode written to all five requests. "inherit" defers to the folder or collection auth block and takes no config; pass {} for it.'),
+          config: z.record(z.string())
+        }).optional()
+          .describe('Defaults to inherit, matching what Bruno itself gives a new request. Passing "none" is an opt-OUT that stops the collection auth block from applying to these five files, not an absence of opinion.')
       }
     },
     async (args) => {
@@ -476,7 +482,8 @@ export function registerCreateCrudRequestsTool(ctx: ToolContext): void {
           args.collectionPath,
           args.entityName,
           args.baseUrl,
-          args.folder
+          args.folder,
+          args.auth
         );
 
         const successCount = results.filter(r => r.success).length;

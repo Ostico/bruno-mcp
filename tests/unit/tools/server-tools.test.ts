@@ -423,6 +423,32 @@ describe('Server tool handlers', () => {
       expect(result.content[0].text).toContain('1 failed');
     });
 
+    it('passes auth through to the builder', async () => {
+      const mock = getManagerMock(server, 'requestBuilder', 'createCrudRequests')
+        .mockResolvedValue([{ success: true }]);
+      const handler = getHandler(server, 'create_crud_requests');
+      await handler({
+        collectionPath: '/col', entityName: 'User', baseUrl: 'https://api.com',
+        auth: { type: 'bearer', config: { token: '{{t}}' } },
+      });
+      expect(mock).toHaveBeenCalledWith(
+        '/col', 'User', 'https://api.com', undefined,
+        { type: 'bearer', config: { token: '{{t}}' } },
+      );
+    });
+
+    it('leaves the auth argument undefined so the builder default applies', async () => {
+      // The inherit default lives on createCrudRequests, not here — the tool
+      // must not substitute a mode of its own, or the two would drift.
+      const mock = getManagerMock(server, 'requestBuilder', 'createCrudRequests')
+        .mockResolvedValue([{ success: true }]);
+      const handler = getHandler(server, 'create_crud_requests');
+      await handler({
+        collectionPath: '/col', entityName: 'User', baseUrl: 'https://api.com',
+      });
+      expect(mock).toHaveBeenCalledWith('/col', 'User', 'https://api.com', undefined, undefined);
+    });
+
     it('should catch thrown errors', async () => {
       getManagerMock(server, 'requestBuilder', 'createCrudRequests')
         .mockRejectedValue(new Error('boom'));

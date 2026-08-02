@@ -25,8 +25,9 @@ exports[`MCP tool surface contract matches the recorded surface exactly (titles,
     "title": "Create Bruno Collection",
   },
   "create_crud_requests": {
-    "description": "Generate a complete set of CRUD operations for an entity",
+    "description": "Generate a complete set of CRUD operations for an entity: list, get by id, create, update, delete. All five inherit the collection or folder auth block unless you pass auth.",
     "schema": {
+      "auth": "{ config: record<string>; type: enum(none|bearer|basic|oauth2|api-key|digest|inherit) }?",
       "baseUrl": "string",
       "collectionPath": "string",
       "entityName": "string",
