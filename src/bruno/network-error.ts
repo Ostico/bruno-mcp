@@ -63,9 +63,41 @@ function isTimeout(error: unknown): boolean {
   );
 }
 
+/**
+ * This process's open-files soft limit, when the platform reports one.
+ *
+ * Read on demand rather than at module load: `getReport()` walks the whole
+ * process and this path is reached only by a request that already failed.
+ * `userLimits` is empty on Windows, and a soft limit can legitimately be
+ * reported as the string `unlimited`, so anything that is not a number is
+ * treated as "no figure to quote" rather than interpolated raw.
+ */
+function openFilesSoftLimit(): number | undefined {
+  const report = process.report?.getReport() as
+    | { userLimits?: { open_files?: { soft?: unknown } } }
+    | undefined;
+  const soft = report?.userLimits?.open_files?.soft;
+
+  return typeof soft === 'number' ? soft : undefined;
+}
+
 /** What a given socket-level code actually tells the caller to do next. */
 function hintForCode(code: string): string {
   switch (code) {
+    case 'EMFILE': {
+      // There is deliberately no fd-derived concurrency cap: the soft limit is
+      // around a million on a normal host, so sizing a run against it would be
+      // fortune-telling. Naming the limit in the one message that proves it was
+      // reached is the honest alternative — without the figure, this reads as a
+      // network fault and sends the caller after the wrong thing entirely.
+      const soft = openFilesSoftLimit();
+      const limit =
+        soft === undefined
+          ? 'This host would not report its open-files limit.'
+          : `The open-files soft limit is ${soft}.`;
+
+      return `This host ran out of file descriptors, so the connection was never opened — nothing is wrong with the target. ${limit} Lower maxConcurrency, or raise the limit (ulimit -n) before running this many requests at once.`;
+    }
     case 'ECONNREFUSED':
       return 'Nothing accepted the connection on that host and port. Check the scheme and port — an https:// URL against a plain-HTTP listener fails this way.';
     case 'ENOTFOUND':
