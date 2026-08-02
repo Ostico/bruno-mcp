@@ -20,20 +20,33 @@ export type AuthType = 'none' | 'bearer' | 'basic' | 'oauth2' | 'api-key' | 'dig
  * Auth modes the executor applies to the outgoing request itself.
  *
  * `bearer` and `basic` become an Authorization header; `api-key` becomes either a
- * caller-named header or a query parameter, per its placement.
+ * caller-named header or a query parameter, per its placement. `digest` and
+ * `oauth2` are applied too, but not from the request alone: digest answers a
+ * 401 challenge and re-sends, and oauth2 fetches a token first. Being here is
+ * the promise that a credential reaches the wire, not that it is computed
+ * before the first byte.
  */
-export type AppliedAuthType = Extract<AuthType, 'bearer' | 'basic' | 'api-key'>;
+export type AppliedAuthType = Extract<
+  AuthType,
+  'bearer' | 'basic' | 'api-key' | 'digest' | 'oauth2'
+>;
 
 /**
  * Auth modes `AuthType` accepts that the executor CANNOT perform.
  *
- * Both need a multi-step exchange with the server — an OAuth2 token grant, a
- * digest challenge/response — that this tool does not run. A request configured
- * with one of these is sent with NO credential and carries a warning saying so,
- * rather than appearing to be authenticated. Their nested configuration is also
- * currently dropped on write, so a round-trip does not preserve them.
+ * Empty since L3. `digest` and `oauth2` were both here: each needs a multi-step
+ * exchange with the server, and neither exchange was run. The executor now
+ * performs both — a digest challenge/response, and an OAuth2 token grant for
+ * the grant types that do not require a browser.
+ *
+ * Deliberately kept rather than deleted. It is the slot a new mode goes in when
+ * it is accepted by the parser before the executor can perform it, and the
+ * classification proof below is what forces that choice to be made out loud.
+ * One partial case does NOT live here: oauth2's `authorization_code` and
+ * `implicit` grants cannot work in a headless server, and are refused per
+ * grant inside the oauth2 branch rather than by disowning the whole mode.
  */
-export type UnappliedAuthType = Extract<AuthType, 'oauth2' | 'digest'>;
+export type UnappliedAuthType = never;
 
 /**
  * The auth mode that defers to the enclosing folder or collection.

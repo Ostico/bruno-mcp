@@ -13,6 +13,9 @@ import {
   ownPreRequestScript,
   ownPostScripts,
 } from './script-merge.js';
+import { applyAuth } from './auth-apply.js';
+import { digestRetryHeader } from './auth-digest.js';
+import { createTokenCache, resolveOAuth2, type TokenCache } from './auth-oauth2.js';
 import { buildDispatcher, type DispatcherResult } from './fetch-dispatcher.js';
 import { describeNetworkError } from './network-error.js';
 import { applyParams } from './request-params.js';
@@ -45,7 +48,6 @@ import {
 import { buildGraphqlBody, buildFormUrlEncodedBody } from './request-body.js';
 import type {
   YamlRequest,
-  YamlAuth,
   MockRequestData,
   CollectionRunResult,
   CollectionRunSummary,
@@ -54,7 +56,6 @@ import type {
   MultipartFormPart,
   FormUrlEncodedPart,
   BruGraphql,
-  UnappliedAuthType,
 } from './types.js';
 
 // The .bru -> YamlRequest translation and the credential-redaction helpers moved
@@ -160,6 +161,8 @@ export async function buildFetchOptions(
   vars: Map<string, string>,
   collectionRoot?: string,
   rootChain?: RootChain,
+  /** An oauth2 access token already fetched for this request, if any. */
+  oauth2Token?: string,
 ): Promise<{
   url: string;
   options: RequestInit;
@@ -287,6 +290,7 @@ export async function buildFetchOptions(
     authWarnings,
     authHeaderNames,
     rootChain?.auth,
+    oauth2Token,
   );
   if (queryAuth) {
     url = appendQueryCredential(url, queryAuth.key, queryAuth.value);
@@ -415,123 +419,6 @@ export async function buildFetchOptions(
   };
 }
 
-/**
- * Placement values that put an api-key credential in the query string.
- *
- * Bruno writes `queryparams` (its schema allows only `'header' | 'queryparams'`)
- * while this tool's own surface says `query`, and the field is spelled `in` on
- * one path and `placement` on the other. Reading a single spelling and letting
- * everything else fall through to the header branch meant a request authored in
- * Bruno sent its credential as a HEADER NAMED AFTER THE QUERY PARAMETER — to a
- * server that was never going to look there, while the header went out anyway.
- */
-const QUERY_PLACEMENTS = new Set(['query', 'queryparams']);
-
-/**
- * Auth modes the type surface accepts that this executor cannot perform.
- *
- * Typed as UnappliedAuthType so the list cannot drift from the declared split:
- * moving a mode out of UnappliedAuthType (because it was implemented) makes this
- * array fail to type-check until the entry is removed here too.
- */
-const UNAPPLIED_AUTH_TYPES: readonly UnappliedAuthType[] = ['oauth2', 'digest'];
-
-/** True when an api-key auth block asks for the credential in the query string. */
-function isQueryPlacement(auth: Exclude<YamlAuth, 'inherit'>): boolean {
-  const placement = auth.in ?? auth.placement;
-  return typeof placement === 'string' && QUERY_PLACEMENTS.has(placement.toLowerCase());
-}
-
-/**
- * Apply a request's auth to the outgoing headers.
- *
- * Header-based schemes (bearer, basic, header api-key) mutate `headers` in
- * place. A query api-key is returned so the caller can append it to the URL.
- * Schemes we cannot honour automatically — oauth2 and digest need a flow,
- * `inherit` needs collection/folder resolution we do not model — are pushed to
- * `warnings` and produce no header, so a run never silently sends an
- * unauthenticated request while claiming the auth was configured.
- */
-function applyAuth(
-  auth: YamlAuth | undefined,
-  headers: Record<string, string>,
-  subst: (value: string) => string,
-  warnings: string[],
-  authHeaderNames: string[],
-  inheritedAuth?: YamlAuth,
-): { key: string; value: string } | undefined {
-  if (!auth) {
-    return undefined;
-  }
-  if (auth === 'inherit') {
-    // Resolved from the nearest collection/folder root that defines auth. Still
-    // warns when no root does: `inherit` from nothing sends no credential, and
-    // that has to be said rather than looking like a request without auth.
-    if (!inheritedAuth || inheritedAuth === 'inherit') {
-      warnings.push(
-        'auth is set to "inherit", but no collection or folder root defines auth; no credential was sent',
-      );
-      return undefined;
-    }
-    return applyAuth(inheritedAuth, headers, subst, warnings, authHeaderNames);
-  }
-
-  switch (auth.type) {
-    case undefined:
-    case 'none':
-      return undefined;
-
-    case 'bearer': {
-      const token = subst(String(auth.token ?? ''));
-      if (token.length === 0) {
-        warnings.push('bearer auth has no token; no Authorization header was sent');
-        return undefined;
-      }
-      headers['Authorization'] = `Bearer ${token}`;
-      authHeaderNames.push('Authorization');
-      return undefined;
-    }
-
-    case 'basic': {
-      const username = subst(String(auth.username ?? ''));
-      const password = subst(String(auth.password ?? ''));
-      headers['Authorization'] =
-        'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
-      authHeaderNames.push('Authorization');
-      return undefined;
-    }
-
-    case 'api-key':
-    case 'apikey': {
-      const key = subst(String(auth.key ?? ''));
-      const value = subst(String(auth.value ?? ''));
-      if (key.length === 0) {
-        warnings.push('api-key auth has no key name; no credential was sent');
-        return undefined;
-      }
-      if (isQueryPlacement(auth)) {
-        return { key, value };
-      }
-      headers[key] = value;
-      authHeaderNames.push(key);
-      return undefined;
-    }
-
-    default: {
-      const type = String(auth.type);
-      // A KNOWN-but-unimplemented scheme and an unrecognised one are different
-      // situations for whoever reads the warning: the first needs a workaround,
-      // the second is probably a typo or a Bruno feature this tool has not
-      // learned yet.
-      warnings.push(
-        (UNAPPLIED_AUTH_TYPES as readonly string[]).includes(type)
-          ? `auth type "${type}" is not applied: it needs a multi-step exchange with the server that this tool does not perform, so no credential was sent. Obtain the credential in a pre-request script and set the header there.`
-          : `auth type "${type}" is not applied because it is not recognised; no credential was sent. Send the credential via a header or a pre-request script.`,
-      );
-      return undefined;
-    }
-  }
-}
 
 const DEFAULT_TIMEOUT_MS = 30000;
 
@@ -608,6 +495,7 @@ async function executeSingleRequest(
   collectionRoot?: string,
   cookieJar?: RunCookieJar,
   rootChain?: RootChain,
+  tokenCache: TokenCache = createTokenCache(),
 ): Promise<RequestExecutionResult> {
   // `vars:pre-request` sits between the environment and the runtime store, which
   // is where upstream puts it: collection < env < folder < REQUEST < oauth2 <
@@ -618,14 +506,20 @@ async function executeSingleRequest(
   // Merge env + request vars with runtime vars (runtime takes precedence)
   const effectiveVars = variableStore ? variableStore.merge(baseVars) : baseVars;
 
+  // Before the request is built, because the token becomes one of its headers.
+  // Its own fetch, not the pinned dispatcher below: the token endpoint is a
+  // different host and gets its own SSRF check inside.
+  const oauth = await resolveOAuth2(yaml, rootChain, effectiveVars, tokenCache);
+
+
   // eslint-disable-next-line prefer-const -- url is reassigned by pre-request script mutations below
-  const built = await buildFetchOptions(yaml, effectiveVars, collectionRoot, rootChain);
+  const built = await buildFetchOptions(yaml, effectiveVars, collectionRoot, rootChain, oauth.token);
   let url = built.url;
   let options = built.options;
   // Reassignable: a pre-request script that sets a variable triggers a
   // re-substitution below, which re-derives auth warnings and the
   // applied auth-header names from the merged vars so they stay consistent.
-  let authWarnings = built.warnings;
+  let authWarnings = oauth.error ? [...(built.warnings ?? []), oauth.error] : built.warnings;
   let authHeaderNames = built.authHeaderNames ?? [];
   let authQueryNames = built.authQueryNames ?? [];
   const name = yaml.info.name;
@@ -825,6 +719,23 @@ async function executeSingleRequest(
       }
     }
     let response = await fetchFn(url, currentOpts);
+
+    // Digest is the one scheme whose credential cannot be computed until the
+    // server refuses once: the 401 carries the nonce it must be hashed against.
+    // One retry only — a second 401 is a wrong password, not a new challenge,
+    // and looping on it would hammer the endpoint.
+    const digestRetry = digestRetryHeader(
+      yaml, rootChain, response, url, String(currentOpts.method ?? 'GET'), effectiveVars,
+    );
+    if (digestRetry) {
+      currentOpts = {
+        ...currentOpts,
+        headers: { ...(currentOpts.headers as Record<string, string>), Authorization: digestRetry },
+      };
+      authHeaderNames = [...authHeaderNames, 'Authorization'];
+      response = await fetchFn(url, currentOpts);
+    }
+
     // Stored even for a 4XX/5XX, as upstream does: a failed login still sets
     // the cookie the next request needs.
     if (cookieJar) {
@@ -1098,6 +1009,9 @@ export class RequestExecutor {
       await resolveRunTargets(options?.requestPath, collectionPath);
 
     let results: RequestExecutionResult[];
+    // One per run, not per request: a token belongs to the credentials, so a
+    // run of forty requests should not look like forty logins to the provider.
+    const tokenCache = createTokenCache();
     // One serial, one per folder in parallel, in execution order. See
     // captured-variables.ts for what is reported out of them.
     const stores: VariableStore[] = [];
@@ -1144,7 +1058,7 @@ export class RequestExecutor {
           const folderJar = cookiesEnabled ? createRunCookieJar() : undefined;
           const folderRes: RequestExecutionResult[] = [];
           for (const req of folderRequests) {
-            const result = await executeSingleRequest(req.yaml, vars, scriptRunner, folderStore, bodyCapture, collectionPath, folderJar, await rootLoader.forRequest(req.filePath));
+            const result = await executeSingleRequest(req.yaml, vars, scriptRunner, folderStore, bodyCapture, collectionPath, folderJar, await rootLoader.forRequest(req.filePath), tokenCache);
             folderRes.push(result);
           }
           return folderRes;
@@ -1192,7 +1106,7 @@ export class RequestExecutor {
       const runJar = cookiesEnabled ? createRunCookieJar() : undefined;
       results = [];
       for (const req of requests) {
-        const result = await executeSingleRequest(req.yaml, vars, scriptRunner, variableStore, bodyCapture, collectionPath, runJar, await rootLoader.forRequest(req.filePath));
+        const result = await executeSingleRequest(req.yaml, vars, scriptRunner, variableStore, bodyCapture, collectionPath, runJar, await rootLoader.forRequest(req.filePath), tokenCache);
         results.push(result);
       }
     }

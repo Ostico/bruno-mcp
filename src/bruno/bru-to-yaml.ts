@@ -187,9 +187,21 @@ export function bruAuthToYamlAuth(
         value: auth.apikey?.value ?? '',
         in: auth.apikey?.placement === 'queryparams' ? 'query' : 'header',
       };
+    case 'digest':
+      return {
+        type: 'digest',
+        username: auth.digest?.username ?? '',
+        password: auth.digest?.password ?? '',
+      };
+    case 'oauth2':
+      // Spread rather than named fields: Bruno's oauth2 block differs by grant
+      // type and gains parameters between releases, and the executor only reads
+      // the handful it understands. Listing them here would silently drop the
+      // rest on the way to a model that can hold them (`YamlAuth` is indexed).
+      return { type: 'oauth2', ...(auth.oauth2 ?? {}) };
     default:
-      // oauth2, digest: carried by type only so buildFetchOptions can warn
-      // rather than have the scheme vanish silently.
+      // Anything this does not model yet is carried by type alone, so the
+      // scheme is reported as unapplied rather than vanishing silently.
       return { type: auth.type };
   }
 }

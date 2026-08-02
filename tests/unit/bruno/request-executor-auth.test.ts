@@ -66,12 +66,17 @@ describe('buildFetchOptions auth application', () => {
     expect(warnings?.some(w => /oauth2/i.test(w) && /not applied/i.test(w))).toBe(true);
   });
 
-  it('warns on digest auth', async () => {
-    const { warnings } = await buildFetchOptions(
+  it('stays quiet on digest auth, which is completed by the challenge retry', async () => {
+    // This used to warn, because digest was not performed at all. It is now: the
+    // credential is a hash over a nonce the server issues in its 401, so the
+    // first request carries no header by design and the executor answers the
+    // challenge. See request-executor-digest.test.ts.
+    const { options, warnings } = await buildFetchOptions(
       req({ type: 'digest', username: 'u', password: 'p' }),
       noVars,
     );
-    expect(warnings?.some(w => /digest/i.test(w))).toBe(true);
+    expect(options.headers).toEqual({});
+    expect(warnings).toBeUndefined();
   });
 
   it('warns when there is no root chain to inherit auth from', async () => {
