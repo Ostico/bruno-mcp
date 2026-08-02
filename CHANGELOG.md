@@ -5,13 +5,11 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.0.0] - 2026-08-02
 
-> **The next published release must be `2.0.0`.** The public API lost three
-> exports after `1.2.3` (see *Removed* below), and `run_collection`'s input and
-> output shapes both changed (see *Breaking changes* below). That is a breaking
-> change under semver, so it cannot ship as a patch or minor no matter how small
-> the diff that follows it.
+> **Major, and it had to be.** The public API lost three exports after `1.2.3`
+> (see *Removed* below), and `run_collection`'s input and output shapes both
+> changed (see *Breaking changes* below).
 
 ### Breaking changes
 
