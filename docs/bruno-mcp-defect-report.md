@@ -796,7 +796,7 @@ not.
 
 ## Open — Low
 
-### L13 — no return channel for a value a run captured. CONFIRMED. *(User-reported)*
+### L13 — no return channel for a value a run captured. CONFIRMED. FIXED. *(User-reported)*
 
 H3 solved the inbound direction — `run_collection` accepts `variables`. There is no outbound one: nothing on
 the run result carries what a script set with `bru.setVar`. The reporter's workaround was to embed the token in
@@ -805,6 +805,35 @@ one place they are certain to be logged and echoed back.
 
 Worth deciding alongside redaction: the values most worth returning are exactly the ones most worth not
 printing.
+
+**FIXED.** `run_collection` takes `captureVariables: string[]` and the run result carries two new fields:
+`capturedVariableNames` (every name a script set, on every run) and `capturedVariables` (values, only for the
+names asked for). The reduction lives in `src/bruno/captured-variables.ts`; `request-executor.ts` was within
+twenty lines of the repo-wide `max-lines` ceiling, and the reporting rules are worth stating somewhere they can
+be read without the executor around them.
+
+*The redaction question, answered.* Values are opt-in by name, and there the policy stops — no pattern matching
+on the name, no heuristic about which values look secret, and a value that is asked for comes back verbatim.
+Two things settle it. Names are already readable in the collection's own script source, so listing them
+discloses nothing a caller could not read off disk, and listing them is what makes the useful sequence work:
+run once, see what the scripts set, ask for the one you need. And masking a requested value would protect
+nothing while breaking the feature — `run_collection` returns `response_body` by default, and a captured token
+came *out of* a response body, so the channel this was supposed to guard is already open and deliberately so.
+What the opt-in does buy is that a run which captures a bearer token does not put it in the result of every run
+that merely crossed that folder.
+
+*No upstream port exists.* Bruno's CLI never emits runtime variables in its JSON reporter, and
+`bruno-cli/src/utils/persist-variables.js` states outright that runtime vars are intentionally not persisted,
+being ephemeral by definition. Upstream's way out is `bru.setEnvVar`, which writes to the environment file on
+disk; this sandbox has no such function, and nothing in this fix writes anything anywhere.
+
+*Two shapes worth knowing.* Parallel folders each keep their own `VariableStore` by design, so the reduction
+reads all of them rather than one — reading a single store would report a subset and look exactly like a script
+that never ran. Two folders can set one name to different values without either being wrong, so the folder that
+ran first is the one reported and a warning names the disagreement, rather than presenting a merged value no
+single folder would have produced. Separately, a requested name that no script set is warned about rather than
+returned as an empty string: an empty string is indistinguishable from a script that set one, which is the
+difference between "the login failed" and "the login returned an empty token".
 
 ### L14 — `folder` is not a parameter, and passing it runs the whole collection. CONFIRMED. FIXED. *(User-reported)*
 
@@ -1529,9 +1558,11 @@ What an agent needs and does not have. Direct field feedback first.
     copy: Bruno has no concurrency at all, so folder parallelism is already ours and shared state means defining
     semantics upstream never had to. Do it after M9 and M11, and expect it to be a design discussion rather
     than a patch.
-8e. **L13** — a return channel for captured values. Cheap and agent-visible, but it needs a redaction decision
-    taken at the same time, since the values worth returning are the ones worth not printing. That decision is
-    why it is still here; **L14**, which shared this slot, was split off and is done (PR #99, by the alias
+8e. **L13** — a return channel for captured values. DONE. The redaction decision it was waiting on turned out
+    to be answered by the shape of the tool rather than by a policy: values are opt-in by name, and
+    `response_body` is returned by default anyway, so masking a value a caller asked for would break the
+    feature without closing the channel. See the L13 section. **L14**, which shared this slot, was split off
+    and is done too (PR #99, by the alias
     route — per-tool rejection of unknown keys is not available, since the whole surface strips them). Two
     defects found underneath it are fixed with it: relative paths anchored to the server's cwd, and an
     empty-directory run reporting a clean pass.

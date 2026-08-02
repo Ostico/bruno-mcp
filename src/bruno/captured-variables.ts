@@ -80,9 +80,9 @@ export function collectCapturedVariables(
   }
 
   const values: Record<string, string> = {};
+  // A Set, so a caller that repeats a name does not get it warned about twice.
   const neverSet = new Set<string>();
-  // A Set, so a caller repeating a name does not get it reported twice.
-  for (const name of new Set(requested ?? [])) {
+  for (const name of requested ?? []) {
     const value = merged.get(name);
     if (value === undefined) {
       neverSet.add(name);
