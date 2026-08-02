@@ -82,13 +82,13 @@ describe('settings.timeout validation', () => {
   describe('values Node accepts as-is', () => {
     it('passes an ordinary integer timeout through', async () => {
       const result = await run('5000');
-      expect(result.results[0].error).toBeUndefined();
+      expect(result.groups[0]!.results[0].error).toBeUndefined();
       expect(signalOf(0)).toBeInstanceOf(AbortSignal);
     });
 
     it('sends no signal at all when the timeout is 0', async () => {
       const result = await run('0');
-      expect(result.results[0].error).toBeUndefined();
+      expect(result.groups[0]!.results[0].error).toBeUndefined();
       expect(signalOf(0)).toBeUndefined();
     });
   });
@@ -110,7 +110,7 @@ describe('settings.timeout validation', () => {
 
     it('truncates a fractional timeout to whole milliseconds', async () => {
       const result = await run('1500.7');
-      expect(result.results[0].error).toBeUndefined();
+      expect(result.groups[0]!.results[0].error).toBeUndefined();
       expect(signalOf(0)).toBeInstanceOf(AbortSignal);
     });
   });
@@ -123,7 +123,7 @@ describe('settings.timeout validation', () => {
       const result = await run(String(2 ** 31));
 
       expect(signalOf(0)).toBeUndefined();
-      expect(result.results[0].warnings).toEqual(
+      expect(result.groups[0]!.results[0].warnings).toEqual(
         expect.arrayContaining([expect.stringContaining(String(MAX_TIMEOUT_MS))]),
       );
     });
@@ -131,7 +131,7 @@ describe('settings.timeout validation', () => {
     it('treats an infinite timeout as no timeout', async () => {
       const result = await run('.inf');
       expect(signalOf(0)).toBeUndefined();
-      expect(result.results[0].warnings).toEqual(
+      expect(result.groups[0]!.results[0].warnings).toEqual(
         expect.arrayContaining([expect.stringContaining('no timeout')]),
       );
     });
@@ -142,7 +142,7 @@ describe('settings.timeout validation', () => {
       const result = await run('.nan');
 
       expect(signalOf(0)).toBeInstanceOf(AbortSignal);
-      expect(result.results[0].warnings).toEqual(
+      expect(result.groups[0]!.results[0].warnings).toEqual(
         expect.arrayContaining([expect.stringContaining('not a number')]),
       );
     });

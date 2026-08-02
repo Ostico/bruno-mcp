@@ -178,7 +178,7 @@ describe('RequestExecutor — unresolved variable warnings', () => {
     expect(profileCall![1].headers.Authorization).toBe('Bearer {{token}}');
 
     // (b) The run is no longer silently green: the unresolved variable is named.
-    const profileResult = result.results.find(r => r.name === 'Get Profile');
+    const profileResult = result.groups[0]!.results.find(r => r.name === 'Get Profile');
     expect(profileResult).toBeDefined();
     expect(profileResult!.warnings).toContain('unresolved variable: {{token}}');
 
@@ -201,7 +201,7 @@ describe('RequestExecutor — unresolved variable warnings', () => {
     const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
     expect(result.summary.total).toBe(1);
-    expect(result.results[0].warnings).toContain('unresolved variable: {{token}}');
+    expect(result.groups[0]!.results[0].warnings).toContain('unresolved variable: {{token}}');
     // Literal placeholder still reaches the wire (single-pass, no bridging).
     expect(mockFetch.mock.calls[0][1].headers.Authorization).toBe('Bearer {{token}}');
   });
@@ -231,7 +231,7 @@ http:
 
     const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
-    const profileResult = result.results.find(r => r.name === 'Get Profile');
+    const profileResult = result.groups[0]!.results.find(r => r.name === 'Get Profile');
     expect(profileResult).toBeDefined();
     expect(profileResult!.warnings).toBeUndefined();
     // Resolved value did reach the wire.

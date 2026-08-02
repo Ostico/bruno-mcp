@@ -167,7 +167,7 @@ describe('run_collection tool', () => {
       expect(parsed.summary.total).toBe(3);
       expect(parsed.summary.passed).toBe(3);
       expect(parsed.summary.failed).toBe(0);
-      expect(parsed.results).toHaveLength(3);
+      expect(parsed.groups[0].results).toHaveLength(3);
     });
 
     it('should pass requestPath for single-request mode', async () => {

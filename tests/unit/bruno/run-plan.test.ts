@@ -172,6 +172,17 @@ describe('with explicit groups', () => {
     expect(plan.groups[0]!.missingRequests).toEqual(['auth/nope.bru']);
   });
 
+  it('still throws for a named request that is there but will not parse', async () => {
+    // Absence is a missing member; a syntax error is a fact about a file the
+    // caller named, and reporting it as "missing" would send them looking for
+    // a path that is right there.
+    await writeFile(join(root, 'auth', 'broken.bru'), 'meta {\n  name: broken\n');
+
+    await expect(
+      buildRunPlan(root, { groups: [{ requests: ['auth/broken.bru'] }] }),
+    ).rejects.toThrow(/broken\.bru/);
+  });
+
   it('reports an empty group rather than passing silently', async () => {
     const plan = await buildRunPlan(root, { groups: [{ requests: ['nowhere'] }] });
 

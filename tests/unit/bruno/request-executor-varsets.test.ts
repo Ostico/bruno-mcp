@@ -222,7 +222,7 @@ async function runOne(fileName: string, source: string, body: unknown = WIDGET_B
   mockFetch.mockResolvedValue(createMockResponse(body));
 
   const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
-  return result.results[0];
+  return result.groups[0]!.results[0];
 }
 
 /** The URL the request actually went out with. */

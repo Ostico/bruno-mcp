@@ -62,7 +62,7 @@ async function runBru(content: string): Promise<Array<Record<string, unknown>>> 
   const dir = await fs.mkdtemp(join(tmpdir(), 'script-timeout-'));
   await fs.writeFile(join(dir, 'R.bru'), content);
   const result = await RequestExecutor.executeCollection(dir, { scriptRunner: TestRunner });
-  return (result.results?.[0]?.tests ?? []) as Array<Record<string, unknown>>;
+  return (result.groups[0]!.results?.[0]?.tests ?? []) as Array<Record<string, unknown>>;
 }
 
 describe('choosing the script budget', () => {

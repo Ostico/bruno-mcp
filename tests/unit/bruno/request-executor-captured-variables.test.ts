@@ -79,9 +79,9 @@ describe('reading back what a run captured', () => {
 
     const result = await RequestExecutor.executeCollection(root, { scriptRunner: TestRunner });
 
-    expect(result.capturedVariableNames).toEqual(['token']);
+    expect(result.groups[0]!.capturedVariableNames).toEqual(['token']);
     // Not asked for, so not returned — the whole point of the opt-in.
-    expect(result.capturedVariables).toBeUndefined();
+    expect(result.groups[0]!.capturedVariables).toBeUndefined();
   });
 
   it('returns the value of a name the caller asked for', async () => {
@@ -94,7 +94,7 @@ describe('reading back what a run captured', () => {
       captureVariables: ['token'],
     });
 
-    expect(result.capturedVariables).toEqual({ token: 'tok-from-response' });
+    expect(result.groups[0]!.capturedVariables).toEqual({ token: 'tok-from-response' });
   });
 
   it('returns only the names asked for, not everything the run captured', async () => {
@@ -110,8 +110,8 @@ describe('reading back what a run captured', () => {
       captureVariables: ['id'],
     });
 
-    expect(result.capturedVariableNames).toEqual(['id', 'token']);
-    expect(result.capturedVariables).toEqual({ id: '42' });
+    expect(result.groups[0]!.capturedVariableNames).toEqual(['id', 'token']);
+    expect(result.groups[0]!.capturedVariables).toEqual({ id: '42' });
   });
 
   it('omits both fields entirely when no script set anything', async () => {
@@ -119,11 +119,11 @@ describe('reading back what a run captured', () => {
 
     const result = await RequestExecutor.executeCollection(root, { scriptRunner: TestRunner });
 
-    expect(result.capturedVariableNames).toBeUndefined();
-    expect(result.capturedVariables).toBeUndefined();
+    expect(result.groups[0]!.capturedVariableNames).toBeUndefined();
+    expect(result.groups[0]!.capturedVariables).toBeUndefined();
   });
 
-  it('warns on the run when a requested name was never set', async () => {
+  it('warns on the group when a requested name was never set', async () => {
     const root = await collection({
       'login.yml': capturing('login', 'bru.setVar("token", res.body.token);'),
     });
@@ -133,8 +133,10 @@ describe('reading back what a run captured', () => {
       captureVariables: ['refresh_token'],
     });
 
-    expect(result.capturedVariables).toBeUndefined();
-    expect(result.warnings?.join(' ')).toContain('refresh_token');
+    expect(result.groups[0]!.capturedVariables).toBeUndefined();
+    // On the group, not the run: a name that one group set and another did not
+    // is two different facts, and a run-level warning could only state one.
+    expect(result.groups[0]!.warnings?.join(' ')).toContain('refresh_token');
   });
 
   it('does not capture the variables the caller supplied for the run', async () => {
@@ -148,7 +150,7 @@ describe('reading back what a run captured', () => {
       captureVariables: ['api_key'],
     });
 
-    expect(result.capturedVariables).toBeUndefined();
+    expect(result.groups[0]!.capturedVariables).toBeUndefined();
     expect(JSON.stringify(result)).not.toContain('supplied-secret');
   });
 
@@ -168,7 +170,7 @@ describe('reading back what a run captured', () => {
     });
 
     expect(result.summary.total).toBe(2);
-    expect(result.capturedVariables).toEqual({ authToken: 'tok-from-response', orderId: '42' });
+    expect(result.groups[0]!.capturedVariables).toEqual({ authToken: 'tok-from-response', orderId: '42' });
   });
 
   it('reports the same captured values serially and in parallel', async () => {
@@ -184,7 +186,7 @@ describe('reading back what a run captured', () => {
         parallel,
         captureVariables: ['authToken', 'orderId'],
       });
-      return result.capturedVariables;
+      return result.groups[0]!.capturedVariables;
     };
 
     expect(await run(true)).toEqual(await run(false));
@@ -212,6 +214,6 @@ runtime:
       captureVariables: ['nonce'],
     });
 
-    expect(result.capturedVariables).toEqual({ nonce: 'n-1' });
+    expect(result.groups[0]!.capturedVariables).toEqual({ nonce: 'n-1' });
   });
 });

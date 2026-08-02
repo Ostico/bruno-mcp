@@ -53,10 +53,14 @@ export interface RunPlan {
  * Resolve one caller reference. A relative path is taken against the collection
  * root; an absolute one is used as given.
  *
- * Returns `undefined` when the reference names nothing: that is recorded rather
- * than thrown, because a caller who cannot see which subset ran cannot bisect.
+ * Returns `undefined` when the reference names nothing on disk: that is recorded
+ * rather than thrown, because a caller who cannot see which subset ran cannot
+ * bisect. Only absence is swallowed. A file that is there but will not parse,
+ * or is not a runnable shape at all, still throws with the file named — the
+ * caller asked for that specific request and there is no partial answer to it.
+ *
  * A group with no references at all is the whole collection, and a collection
- * path that will not open is a real error — it is not caught here.
+ * path that will not open is a real error — it is not routed through here.
  */
 async function resolveReference(
   collectionPath: string,
@@ -68,8 +72,11 @@ async function resolveReference(
 
   try {
     return await resolveRunTargets(target, collectionPath);
-  } catch {
-    return undefined;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
+      return undefined;
+    }
+    throw error;
   }
 }
 

@@ -275,9 +275,9 @@ describe('RequestExecutor', () => {
         environment: 'dev',
       });
 
-      expect(result.results[0].response_body).toBe(JSON.stringify({ hello: 'world' }));
-      expect(result.results[0].response_content_type).toBe('application/json');
-      expect(result.results[0].response_body_truncated).toBe(false);
+      expect(result.groups[0]!.results[0].response_body).toBe(JSON.stringify({ hello: 'world' }));
+      expect(result.groups[0]!.results[0].response_content_type).toBe('application/json');
+      expect(result.groups[0]!.results[0].response_body_truncated).toBe(false);
     });
 
     it('truncates the body when it exceeds maxResponseBodyBytes', async () => {
@@ -290,9 +290,9 @@ describe('RequestExecutor', () => {
         maxResponseBodyBytes: 5,
       });
 
-      expect(result.results[0].response_body).toBe('abcde');
-      expect(Buffer.byteLength(result.results[0].response_body!, 'utf8')).toBeLessThanOrEqual(5);
-      expect(result.results[0].response_body_truncated).toBe(true);
+      expect(result.groups[0]!.results[0].response_body).toBe('abcde');
+      expect(Buffer.byteLength(result.groups[0]!.results[0].response_body!, 'utf8')).toBeLessThanOrEqual(5);
+      expect(result.groups[0]!.results[0].response_body_truncated).toBe(true);
     });
 
     it('omits body fields when includeResponseBody is false', async () => {
@@ -305,9 +305,9 @@ describe('RequestExecutor', () => {
         includeResponseBody: false,
       });
 
-      expect(result.results[0].response_body).toBeUndefined();
-      expect(result.results[0].response_body_truncated).toBeUndefined();
-      expect(result.results[0].response_content_type).toBeUndefined();
+      expect(result.groups[0]!.results[0].response_body).toBeUndefined();
+      expect(result.groups[0]!.results[0].response_body_truncated).toBeUndefined();
+      expect(result.groups[0]!.results[0].response_content_type).toBeUndefined();
     });
   });
 
@@ -376,13 +376,13 @@ describe('RequestExecutor', () => {
       expect(result.summary.duration_ms).toBeGreaterThanOrEqual(0);
 
       // Verify order: seq 1 (Get Users) before seq 2 (Create User)
-      expect(result.results).toHaveLength(2);
-      expect(result.results[0].name).toBe('Get Users');
-      expect(result.results[0].method).toBe('GET');
-      expect(result.results[0].status).toBe(200);
-      expect(result.results[1].name).toBe('Create User');
-      expect(result.results[1].method).toBe('POST');
-      expect(result.results[1].status).toBe(201);
+      expect(result.groups[0]!.results).toHaveLength(2);
+      expect(result.groups[0]!.results[0].name).toBe('Get Users');
+      expect(result.groups[0]!.results[0].method).toBe('GET');
+      expect(result.groups[0]!.results[0].status).toBe(200);
+      expect(result.groups[0]!.results[1].name).toBe('Create User');
+      expect(result.groups[0]!.results[1].method).toBe('POST');
+      expect(result.groups[0]!.results[1].status).toBe(201);
 
       // Verify variable substitution was applied
       expect(mockFetch).toHaveBeenCalledTimes(2);
@@ -409,12 +409,12 @@ describe('RequestExecutor', () => {
 
       expect(result.summary.total).toBe(1);
       expect(result.summary.passed).toBe(1);
-      expect(result.results[0].tests).toHaveLength(2);
-      expect(result.results[0].tests[0]).toEqual({
+      expect(result.groups[0]!.results[0].tests).toHaveLength(2);
+      expect(result.groups[0]!.results[0].tests[0]).toEqual({
         description: 'should return 200',
         status: 'pass',
       });
-      expect(result.results[0].tests[1]).toEqual({
+      expect(result.groups[0]!.results[0].tests[1]).toEqual({
         description: 'should have status field',
         status: 'pass',
       });
@@ -443,7 +443,7 @@ describe('RequestExecutor', () => {
       });
 
       expect(injected.runScript).toHaveBeenCalledTimes(1);
-      expect(result.results[0].tests).toEqual([
+      expect(result.groups[0]!.results[0].tests).toEqual([
         { description: 'from injected runner', status: 'pass' },
       ]);
     });
@@ -468,7 +468,7 @@ describe('RequestExecutor', () => {
         environment: 'dev',
       });
 
-      expect(result.results[0].tests).not.toEqual([
+      expect(result.groups[0]!.results[0].tests).not.toEqual([
         { description: 'should return 200', status: 'pass' },
         { description: 'should have status field', status: 'pass' },
       ]);
@@ -492,9 +492,9 @@ describe('RequestExecutor', () => {
 
       // The request passes and records no assertions — the warning is the only
       // signal that the script's expectations were silently dropped.
-      expect(result.results[0].tests).toHaveLength(0);
-      expect(result.results[0].warnings).toHaveLength(1);
-      expect(result.results[0].warnings![0]).toContain('outside a test() block');
+      expect(result.groups[0]!.results[0].tests).toHaveLength(0);
+      expect(result.groups[0]!.results[0].warnings).toHaveLength(1);
+      expect(result.groups[0]!.results[0].warnings![0]).toContain('outside a test() block');
     });
 
     it('should not attach warnings when assertions are properly wrapped', async () => {
@@ -512,7 +512,7 @@ describe('RequestExecutor', () => {
         { scriptRunner: TestRunner, environment: 'dev' }
       );
 
-      expect(result.results[0].warnings).toBeUndefined();
+      expect(result.groups[0]!.results[0].warnings).toBeUndefined();
     });
 
     it('should handle network errors gracefully and continue', async () => {
@@ -541,13 +541,13 @@ describe('RequestExecutor', () => {
       expect(result.summary.passed).toBe(1);
 
       // First request should be marked as failed
-      expect(result.results[0].name).toBe('Get Users');
-      expect(result.results[0].status).toBe(0);
-      expect(result.results[0].error).toContain('ECONNREFUSED');
+      expect(result.groups[0]!.results[0].name).toBe('Get Users');
+      expect(result.groups[0]!.results[0].status).toBe(0);
+      expect(result.groups[0]!.results[0].error).toContain('ECONNREFUSED');
 
       // Second request should still execute
-      expect(result.results[1].name).toBe('Create User');
-      expect(result.results[1].status).toBe(201);
+      expect(result.groups[0]!.results[1].name).toBe('Create User');
+      expect(result.groups[0]!.results[1].status).toBe(201);
     });
 
     it('should handle test script failures', async () => {
@@ -570,10 +570,10 @@ describe('RequestExecutor', () => {
 
       expect(result.summary.total).toBe(1);
       expect(result.summary.failed).toBe(1);
-      expect(result.results[0].status).toBe(500);
-      expect(result.results[0].tests).toHaveLength(1);
-      expect(result.results[0].tests[0].status).toBe('fail');
-      expect(result.results[0].tests[0].error).toBeDefined();
+      expect(result.groups[0]!.results[0].status).toBe(500);
+      expect(result.groups[0]!.results[0].tests).toHaveLength(1);
+      expect(result.groups[0]!.results[0].tests[0].status).toBe('fail');
+      expect(result.groups[0]!.results[0].tests[0].error).toBeDefined();
     });
 
     it('should proceed with empty vars when environment is missing', async () => {
@@ -627,7 +627,7 @@ http:
 
       expect(result.summary.total).toBe(1);
       expect(result.summary.passed).toBe(1);
-      expect(result.results[0].url).toBe('https://api.example.com/ping');
+      expect(result.groups[0]!.results[0].url).toBe('https://api.example.com/ping');
     });
   });
 
@@ -657,14 +657,14 @@ http:
         '/test-collection',
         { scriptRunner: TestRunner,
           environment: 'dev',
-          requestPath: '/test-collection/requests/Get Users.yml',
+          requests: ['/test-collection/requests/Get Users.yml'],
         }
       );
 
       expect(result.summary.total).toBe(1);
-      expect(result.results[0].name).toBe('Get Users');
-      expect(result.results[0].method).toBe('GET');
-      expect(result.results[0].url).toBe('https://api.example.com/api/users');
+      expect(result.groups[0]!.results[0].name).toBe('Get Users');
+      expect(result.groups[0]!.results[0].method).toBe('GET');
+      expect(result.groups[0]!.results[0].url).toBe('https://api.example.com/api/users');
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
   });
@@ -762,9 +762,9 @@ http:
 
       const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
-      expect(result.results[0].name).toBe('First');
-      expect(result.results[1].name).toBe('Second');
-      expect(result.results[2].name).toBe('Third');
+      expect(result.groups[0]!.results[0].name).toBe('First');
+      expect(result.groups[0]!.results[1].name).toBe('Second');
+      expect(result.groups[0]!.results[2].name).toBe('Third');
     });
   });
 
@@ -778,7 +778,7 @@ http:
 
       // Recursive discovery gracefully handles missing directories
       expect(result.summary.total).toBe(0);
-      expect(result.results).toHaveLength(0);
+      expect(result.groups[0]!.results).toHaveLength(0);
       expect(result.parseErrors).toBe(0);
     });
 
@@ -801,7 +801,7 @@ http:
       const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.summary.total).toBe(1);
-      expect(result.results[0].name).toBe('Simple');
+      expect(result.groups[0]!.results[0].name).toBe('Simple');
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
@@ -823,7 +823,7 @@ http:
       const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.summary.total).toBe(1);
-      expect(result.results[0].name).toBe('No Seq');
+      expect(result.groups[0]!.results[0].name).toBe('No Seq');
     });
   });
 
@@ -872,8 +872,8 @@ http:
 
       const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
-      expect(result.results[0].duration_ms).toBeGreaterThanOrEqual(0);
-      expect(typeof result.results[0].duration_ms).toBe('number');
+      expect(result.groups[0]!.results[0].duration_ms).toBeGreaterThanOrEqual(0);
+      expect(typeof result.groups[0]!.results[0].duration_ms).toBe('number');
       expect(result.summary.duration_ms).toBeGreaterThanOrEqual(0);
     });
   });
@@ -932,8 +932,8 @@ http:
 
       expect(result.summary.total).toBe(2);
       // Sorted by seq: Nested (seq 1) before Top (seq 2)
-      expect(result.results[0].name).toBe('Nested Request');
-      expect(result.results[1].name).toBe('Top Request');
+      expect(result.groups[0]!.results[0].name).toBe('Nested Request');
+      expect(result.groups[0]!.results[1].name).toBe('Top Request');
     });
 
     it('should exclude node_modules, .git, and environments directories', async () => {
@@ -966,7 +966,7 @@ http:
       const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.summary.total).toBe(1);
-      expect(result.results[0].name).toBe('Valid');
+      expect(result.groups[0]!.results[0].name).toBe('Valid');
 
       // readdir should only have been called for /test-collection, not excluded dirs
       const readdirCalls = mockedFs.readdir.mock.calls.map(c =>
@@ -993,9 +993,9 @@ http:
 
       expect(result.summary.total).toBe(1);
       expect(result.summary.failed).toBe(1);
-      expect(result.results[0].status).toBe(0);
-      expect(result.results[0].error).toContain('SSRF blocked');
-      expect(result.results[0].error).toContain('link-local');
+      expect(result.groups[0]!.results[0].status).toBe(0);
+      expect(result.groups[0]!.results[0].error).toContain('SSRF blocked');
+      expect(result.groups[0]!.results[0].error).toContain('link-local');
       // fetch should NOT have been called
       expect(mockFetch).not.toHaveBeenCalled();
     });
@@ -1013,7 +1013,7 @@ http:
 
       const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
-      expect(result.results[0].error).toBe(
+      expect(result.groups[0]!.results[0].error).toBe(
         'SSRF blocked: Blocked IP: link-local address (169.254.0.0/16). REMEDIATION_SENTINEL',
       );
     });
@@ -1032,10 +1032,10 @@ http:
 
       const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
-      expect(result.results[0].error).toBe(
+      expect(result.groups[0]!.results[0].error).toBe(
         'SSRF blocked: DNS resolution failed for hostname: nope.example.com',
       );
-      expect(result.results[0].error).not.toContain('REMEDIATION_SENTINEL');
+      expect(result.groups[0]!.results[0].error).not.toContain('REMEDIATION_SENTINEL');
     });
 
     it('should continue executing remaining requests after SSRF block', async () => {
@@ -1069,10 +1069,10 @@ http:
       expect(result.summary.failed).toBe(1);
       expect(result.summary.passed).toBe(1);
       // SSRF request should be first (seq 1)
-      expect(result.results[0].error).toContain('SSRF blocked');
+      expect(result.groups[0]!.results[0].error).toContain('SSRF blocked');
       // Safe request should still execute
-      expect(result.results[1].name).toBe('Safe Request');
-      expect(result.results[1].status).toBe(200);
+      expect(result.groups[0]!.results[1].name).toBe('Safe Request');
+      expect(result.groups[0]!.results[1].status).toBe(200);
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
   });
@@ -1240,7 +1240,7 @@ http:
       // message has to say WHICH file, which the parser's own message does not.
       await expect(
         RequestExecutor.executeCollection('/test-collection', {
-          requestPath,
+          requests: [requestPath],
           scriptRunner: TestRunner,
         }),
       ).rejects.toThrow(`Failed to parse ${requestPath}:`);
@@ -1614,8 +1614,8 @@ http:
 
       expect(result.summary.total).toBe(1);
       expect(result.summary.passed).toBe(1);
-      expect(result.results[0].tests).toHaveLength(2);
-      expect(result.results[0].tests[0]).toEqual({
+      expect(result.groups[0]!.results[0].tests).toHaveLength(2);
+      expect(result.groups[0]!.results[0].tests[0]).toEqual({
         description: 'should return 200',
         status: 'pass',
       });
@@ -1659,9 +1659,9 @@ http:
 
       expect(result.summary.total).toBe(1);
       expect(result.summary.failed).toBe(1);
-      expect(result.results[0].status).toBe(0);
-      expect(result.results[0].error).toContain('blocked');
-      expect(result.results[0].error).toContain('169.254.169.254');
+      expect(result.groups[0]!.results[0].status).toBe(0);
+      expect(result.groups[0]!.results[0].error).toContain('blocked');
+      expect(result.groups[0]!.results[0].error).toContain('169.254.169.254');
 
       // fetch must only have been called once (for the original URL, not the redirect target)
       expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -1703,8 +1703,8 @@ http:
 
       expect(result.summary.total).toBe(1);
       expect(result.summary.passed).toBe(1);
-      expect(result.results[0].status).toBe(200);
-      expect(result.results[0].error).toBeUndefined();
+      expect(result.groups[0]!.results[0].status).toBe(200);
+      expect(result.groups[0]!.results[0].error).toBeUndefined();
       // fetch called twice: original + redirect
       expect(mockFetch).toHaveBeenCalledTimes(2);
       expect(mockFetch.mock.calls[1][0]).toBe('https://api.example.com/new');
@@ -1845,9 +1845,9 @@ http:
 
       expect(result.summary.total).toBe(1);
       expect(result.summary.failed).toBe(1);
-      expect(result.results[0].status).toBe(0);
-      expect(result.results[0].error).toContain('Too many redirects');
-      expect(result.results[0].error).toContain('10');
+      expect(result.groups[0]!.results[0].status).toBe(0);
+      expect(result.groups[0]!.results[0].error).toContain('Too many redirects');
+      expect(result.groups[0]!.results[0].error).toContain('10');
       // fetch called 11 times: 1 + 10 redirect follows (loop exits before 11th redirect fetch)
       expect(mockFetch).toHaveBeenCalledTimes(11);
     });
@@ -1882,8 +1882,8 @@ settings:
       const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       // 3xx returned as-is; no follow
-      expect(result.results[0].status).toBe(302);
-      expect(result.results[0].error).toBeUndefined();
+      expect(result.groups[0]!.results[0].status).toBe(302);
+      expect(result.groups[0]!.results[0].error).toBeUndefined();
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
@@ -1916,9 +1916,9 @@ settings:
 
       const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
-      expect(result.results[0].status).toBe(0);
-      expect(result.results[0].error).toContain('Too many redirects');
-      expect(result.results[0].error).toContain('2');
+      expect(result.groups[0]!.results[0].status).toBe(0);
+      expect(result.groups[0]!.results[0].error).toContain('Too many redirects');
+      expect(result.groups[0]!.results[0].error).toContain('2');
       // 1 original + 2 redirect follows (loop exits at the cap)
       expect(mockFetch).toHaveBeenCalledTimes(3);
     });
@@ -1948,8 +1948,8 @@ settings:
 
       const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
-      expect(result.results[0].status).toBe(200);
-      expect(result.results[0].error).toBeUndefined();
+      expect(result.groups[0]!.results[0].status).toBe(200);
+      expect(result.groups[0]!.results[0].error).toBeUndefined();
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
@@ -1993,8 +1993,8 @@ settings:
 
       const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
-      expect(result.results[0].status).toBe(200);
-      expect(result.results[0].error).toBeUndefined();
+      expect(result.groups[0]!.results[0].status).toBe(200);
+      expect(result.groups[0]!.results[0].error).toBeUndefined();
       expect(mockFetch).toHaveBeenCalledTimes(3);
     });
 
@@ -2035,7 +2035,7 @@ http:
 
       const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
-      expect(result.results[0].status).toBe(200);
+      expect(result.groups[0]!.results[0].status).toBe(200);
       // Original hop: POST with a body
       expect(mockFetch.mock.calls[0][1].method).toBe('POST');
       expect(mockFetch.mock.calls[0][1].body).toBeDefined();
@@ -2079,7 +2079,7 @@ http:
 
       const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
-      expect(result.results[0].status).toBe(200);
+      expect(result.groups[0]!.results[0].status).toBe(200);
       // 307 preserves method and body on the redirected hop
       expect(mockFetch.mock.calls[1][1].method).toBe('POST');
       expect(mockFetch.mock.calls[1][1].body).toBeDefined();
@@ -2252,8 +2252,8 @@ runtime:
       const [, fetchOptions] = mockFetch.mock.calls[0];
       expect(fetchOptions.headers['X-Pre']).toBe('true');
       // After-response test ran
-      expect(result.results[0].tests).toHaveLength(1);
-      expect(result.results[0].tests[0].status).toBe('pass');
+      expect(result.groups[0]!.results[0].tests).toHaveLength(1);
+      expect(result.groups[0]!.results[0].tests[0].status).toBe('pass');
     });
   });
 
@@ -2261,7 +2261,7 @@ runtime:
   // Parallel folder execution tests
   // =========================================================================
 
-  describe('parallel folder execution', () => {
+  describe('parallel group execution', () => {
     it('should produce same results as serial when parallel: false (default)', async () => {
       const REQ_A = `
 info:
@@ -2293,8 +2293,8 @@ http:
 
       expect(result.summary.total).toBe(2);
       expect(result.summary.passed).toBe(2);
-      expect(result.results[0].name).toBe('A');
-      expect(result.results[1].name).toBe('B');
+      expect(result.groups[0]!.results[0].name).toBe('A');
+      expect(result.groups[0]!.results[1].name).toBe('B');
     });
 
     it('should execute folders in parallel and merge results in folder order', async () => {
@@ -2348,8 +2348,8 @@ http:
       expect(result.summary.total).toBe(2);
       expect(result.summary.passed).toBe(2);
       // Results merged in alphabetical folder order: folderA before folderB
-      expect(result.results[0].name).toBe('A Request');
-      expect(result.results[1].name).toBe('B Request');
+      expect(result.groups[0]!.results[0].name).toBe('A Request');
+      expect(result.groups[0]!.results[1].name).toBe('B Request');
     });
 
     // A folder task rejects when something throws before executeSingleRequest's
@@ -2391,7 +2391,7 @@ settings:
       mockedBuildDispatcher.mockResolvedValue(undefined);
     });
 
-    it('should not swallow a rejected folder and report the survivors as a passing run', async () => {
+    it('reports a crashed group and still runs the others, without reading as a passing run', async () => {
       const GOOD_REQ = `
 info:
   name: A Request
@@ -2419,17 +2419,30 @@ http:
         'A Request.yml': GOOD_REQ,
         'B Request.yml': BAD_PROXY_REQ('B Request'),
       });
-      setupFsStat(['/test-collection']);
+      setupFsStat(['/test-collection', '/test-collection/folderA', '/test-collection/folderB']);
 
       mockFetch.mockResolvedValue(createMockResponse({ ok: true }));
       throwOnBadProxy();
 
-      await expect(
-        RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner, parallel: true }),
-      ).rejects.toThrow(/Invalid URL/);
+      const result = await RequestExecutor.executeCollection('/test-collection', {
+        scriptRunner: TestRunner,
+        parallel: true,
+        groups: [
+          { name: 'good', requests: ['folderA'] },
+          { name: 'bad', requests: ['folderB'] },
+        ],
+      });
+
+      // The failure is attributed, not thrown: one dead group must not hide
+      // the other group's results the way a rethrow did.
+      expect(result.groups.find((g) => g.name === 'bad')!.error).toMatch(/Invalid URL/);
+      expect(result.groups.find((g) => g.name === 'good')!.results).toHaveLength(1);
+      // And it must not read as a fully passing run, which is what the tally
+      // would say if only completed requests counted.
+      expect(result.summary.failed).toBe(1);
     });
 
-    it('should rethrow the original error when exactly one folder rejects', async () => {
+    it('keeps the original error message when exactly one group crashes', async () => {
       setupFsReaddirRecursive({
         '/test-collection': [
           { name: 'folderB', isFile: false, isDirectory: true },
@@ -2440,17 +2453,19 @@ http:
       });
 
       setupFsReadFile({ 'B Request.yml': BAD_PROXY_REQ('B Request') });
-      setupFsStat(['/test-collection']);
+      setupFsStat(['/test-collection', '/test-collection/folderB']);
       throwOnBadProxy();
 
-      // Not an AggregateError: a single failure propagates unchanged so the
-      // message and type match what serial execution would surface.
-      await expect(
-        RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner, parallel: true }),
-      ).rejects.toThrow(TypeError);
+      const result = await RequestExecutor.executeCollection('/test-collection', {
+        scriptRunner: TestRunner,
+        parallel: true,
+      });
+
+      expect(result.groups[0]!.error).toContain('Invalid URL');
+      expect(result.summary.failed).toBe(1);
     });
 
-    it('should aggregate every reason when more than one folder rejects', async () => {
+    it('reports every crashed group separately rather than merging them', async () => {
       setupFsReaddirRecursive({
         '/test-collection': [
           { name: 'folderA', isFile: false, isDirectory: true },
@@ -2481,27 +2496,37 @@ http:
         'B Request.yml': BAD_PROXY_REQ('B Request'),
         'C Request.yml': BAD_PROXY_REQ('C Request'),
       });
-      setupFsStat(['/test-collection']);
+      setupFsStat([
+        '/test-collection',
+        '/test-collection/folderA',
+        '/test-collection/folderB',
+        '/test-collection/folderC',
+      ]);
 
       mockFetch.mockResolvedValue(createMockResponse({ ok: true }));
       throwOnBadProxy();
 
-      let caught: unknown;
-      try {
-        await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner, parallel: true });
-      } catch (error) {
-        caught = error;
-      }
+      const result = await RequestExecutor.executeCollection('/test-collection', {
+        scriptRunner: TestRunner,
+        parallel: true,
+        groups: [
+          { name: 'a', requests: ['folderA'] },
+          { name: 'b', requests: ['folderB'] },
+          { name: 'c', requests: ['folderC'] },
+        ],
+      });
 
-      expect(caught).toBeInstanceOf(AggregateError);
-      const aggregate = caught as AggregateError;
-      expect(aggregate.errors).toHaveLength(2);
-      // Callers render only `.message`, so both reasons must be inlined there.
-      expect(aggregate.message).toContain('2 of 3 parallel folders failed');
-      expect(aggregate.message).toContain('Invalid URL');
+      // An AggregateError concatenated the reasons into one string; a caller
+      // could read that they had two failures but not which groups.
+      expect(result.groups.filter((g) => g.error !== undefined).map((g) => g.name)).toEqual([
+        'b',
+        'c',
+      ]);
+      expect(result.groups.find((g) => g.name === 'b')!.error).toContain('Invalid URL');
+      expect(result.summary.failed).toBe(2);
     });
 
-    it('should stringify a non-Error rejection reason in the aggregate message', async () => {
+    it('stringifies a non-Error rejection reason', async () => {
       setupFsReaddirRecursive({
         '/test-collection': [
           { name: 'folderB', isFile: false, isDirectory: true },
@@ -2519,25 +2544,33 @@ http:
         'B Request.yml': BAD_PROXY_REQ('B Request'),
         'C Request.yml': BAD_PROXY_REQ('C Request'),
       });
-      setupFsStat(['/test-collection']);
+      setupFsStat([
+        '/test-collection',
+        '/test-collection/folderB',
+        '/test-collection/folderC',
+      ]);
 
       // A user script is free to `throw 'string'`, so the reason is not always
-      // an Error and must still make it into the message.
+      // an Error and must still reach the caller.
       let call = 0;
       mockedBuildDispatcher.mockImplementation(async () => {
         call += 1;
         throw call === 1 ? new TypeError('Invalid URL') : 'plain string reason';
       });
 
-      let caught: unknown;
-      try {
-        await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner, parallel: true });
-      } catch (error) {
-        caught = error;
-      }
+      const result = await RequestExecutor.executeCollection('/test-collection', {
+        scriptRunner: TestRunner,
+        parallel: true,
+        groups: [
+          { name: 'b', requests: ['folderB'] },
+          { name: 'c', requests: ['folderC'] },
+        ],
+      });
 
-      expect(caught).toBeInstanceOf(AggregateError);
-      expect((caught as AggregateError).message).toContain('plain string reason');
+      expect(result.groups.map((g) => g.error)).toEqual([
+        expect.stringContaining('Invalid URL'),
+        'plain string reason',
+      ]);
     });
 
     it('should isolate variables between parallel folders', async () => {
@@ -2635,7 +2668,7 @@ http:
 
       expect(result.summary.total).toBe(1);
       expect(result.summary.passed).toBe(1);
-      expect(result.results[0].name).toBe('Single');
+      expect(result.groups[0]!.results[0].name).toBe('Single');
     });
 
     it('should run requests within a folder serially by seq order in parallel mode', async () => {
@@ -2682,8 +2715,8 @@ http:
 
       expect(result.summary.total).toBe(2);
       // Sorted by seq within folder: First (seq 1) before Second (seq 2)
-      expect(result.results[0].name).toBe('First');
-      expect(result.results[1].name).toBe('Second');
+      expect(result.groups[0]!.results[0].name).toBe('First');
+      expect(result.groups[0]!.results[1].name).toBe('Second');
     });
   });
 
@@ -2755,11 +2788,11 @@ body:json {
       const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.summary.total).toBe(1);
-      expect(result.results[0].name).toBe('Bru Multipart');
-      expect(result.results[0].method).toBe('POST');
+      expect(result.groups[0]!.results[0].name).toBe('Bru Multipart');
+      expect(result.groups[0]!.results[0].method).toBe('POST');
       // pre-request script + post-response + tests all ran (2 after-response tests)
-      expect(result.results[0].tests).toHaveLength(2);
-      expect(result.results[0].tests.every(t => t.status === 'pass')).toBe(true);
+      expect(result.groups[0]!.results[0].tests).toHaveLength(2);
+      expect(result.groups[0]!.results[0].tests.every(t => t.status === 'pass')).toBe(true);
       // custom header carried through to fetch
       const [, fetchOptions] = mockFetch.mock.calls[0];
       expect(fetchOptions.headers['X-Custom']).toBe('abc');
@@ -2779,10 +2812,10 @@ body:json {
       const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
       expect(result.summary.total).toBe(1);
-      expect(result.results[0].name).toBe('Bru Json');
+      expect(result.groups[0]!.results[0].name).toBe('Bru Json');
       const [, fetchOptions] = mockFetch.mock.calls[0];
       expect(fetchOptions.body).toBe('{"a":1}');
-      expect(result.results[0].tests).toHaveLength(0);
+      expect(result.groups[0]!.results[0].tests).toHaveLength(0);
     });
 
     it('executes a single .bru file passed directly via requestPath', async () => {
@@ -2791,11 +2824,11 @@ body:json {
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
 
       const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner,
-        requestPath: '/test-collection/Data.bru',
+        requests: ['/test-collection/Data.bru'],
       });
 
       expect(result.summary.total).toBe(1);
-      expect(result.results[0].name).toBe('Bru Json');
+      expect(result.groups[0]!.results[0].name).toBe('Bru Json');
     });
   });
 
@@ -2814,11 +2847,11 @@ body:json {
       mockFetch.mockResolvedValueOnce(createMockResponse([{ id: 1 }]));
 
       const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner,
-        requestPath: '/test-collection/sub',
+        requests: ['/test-collection/sub'],
       });
 
       expect(result.summary.total).toBe(1);
-      expect(result.results[0].name).toBe('Get Users');
+      expect(result.groups[0]!.results[0].name).toBe('Get Users');
     });
 
     it('throws for a requestPath that is neither a recognized file nor a directory', async () => {
@@ -2828,7 +2861,7 @@ body:json {
 
       await expect(
         RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner,
-          requestPath: '/test-collection/notes.txt',
+          requests: ['/test-collection/notes.txt'],
         }),
       ).rejects.toThrow('Unsupported request file format');
     });
@@ -2889,10 +2922,10 @@ runtime:
 
       const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
-      expect(result.results[0].error).toContain('pre boom');
+      expect(result.groups[0]!.results[0].error).toContain('pre boom');
       // A failing pre-request script halts the request: the HTTP call must not
       // fire and the result is a failure, not a 200.
-      expect(result.results[0].status).toBe(0);
+      expect(result.groups[0]!.results[0].status).toBe(0);
       expect(mockFetch).not.toHaveBeenCalled();
     });
   });
@@ -3083,7 +3116,7 @@ http:
 
       const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
-      expect(result.results[0].status).toBe(200);
+      expect(result.groups[0]!.results[0].status).toBe(200);
       expect(mockedBuildDispatcher).toHaveBeenNthCalledWith(1, expect.anything(), 'api.example.com', [
         '93.184.216.34',
       ]);
@@ -3122,7 +3155,7 @@ http:
 
       const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
-      expect(result.results[0].status).toBe(200);
+      expect(result.groups[0]!.results[0].status).toBe(200);
       // The unpinned hop fell through to global fetch with no dispatcher set.
       expect(mockFetch).toHaveBeenCalledTimes(1);
       const [, hopOpts] = mockFetch.mock.calls[0];
@@ -3145,7 +3178,7 @@ http:
 
       const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
 
-      expect(result.results[0].status).toBe(0);
+      expect(result.groups[0]!.results[0].status).toBe(0);
       expect(failing.close).toHaveBeenCalledTimes(1);
     });
   });

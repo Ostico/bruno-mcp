@@ -85,7 +85,7 @@ async function authorAndRun(
   const run = await RequestExecutor.executeCollection(collectionPath, {
     scriptRunner: TestRunner,
   });
-  return run.results[0];
+  return run.groups[0]!.results[0];
 }
 
 describe('an authored followRedirects: false stops the redirect being followed', () => {

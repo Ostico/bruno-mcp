@@ -213,7 +213,7 @@ http:
     // One call: no token was fetched, and the request still went out.
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(sent(0).Authorization).toBeUndefined();
-    const warnings = (result.results?.[0] as { warnings?: string[] }).warnings ?? [];
+    const warnings = (result.groups[0]!.results?.[0] as { warnings?: string[] }).warnings ?? [];
     expect(warnings.join(' ')).toContain('authorization_code');
   });
 
@@ -226,7 +226,7 @@ http:
     const result = await run(root, { client_secret: 'wrong' });
 
     expect(sent(1).Authorization).toBeUndefined();
-    const warnings = (result.results?.[0] as { warnings?: string[] }).warnings ?? [];
+    const warnings = (result.groups[0]!.results?.[0] as { warnings?: string[] }).warnings ?? [];
     expect(warnings.join(' ')).toContain('invalid_client');
   });
 

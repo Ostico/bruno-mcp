@@ -198,7 +198,7 @@ runtime:
     expect(mockFetch).not.toHaveBeenCalled();
 
     // The result carries the script error as a failure.
-    const r = result.results[0];
+    const r = result.groups[0]!.results[0];
     expect(r.status).toBe(0);
     expect(r.error).toBe('pre-request boom');
     expect(r.url).toBe('https://api.test/thing');
@@ -229,7 +229,7 @@ runtime:
     });
 
     expect(mockFetch).not.toHaveBeenCalled();
-    const r = result.results[0];
+    const r = result.groups[0]!.results[0];
     expect(r.error).toBe('boom');
     expect(r.url).toContain('api_key=REDACTED');
     expect(r.url).not.toContain('super-secret');
@@ -278,7 +278,7 @@ runtime:
     expect(opts.headers['X-Token']).toBe('t123');
 
     // No unresolved-variable warning, since the vars now resolve.
-    const r = result.results[0];
+    const r = result.groups[0]!.results[0];
     expect(r.warnings ?? []).not.toContain('unresolved variable: {{host}}');
     expect(r.warnings ?? []).not.toContain('unresolved variable: {{tok}}');
   });
@@ -324,7 +324,7 @@ runtime:
     expect(url).toBe('https://mutated.example.com/final');
     expect(opts.headers['X-Token']).toBe('mutated-token');
     expect(opts.body).toBe(JSON.stringify({ from: 'mutation' }));
-    expect(result.results[0].status).toBe(200);
+    expect(result.groups[0]!.results[0].status).toBe(200);
   });
 
   it('applies req.set* mutations even when the script sets no variables (no re-substitution)', async () => {
@@ -360,6 +360,6 @@ runtime:
     expect(url).toBe('https://mutated.test/y');
     expect(opts.headers['X-Added']).toBe('1');
     expect(opts.body).toBe('raw-string-body');
-    expect(result.results[0].status).toBe(200);
+    expect(result.groups[0]!.results[0].status).toBe(200);
   });
 });

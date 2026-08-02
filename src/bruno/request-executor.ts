@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { basename, relative, dirname, resolve, isAbsolute } from 'node:path';
+import { basename, relative, resolve, isAbsolute } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { loadEnvironment, substitute, findUnresolvedPlaceholders } from './env-loader.js';
 import { forkingScriptRunner, type ScriptRunner } from './sandbox-host.js';
@@ -22,7 +22,10 @@ import { applyParams } from './request-params.js';
 import { applyPreRequestVars } from './request-vars.js';
 import { bruFileToYamlRequest, bruAuthToYamlAuth } from './bru-to-yaml.js';
 import type { ExecutionOptions } from './execution-options.js';
-import { resolveRunTargets, type ParsedRequest } from './request-discovery.js';
+import { type ParsedRequest } from './request-discovery.js';
+import { buildRunPlan, type ResolvedGroup } from './run-plan.js';
+import { createSemaphore } from './concurrency.js';
+import { applyDerivedConcurrency } from './sandbox-host.js';
 import { createRootLoader, type RootChain, type RootLoader } from './collection-roots.js';
 import { applyVariableOverrides } from './runtime-variables.js';
 import {
@@ -50,6 +53,7 @@ import type {
   YamlRequest,
   MockRequestData,
   CollectionRunResult,
+  GroupRunResult,
   CollectionRunSummary,
   RequestExecutionResult,
   TestResult,
@@ -989,147 +993,153 @@ export class RequestExecutor {
     // quietly running it here.
     const scriptRunner = options?.scriptRunner ?? forkingScriptRunner;
 
-    let vars = new Map<string, string>();
-    if (options?.environment) {
-      const envRoot = options.collectionRoot ?? collectionPath;
-      vars = await loadEnvironment(envRoot, options.environment);
-    }
-    // Overrides the environment file, and works with no environment at all —
-    // the point, since a secret has no correct on-disk home to load from.
-    vars = applyVariableOverrides(vars, options?.variables);
-
     // On unless refused, as upstream's `--disable-cookies` is off unless given.
     const cookiesEnabled = options?.cookieJar !== false;
 
-    // One loader for the run: its cache is read-only, so unlike the cookie jar
-    // it is safe to share across parallel folders.
-    const rootLoader: RootLoader = createRootLoader(options?.collectionRoot ?? collectionPath);
+    const plan = await buildRunPlan(collectionPath, {
+      requests: options?.requests,
+      groups: options?.groups,
+      parallel: options?.parallel,
+      environment: options?.environment,
+      variables: options?.variables,
+    });
 
-    const { requests, parseFailures, warnings: discoveryWarnings } =
-      await resolveRunTargets(options?.requestPath, collectionPath);
-
-    let results: RequestExecutionResult[];
-    // One per run, not per request: a token belongs to the credentials, so a
-    // run of forty requests should not look like forty logins to the provider.
-    const tokenCache = createTokenCache();
-    // One serial, one per folder in parallel, in execution order. See
-    // captured-variables.ts for what is reported out of them.
-    const stores: VariableStore[] = [];
-
-    if (options?.parallel) {
-      // Group requests by folder (derived from file path relative to collectionPath)
-      const folderMap = new Map<string, ParsedRequest[]>();
-      for (const req of requests) {
-        const relPath = relative(collectionPath, req.filePath);
-        const folder = dirname(relPath) === '.' ? '' : dirname(relPath);
-        if (!folderMap.has(folder)) {
-          folderMap.set(folder, []);
-        }
-        folderMap.get(folder)!.push(req);
-      }
-
-      // Merge in the order discovery produced, which is the order a serial run
-      // would execute: folder `seq` first, alphabetical only as the fallback
-      // within that. A plain alphabetical sort here was deterministic but
-      // disagreed with the serial ordering, so the same collection reported its
-      // folders in two different orders depending on `parallel`. Map preserves
-      // insertion order and `requests` is already ordered, so first appearance
-      // is the answer.
-      const sortedFolders = [...folderMap.keys()];
-
-      // Up front, not inside each task: reported order is folder order.
-      sortedFolders.forEach(() => stores.push(new VariableStore()));
-
-      // Execute folders in parallel, serial within each folder
-      const folderResults = await Promise.allSettled(
-        sortedFolders.map(async (folder, folderIndex) => {
-          const folderRequests = folderMap.get(folder)!;
-          // Folders are isolated by design: each gets its own VariableStore so
-          // concurrent folder tasks never share a mutable store (which would
-          // reintroduce a setVar/getVar race). A variable set by a script in
-          // one folder is therefore invisible to another folder's requests. We
-          // do NOT bridge stores across folders; instead buildFetchOptions
-          // surfaces any {{var}} left unresolved as a per-request warning
-          //, so this isolation can no longer let an unsubstituted
-          // placeholder reach the wire silently the way serial mode would not.
-          const folderStore = stores[folderIndex];
-          // The cookie jar is scoped per folder for the same reason: two
-          // folders running concurrently must not share mutable session state.
-          const folderJar = cookiesEnabled ? createRunCookieJar() : undefined;
-          const folderRes: RequestExecutionResult[] = [];
-          for (const req of folderRequests) {
-            const result = await executeSingleRequest(req.yaml, vars, scriptRunner, folderStore, bodyCapture, collectionPath, folderJar, await rootLoader.forRequest(req.filePath), tokenCache);
-            folderRes.push(result);
-          }
-          return folderRes;
-        }),
-      );
-
-      // Merge results in folder order.
-      //
-      // A folder task can genuinely reject: executeSingleRequest only wraps the
-      // fetch in a try/catch, so anything that throws before it — buildDispatcher
-      // on a malformed `settings.proxy`, for example — escapes as a rejection.
-      // Dropping those would shrink `total` to the surviving folders and report
-      // the run as fully passed, which is the worst possible failure mode for a
-      // test runner. Serial execution lets such an error propagate out of
-      // executeCollection; parallel must not be quieter than serial.
-      results = [];
-      const folderFailures: unknown[] = [];
-      for (const outcome of folderResults) {
-        if (outcome.status === 'fulfilled') {
-          results.push(...outcome.value);
-        } else {
-          folderFailures.push(outcome.reason);
-        }
-      }
-
-      if (folderFailures.length === 1) {
-        // Rethrow the original so the type, stack and message match serial mode.
-        throw folderFailures[0];
-      }
-      if (folderFailures.length > 1) {
-        // Callers surface only `.message` (see the run_collection handler), so
-        // inline every reason rather than burying them in `.errors`.
-        const detail = folderFailures
-          .map(reason => (reason instanceof Error ? reason.message : String(reason)))
-          .join('; ');
-        throw new AggregateError(
-          folderFailures,
-          `${folderFailures.length} of ${sortedFolders.length} parallel folders failed: ${detail}`,
-        );
-      }
-    } else {
-      // Serial execution (default)
-      const variableStore = new VariableStore();
-      stores.push(variableStore);
-      const runJar = cookiesEnabled ? createRunCookieJar() : undefined;
-      results = [];
-      for (const req of requests) {
-        const result = await executeSingleRequest(req.yaml, vars, scriptRunner, variableStore, bodyCapture, collectionPath, runJar, await rootLoader.forRequest(req.filePath), tokenCache);
-        results.push(result);
-      }
-    }
-
-    const totalDuration = Date.now() - startTime;
-    const captured = collectCapturedVariables(
-      stores.map((store) => store.getAll()),
-      options?.captureVariables,
+    // The same ceiling governs both resources a run can exhaust: the forked
+    // script workers, which cost memory and a scheduler slot, and the in-flight
+    // requests themselves.
+    const slots = createSemaphore(
+      await applyDerivedConcurrency(undefined, options?.maxConcurrency),
     );
-    const warnings = [...discoveryWarnings, ...captured.warnings];
+
+    // One loader and one token cache for the run. The loader's cache is
+    // read-only so it is safe to share across concurrent groups; a token
+    // belongs to the credentials, so a run of forty requests should not look
+    // like forty logins to the provider.
+    const rootLoader: RootLoader = createRootLoader(options?.collectionRoot ?? collectionPath);
+    const tokenCache = createTokenCache();
+
+    const runOne = async (
+      req: ParsedRequest,
+      vars: Map<string, string>,
+      store: VariableStore,
+      jar: ReturnType<typeof createRunCookieJar> | undefined,
+    ): Promise<RequestExecutionResult> => {
+      const release = await slots.acquire();
+      try {
+        return await executeSingleRequest(
+          req.yaml, vars, scriptRunner, store, bodyCapture, collectionPath,
+          jar, await rootLoader.forRequest(req.filePath), tokenCache,
+        );
+      } finally {
+        release();
+      }
+    };
+
+    const runGroup = async (group: ResolvedGroup): Promise<GroupRunResult> => {
+      const groupStart = Date.now();
+      // Each group owns these. That ownership is the whole feature: it is what
+      // keeps one identity's session out of another's assertions.
+      const store = new VariableStore();
+      const jar = cookiesEnabled ? createRunCookieJar() : undefined;
+
+      let vars = new Map<string, string>();
+      if (group.environment) {
+        vars = await loadEnvironment(options?.collectionRoot ?? collectionPath, group.environment);
+      }
+      // Overrides the environment file, and works with no environment at all —
+      // the point, since a secret has no correct on-disk home to load from.
+      vars = applyVariableOverrides(vars, group.variables);
+
+      const results: RequestExecutionResult[] = [];
+      if (group.parallel) {
+        results.push(...(await Promise.all(
+          group.requests.map((req) => runOne(req, vars, store, jar)),
+        )));
+      } else {
+        for (const req of group.requests) {
+          results.push(await runOne(req, vars, store, jar));
+        }
+      }
+
+      const captured = collectCapturedVariables([store.getAll()], options?.captureVariables);
+      return {
+        name: group.name,
+        index: group.index,
+        summary: summarise(results, Date.now() - groupStart),
+        results,
+        ...(group.missingRequests.length > 0 ? { missingRequests: group.missingRequests } : {}),
+        ...(captured.names.length > 0 ? { capturedVariableNames: captured.names } : {}),
+        ...(Object.keys(captured.values).length > 0 ? { capturedVariables: captured.values } : {}),
+        ...(captured.warnings.length > 0 ? { warnings: captured.warnings } : {}),
+      };
+    };
+
+    // A group task can genuinely reject: executeSingleRequest only wraps the
+    // fetch in a try/catch, so anything that throws before it — buildDispatcher
+    // on a malformed `settings.proxy`, for example — escapes as a rejection.
+    // Reported as that group's `error` rather than thrown, so one bad group
+    // cannot hide the results of every other one.
+    const settled = options?.parallel
+      ? await Promise.allSettled(plan.groups.map(runGroup))
+      : await runGroupsInOrder(plan.groups, runGroup);
+
+    const groups: GroupRunResult[] = settled.map((outcome, index) =>
+      outcome.status === 'fulfilled'
+        ? outcome.value
+        : {
+            name: plan.groups[index]!.name,
+            index,
+            summary: summarise([], 0),
+            results: [],
+            ...(plan.groups[index]!.missingRequests.length > 0
+              ? { missingRequests: plan.groups[index]!.missingRequests }
+              : {}),
+            error:
+              outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
+          },
+    );
+
+    const summary = summarise(groups.flatMap((g) => g.results), Date.now() - startTime);
+    // A group that crashed ran no requests, so it contributes nothing to the
+    // per-request tally and would leave a run with a dead group reading as
+    // fully green. Counting it as one failure is what the old rethrowing
+    // parallel path was for; the error itself is on the group.
+    const crashed = groups.filter((g) => g.error !== undefined).length;
+    summary.total += crashed;
+    summary.failed += crashed;
 
     return {
-      summary: summarise(results, totalDuration),
-      results,
+      summary,
+      groups,
       // Derived, not tallied in parallel with the list: the count and the
       // detail cannot drift apart if only one of them is maintained.
-      parseErrors: parseFailures.length,
-      parseFailures,
-      ...(warnings.length > 0 ? { warnings } : {}),
-      ...(captured.names.length > 0 ? { capturedVariableNames: captured.names } : {}),
-      ...(Object.keys(captured.values).length > 0 ? { capturedVariables: captured.values } : {}),
+      parseErrors: plan.parseFailures.length,
+      parseFailures: plan.parseFailures,
+      ...(plan.warnings.length > 0 ? { warnings: plan.warnings } : {}),
     };
   }
+}
+
+/**
+ * Run groups one after another, settling each so a rejection is reported in
+ * place rather than abandoning the groups after it.
+ *
+ * `Promise.allSettled` cannot be used here: it starts everything at once, which
+ * is the opposite of what a serial run asked for.
+ */
+async function runGroupsInOrder(
+  groups: ResolvedGroup[],
+  runGroup: (group: ResolvedGroup) => Promise<GroupRunResult>,
+): Promise<PromiseSettledResult<GroupRunResult>[]> {
+  const settled: PromiseSettledResult<GroupRunResult>[] = [];
+  for (const group of groups) {
+    try {
+      settled.push({ status: 'fulfilled', value: await runGroup(group) });
+    } catch (reason) {
+      settled.push({ status: 'rejected', reason });
+    }
+  }
+  return settled;
 }
 
 /**

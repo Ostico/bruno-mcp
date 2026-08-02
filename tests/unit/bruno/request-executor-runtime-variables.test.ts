@@ -200,7 +200,7 @@ describe('RequestExecutor — variables injected for one run', () => {
     expect(sentAuthHeader()).toBe('Bearer the-real-secret');
     // Without the injection this run warns about `token` and sends
     // "Bearer " — see env-loader's valueless-secret handling.
-    const warnings = result.results[0].warnings ?? [];
+    const warnings = result.groups[0]!.results[0].warnings ?? [];
     expect(warnings.join(' ')).not.toContain('token');
   });
 

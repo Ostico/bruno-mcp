@@ -84,7 +84,7 @@ export function registerRunCollectionTool(ctx: ToolContext): void {
           {
             environment: args.environment,
             collectionRoot: args.collectionRoot,
-            requestPath: target.requestPath,
+            ...(target.requestPath ? { requests: [target.requestPath] } : {}),
             parallel: args.parallel,
             includeResponseBody: args.includeResponseBody,
             maxResponseBodyBytes: args.maxResponseBodyBytes,
