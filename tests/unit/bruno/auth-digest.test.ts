@@ -89,6 +89,14 @@ describe('computing the Authorization response', () => {
     expect(field(header!, 'uri')).toBe('/a/b?q=1');
   });
 
+  it('falls back to the raw value when the URL will not parse', () => {
+    // Better a hash over something than a thrown retry: the server rejects a
+    // wrong digest, which is recoverable, where a throw loses the response.
+    const header = buildDigestHeader(base, creds, 'GET', 'not-a-url', 1, 'cn');
+
+    expect(field(header!, 'uri')).toBe('not-a-url');
+  });
+
   it('folds the method into the hash, so two verbs differ', () => {
     const get = buildDigestHeader(base, creds, 'GET', 'https://h/x', 1, 'cn');
     const post = buildDigestHeader(base, creds, 'POST', 'https://h/x', 1, 'cn');

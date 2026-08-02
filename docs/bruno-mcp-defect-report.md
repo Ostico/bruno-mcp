@@ -1022,11 +1022,42 @@ It is not. Fix with H1.
 
 **Fixed** with H1: the docblock was deleted and rewritten above the function it actually describes.
 
-### L3 — Auth types advertised but not applied. CONFIRMED, handled honestly.
+### L3 — Auth types advertised but not applied. CONFIRMED. FIXED.
 
 `UNAPPLIED_AUTH_TYPES` is `['oauth2', 'digest']` (`request-executor.ts:474`); those emit an explicit
 "auth type X is not applied automatically" warning. The warning is honest, so this is a schema-versus-reality
 mismatch rather than a silent failure.
+
+**FIXED.** Both are applied. `UnappliedAuthType` is now `never` — kept rather than deleted, because it is the
+slot a future mode goes in and the classification proof is what forces that call to be made out loud.
+
+*Digest* (`src/bruno/auth-digest.ts`) is the scheme that cannot be decided from the request alone: the server
+issues a nonce in its 401 and the credential is a hash over it. So the first request legitimately carries no
+header — which is why it no longer warns — and the executor answers the challenge and re-sends once. RFC 7616
+plus the RFC 2069 no-qop form; MD5, MD5-sess, SHA-256, SHA-256-sess. `qop=auth-int` is **refused rather than
+answered wrongly**: it hashes the body, and a credential the server will reject is worse than the 401 already
+in hand. The retry is capped at one, since a second 401 is a wrong password rather than a new challenge.
+
+*OAuth2* (`src/bruno/auth-oauth2.ts`) is applied for `client_credentials` and `password`, which are
+machine-to-machine — everything the token endpoint needs is already in the file. `authorization_code` and
+`implicit` are **not** implemented and are refused per grant, with a warning saying why: both are defined
+around redirecting a human's browser to the provider and catching the redirect back, and this server has
+neither a browser nor a redirect target. Faking one would mean inventing a flow upstream does not have. Note
+this is a per-*grant* refusal inside an applied mode, not a disowned mode.
+
+*Two things worth keeping in mind.* The token endpoint goes through the same `validateUrl` gate as the request
+itself — it is an outbound call to a URL out of the collection, and skipping it would have left a way to reach
+link-local metadata that the request path closes, with the response readable through the warning. And one token
+is fetched per run per credentials-and-scope rather than per request, because a provider that rate-limits token
+issuance is ordinary and a run of forty requests should not look like forty logins.
+
+*The enabler.* `bru-to-yaml.ts` carried both modes **by type alone**, so even once the parser understood an
+oauth2 block there was nothing on the executor's side to apply. It now carries digest's credentials and spreads
+the oauth2 block rather than mapping it field by field, since that block differs by grant and gains parameters
+between Bruno releases.
+
+`applyAuth` moved to `src/bruno/auth-apply.ts`: `request-executor.ts` was on its `max-lines` ceiling and this
+change adds two branches to precisely that function. It is at 1178 of 1300 now.
 
 > **Correction to the field audit.** That audit listed `api-key` as unimplemented and flagged the
 > `api-key` / `apikey` spelling split as a Bruno-incompatibility. Both are now closed: api-key is applied,
@@ -1224,8 +1255,8 @@ cosmetic:
 - `multipart-form` is only reachable under its `form-data` spelling, and `create_test_suite` cannot express
   parts in any spelling (it forwards `{type, content}` only), which is what makes **L8** reachable.
 
-Same class as **L3**, opposite direction: L3's surface over-promises a mode the executor will not apply,
-this one under-promises modes the writer implements. Not folded into the L8/L3 change because widening an
+Same class as **L3**, opposite direction: L3's surface over-promised modes the executor would not apply (now
+fixed — it applies them), this one under-promises modes the writer implements. Not folded into the L8/L3 change because widening an
 enum makes previously-rejected input succeed — each newly accepted type needs its own end-to-end test that
 the file written is one Bruno reads, which is real work rather than a one-line edit.
 
@@ -1441,8 +1472,10 @@ Large, mechanical and noisy. Keep it off feature PRs.
 
 Recorded so they are not rediscovered as findings:
 
-- **oauth2 / digest full config round-trip** — a partially-populated auth block may be worse than none.
-  Gated on the L3 decision.
+- **oauth2 / digest full config round-trip** — a partially-populated auth block may be worse than none. No
+  longer gated on L3, which took the execution path off this: `bru-to-yaml` now carries digest's credentials
+  and spreads the whole oauth2 block. What remains is the *write* side — whether every field a Bruno oauth2
+  block can hold survives a rewrite — which is a fidelity question, not an execution one.
 - **`body: file` authoring** — the upload surface is gated by `confineUploadPath`. This is our deliberate
   containment, *not* an upstream limitation; an earlier note claiming otherwise was wrong.
 - **`tls` / `proxy` settings** — operator-gated per host by design.
@@ -1521,9 +1554,10 @@ right, recorded so it is not re-derived.
   `tests` block into `after-response`, and scripts run on both formats. Two adjacent constants are not a
   before/after pair just because they look like one.
 - **Auth is not an inert feature.** Tempting to group with the parsed-persisted-never-applied class, but it
-  does not belong: unapplied auth types warn explicitly, and `inherit` warns about unsupported inheritance.
-  Auth is honest about its limits. Its problem is a type surface that over-promises (L3), which is a different
-  defect with a different fix.
+  did not belong: unapplied auth types warned explicitly rather than failing silently. Its problem was a type
+  surface that over-promised (L3) — a different defect with a different fix, and the fix turned out to be
+  implementing the two modes rather than narrowing the surface. The lesson survives the fix: an honest warning
+  is a different defect class from a silent drop, and reading the warning is what showed which one this was.
 - **Fixing one end of a data path is not a fix.** Recurring across this list: the write side and the read side
   are separate code, and closing one silently leaves the hole open. See H1, M4, and the note under M5. A test
   that passes because our own parser tolerates our own malformed output proves nothing — read the bytes.
@@ -1697,7 +1731,9 @@ posture decisions.
      zero callers, duplicating work `update_environment` already does correctly through the full-fidelity
      reader. Deleted rather than fixed, so the override-vs-secret decision it needed is moot.
 15. ~~**L3** — the third auth enum.~~ **Done** — it was `create_test_suite`, not
-    `create_crud_requests`; that tool takes no auth at all, now filed as **L19**.
+    `create_crud_requests`; that tool takes no auth at all, filed as **L19** and since fixed. The larger half
+    of L3 — actually applying `digest` and `oauth2` rather than warning about them — is **also done**; see the
+    L3 section. `UnappliedAuthType` is `never`.
 16. ~~**L8** — the `.bru` file-body catch-all.~~ **Done**, and it was wider than filed: `file` was one of four
     body types the catch-all got wrong, and it is *not* unreachable — `create_test_suite` forwards only
     `{type, content}`, so a `form-data` body reaches it and is silently lost. Conversion is now by declared

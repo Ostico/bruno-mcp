@@ -130,6 +130,27 @@ http:
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
+  it('does not retry a successful response that happens to carry a challenge', async () => {
+    // Some servers send WWW-Authenticate on a 200 — advertising a scheme rather
+    // than refusing. Retrying there would double every such request and replace
+    // a good response with the answer to a challenge nobody made.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: new Headers({
+        'content-type': 'application/json',
+        'www-authenticate': 'Digest realm="v", qop="auth", nonce="N"',
+      }),
+      text: async () => '{}',
+    } as unknown as Response);
+    const root = await collection({ 'r.yml': digestRequest });
+
+    await run(root, { secret_word: 'x' });
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
   it('leaves a non-digest request alone when a server answers 401', async () => {
     mockFetch.mockResolvedValueOnce(unauthorized('Digest realm="v", nonce="N"'));
     const root = await collection({

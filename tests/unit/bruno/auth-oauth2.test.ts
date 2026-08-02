@@ -10,7 +10,10 @@ import {
   fetchAccessToken,
   createTokenCache,
   isAutomatableGrant,
+  resolveOAuth2,
 } from '../../../src/bruno/auth-oauth2';
+import type { YamlRequest } from '../../../src/bruno/types';
+import type { RootChain } from '../../../src/bruno/collection-roots';
 import { validateUrl } from '../../../src/bruno/url-validator';
 
 jest.mock('../../../src/bruno/url-validator', () => ({
@@ -164,6 +167,55 @@ describe('fetching a token', () => {
     const result = await fetchAccessToken(config, fetchFn as never, createTokenCache());
 
     expect(result.error).toContain('invalid_client');
+  });
+
+  it('resolves a token for a request whose auth is an automatable grant', async () => {
+    const fetchFn = jest.fn().mockResolvedValue(tokenResponse({ access_token: 'AT' }));
+    const yaml = { http: { auth: { type: 'oauth2', ...config } } } as unknown as YamlRequest;
+
+    const result = await resolveOAuth2(yaml, undefined, new Map(), createTokenCache(), fetchFn as never);
+
+    expect(result).toEqual({ token: 'AT' });
+  });
+
+  it('substitutes placeholders in the oauth2 config', async () => {
+    // A client secret belongs in an environment or an injected variable, not in
+    // the collection file.
+    const fetchFn = jest.fn().mockResolvedValue(tokenResponse({ access_token: 'AT' }));
+    const yaml = {
+      http: { auth: { type: 'oauth2', ...config, clientSecret: '{{secret}}' } },
+    } as unknown as YamlRequest;
+
+    await resolveOAuth2(
+      yaml, undefined, new Map([['secret', 'resolved']]), createTokenCache(), fetchFn as never,
+    );
+
+    expect(new URLSearchParams(fetchFn.mock.calls[0][1].body).get('client_secret')).toBe('resolved');
+  });
+
+  it('resolves inherit against the collection root, like every other mode', async () => {
+    const fetchFn = jest.fn().mockResolvedValue(tokenResponse({ access_token: 'AT' }));
+    const yaml = { http: { auth: 'inherit' } } as unknown as YamlRequest;
+    const chain = { auth: { type: 'oauth2', ...config } } as unknown as RootChain;
+
+    const result = await resolveOAuth2(yaml, chain, new Map(), createTokenCache(), fetchFn as never);
+
+    expect(result).toEqual({ token: 'AT' });
+  });
+
+  it.each([
+    ['no auth at all', undefined],
+    ['a bearer token', { type: 'bearer', token: 'T' }],
+    ['a browser grant', { type: 'oauth2', grantType: 'authorization_code' }],
+    ['inherit with nothing to inherit', 'inherit'],
+  ])('costs a request with %s nothing', async (_label, auth) => {
+    const fetchFn = jest.fn();
+    const yaml = { http: { auth } } as unknown as YamlRequest;
+
+    const result = await resolveOAuth2(yaml, undefined, new Map(), createTokenCache(), fetchFn as never);
+
+    expect(result).toEqual({});
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 
   it('reports a missing access token URL instead of fetching undefined', async () => {
