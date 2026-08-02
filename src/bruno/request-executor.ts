@@ -1061,7 +1061,7 @@ export class RequestExecutor {
         }
       }
 
-      const captured = collectCapturedVariables([store.getAll()], options?.captureVariables);
+      const captured = collectCapturedVariables(store.getAll(), options?.captureVariables);
       return {
         name: group.name,
         index: group.index,

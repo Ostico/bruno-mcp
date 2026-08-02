@@ -9,7 +9,7 @@
  *
  * These run the executor rather than the reducer (`captured-variables.test.ts`
  * covers that), because the part that can silently stop working is the wiring:
- * a store that is created per folder, mutated by the sandbox, and read after
+ * a store that is created per group, mutated by the sandbox, and read after
  * the results are merged.
  */
 import { promises as fs } from 'fs';
@@ -154,10 +154,10 @@ describe('reading back what a run captured', () => {
     expect(JSON.stringify(result)).not.toContain('supplied-secret');
   });
 
-  it('collects from every folder of a parallel run, not just the last', async () => {
-    // Each folder gets its own store by design, so the reporting has to reach
-    // across all of them; reading one store would report a subset and look
-    // exactly like a script that never ran.
+  it('collects from every request of a parallel group, not just the last', async () => {
+    // With no groups given the whole collection is one group, so both scripts
+    // write into the one store however the directories are laid out. Reporting
+    // a subset would look exactly like a script that never ran.
     const root = await collection({
       'auth/login.yml': capturing('login', 'bru.setVar("authToken", res.body.token);'),
       'orders/create.yml': capturing('create', 'bru.setVar("orderId", res.body.id);'),
