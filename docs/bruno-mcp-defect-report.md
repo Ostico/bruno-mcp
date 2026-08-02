@@ -366,7 +366,7 @@ throws `Failed to parse <path>: <reason>`.
 `describeParseFailure` lives in `src/bruno/parse-failure.ts` rather than in the executor because
 `request-executor.ts` sits on the repo-wide max-lines ceiling — adding this inline broke the lint gate.
 
-### M2 — Execution order is a flat global `seq` sort; folders do not scope it. CONFIRMED, contradicts the tool description.
+### M2 — Execution order is a flat global `seq` sort; folders do not scope it. CONFIRMED. FIXED.
 
 `discoverRequests` recursively collects every `.yml`/`.bru` under the path, then applies **one global**
 `Array.sort` on `yaml.info.seq` (`request-executor.ts:135-139`), with a missing `seq` becoming
@@ -385,6 +385,46 @@ description. Shipping a description that overstates the guarantee is the worse h
 **Description half addressed.** `run_collection` now states the real rule: one global `seq` sort across
 everything the run covers, folders not scoping it, ties ordered by filesystem enumeration and therefore not
 stable — with the advice to use distinct `seq` values or run a folder at a time when order matters.
+
+**FIXED — ordering half now done too, and the description updated a second time.** Discovery no longer
+collects-then-globally-sorts. `request-order.ts` ports Bruno's ordering from
+`bruno-cli/src/utils/collection.js` and `request-discovery.ts` walks in execution order, so a collection runs
+here in the order it runs in Bruno. Three rules, and the middle one is the one nobody guesses:
+
+1. Requests are ordered by `seq` **within their own directory**.
+2. Within a directory, **subfolders come before that directory's own loose requests** — upstream's `traverse`
+   ends `return folders.concat(requests)`. A request at the collection root runs *after* every folder,
+   however low its `seq`.
+3. Sibling folders use `sortFoldersByNameThenSequence`: alphabetical baseline, then folders with a valid
+   `seq` **inserted at position `seq - 1`**. It is a positional insert, not a sort — porting it as a sort
+   gives different answers — and it inserts into a list that is *growing*, so an earlier insert shifts where
+   a later one lands. `splice` clamps, so a `seq` past the end appends. Equal `seq` values group rather than
+   displace.
+
+Folder `seq` comes from `folder.bru` / `folder.yml`, read by `readFolderSeq`, which returns `undefined` on
+every failure — ordering must not be able to fail a run, so an unparseable folder root just leaves that folder
+in the alphabetical run.
+
+Two things found while doing it, both worth remembering:
+
+- **`.bru` `seq` arrives as a string.** `collectionBruToJson` yields `seq: "3"`; the grammar has no numbers.
+  `Number.isFinite("3")` is `false`, so without coercion every `.bru` folder silently fell back to
+  alphabetical. Upstream's filestore coerces for the same reason. Mutation-tested.
+- **A `.bru` request with no `seq` is not unnumbered — it is `seq: 1`.** `bruToJsonV2` injects it, exactly as
+  it injects `timeout: 0` (see H6). So the "unnumbered sorts last" fallback is unreachable for `.bru` and is
+  really the `.yml` default, the same dialect asymmetry as `encodeUrl`. The tests assert the reachable
+  behaviour per dialect rather than the intended-looking one.
+
+**`parallel` was fixed with it.** It grouped by folder and then sorted folder names alphabetically —
+deterministic, but disagreeing with folder `seq`, so one collection reported two different orders depending on
+the flag. It now merges in discovery order.
+
+**Ties now break on filename**, which upstream does not do (it leaves them in `readdir` order). A deliberate
+divergence: an arbitrary-but-stable order is the entire point here, and two requests sharing a `seq` have no
+intended order to lose. The test for it initially proved nothing — macOS `readdir` already returns
+alphabetically, so it passed with or without a tie-break, and only died once the walk order was forced
+reversed via a module-level `node:fs/promises` mock (`jest.spyOn` throws "Cannot redefine property: readdir").
+Eight mutants, eight killed.
 
 One correction to this finding: the sentence it quotes, "Requests within each folder still run sequentially by
 seq order", is on the `parallel` option and is **accurate for that mode** — the parallel path groups by folder
