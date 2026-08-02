@@ -7,6 +7,12 @@ import { wrapFetchResponse } from './response-wrapper.js';
 import { validateUrl, ssrfRemediation } from './url-validator.js';
 import { VariableStore } from './variable-store.js';
 import { collectCapturedVariables } from './captured-variables.js';
+import {
+  mergePreRequest,
+  mergePostResponse,
+  ownPreRequestScript,
+  ownPostScripts,
+} from './script-merge.js';
 import { buildDispatcher, type DispatcherResult } from './fetch-dispatcher.js';
 import { describeNetworkError } from './network-error.js';
 import { applyParams } from './request-params.js';
@@ -39,7 +45,6 @@ import {
 import { buildGraphqlBody, buildFormUrlEncodedBody } from './request-body.js';
 import type {
   YamlRequest,
-  YamlScript,
   YamlAuth,
   MockRequestData,
   CollectionRunResult,
@@ -528,43 +533,6 @@ function applyAuth(
   }
 }
 
-function getBeforeRequestScript(yaml: YamlRequest): string | null {
-  if (!yaml.runtime?.scripts) return null;
-
-  const beforeScripts = yaml.runtime.scripts
-    .filter(s => s.type === 'before-request')
-    .map(s => s.code);
-
-  return beforeScripts.length > 0 ? beforeScripts.join('\n') : null;
-}
-
-/**
- * The code to run in the post-response phase.
- *
- * A .yml request keeps its test script in a slot of its own (`type: tests`)
- * separate from the post-response script (`type: after-response`); a .bru
- * request keeps the same split between its `script:post-response` and `tests`
- * blocks. This runner has a single post-response phase, so both are folded into
- * one program here — after-response first, then tests, which is the order Bruno
- * runs them in. Reading only 'after-response' would store an authored test
- * faithfully and never execute it, reporting a run with zero tests as green.
- */
-function getAfterResponseScript(yaml: YamlRequest): string | null {
-  if (!yaml.runtime?.scripts) return null;
-
-  const afterScripts = yaml.runtime.scripts
-    .filter(s => s.type === 'after-response' || s.type === 'tests')
-    .sort((a, b) => scriptPhaseOrder(a.type) - scriptPhaseOrder(b.type))
-    .map(s => s.code);
-
-  return afterScripts.length > 0 ? afterScripts.join('\n') : null;
-}
-
-/** Sort key that puts an 'after-response' entry ahead of a 'tests' entry. */
-function scriptPhaseOrder(type: YamlScript['type']): number {
-  return type === 'tests' ? 1 : 0;
-}
-
 const DEFAULT_TIMEOUT_MS = 30000;
 
 
@@ -664,7 +632,7 @@ async function executeSingleRequest(
   const method = yaml.http.method;
 
   // Run pre-request scripts (before fetch, may mutate url/headers/body)
-  const preScript = getBeforeRequestScript(yaml);
+  const preScript = mergePreRequest(rootChain?.scripts ?? [], ownPreRequestScript(yaml));
   let preScriptError: string | undefined;
   if (preScript) {
     const mockReqData: MockRequestData = {
@@ -980,7 +948,7 @@ async function executeSingleRequest(
     let tests: TestResult[] = [];
     let scriptWarnings: string[] | undefined;
     let droppedAssertions: string | undefined;
-    const testScript = getAfterResponseScript(yaml);
+    const testScript = mergePostResponse(rootChain?.scripts ?? [], ownPostScripts(yaml), rootChain?.scriptFlow ?? 'sandwich');
     // Assertions the author switched off are dropped here rather than carried
     // with a flag, so nothing downstream can evaluate one or report it.
     const assertions = (yaml.assert ?? [])

@@ -1308,14 +1308,50 @@ var parser, and root vars can then use it. Filed 2026-07-31 while implementing M
 > `YamlVar.dataType`, and written back as a typed value rather than silently retyped to a string; a
 > plain object value becomes pretty-printed JSON, as upstream's `serializeVariableValue` does. An
 > explicit `type: string` is treated as the default and not recorded, also as upstream. Root vars still
-> need **L12** before they are applied, but the parser they were waiting on is no longer the blocker.
+> are still not applied. They were filed behind **L12**, which is now done and applied root scripts and tests
+> without them: the remaining work is wiring the typed-value shape into the run's variable map, not ordering.
 
-### L12 — collection- and folder-level scripts and tests are read but not run. CONFIRMED.
+### L12 — collection- and folder-level scripts and tests are read but not run. CONFIRMED. FIXED.
 
 M3 reads `script:pre-request`, `script:post-response` and `tests` from the root files and reports them per
 request as not applied. Running them needs decisions the read did not: where a root script sits relative to a
 request's own (upstream runs collection, then folder, then request), and whether a root `tests` block
 contributes assertions to every request's result. Filed 2026-07-31 while implementing M3.
+
+**FIXED.** Both "decisions" turned out to be upstream's, already made: `bruno-cli/src/utils/collection.js`
+(`mergeScripts`) answers each one, so this was a port rather than a design. `src/bruno/script-merge.ts` holds
+the rules; `collection-roots.ts` now carries the scripts it already parsed; the executor calls the merge at its
+two existing call sites.
+
+*Order.* Pre-request is always outermost-first — collection, each folder from the collection down, then the
+request. Post-response and tests follow a collection setting this server did not read at all: `scripts.flow` in
+`bruno.json`. Upstream defaults it to `sandwich`, under which post-response and tests run in exactly the
+reverse of the pre-request order (request, folders innermost-first, collection); `sequential` keeps the
+outermost-first order. A `.yml` collection has no `bruno.json`, so the default is what most runs get.
+
+*Phases, not layers.* Every layer's post-response script runs before any layer's tests. A folder post-response
+script that parks a value for a request's test to read is a supported shape, and it only works this way round —
+grouping per layer would run the collection's tests before the request's own post-response script.
+
+*One deliberate divergence.* Upstream wraps every segment in `await (async () => { ... })();` so two sources
+can both declare `const token`. This wraps only when there is more than one segment to assemble. The reason is
+local: this runner has a single post-response phase, so a request's own post-response script and its own tests
+have always been concatenated into one shared scope, and collections rely on that — a `const` declared in the
+post-response script and read from a test is ordinary here. Wrapping unconditionally would have taken that
+scope from every existing collection to buy isolation that only matters once a second source exists. With a
+second source, every segment is wrapped, including the request's own. Pinned by tests on both sides.
+
+*Also in this change.* Root scripts and tests are no longer reported as unapplied; **root vars still are**, and
+still need the typed-value shape the YAML dialect uses. Root files are attributed by path rather than basename,
+because every folder root is called `folder.bru` and a failure naming the basename names five files at once.
+YAML roots are read in all three spellings that occur — `script.req`/`script.res`/`tests` strings, a typed
+`scripts:` list, and the same list under `runtime:` — since the old unapplied-notes code probed for two of them
+and reading only one would leave a root silently skipped, which is the failure this whole area exists to end.
+
+*Not ported:* upstream's `testsMetadata` line-range tracking, which maps a thrown line number back to the
+source file it came from. This runner does not surface script line numbers for a request's own scripts either,
+so there is nothing for the mapping to attach to; the segment's source path is recorded on the layer and is
+available when that changes.
 
 ### L10 — a `.yml` graphql request is written under `http:`, not in its own `graphql:` block. CONFIRMED. FIXED.
 
@@ -1542,8 +1578,10 @@ What an agent needs and does not have. Direct field feedback first.
    request or gets 401s it cannot explain. Unblocks M2's real fix and makes `auth: inherit` resolvable. Start
    with warn-on-dropped-settings if the full read is too large for one change.~~ **Read done; headers and
    `auth: inherit` applied.** Root vars/scripts/tests are read and reported per request rather than dropped —
-   the warn-on-dropped-settings step, kept for what is not applied yet. Root vars were blocked on **L11**,
-   now fixed with H4, so they wait only on **L12** along with root scripts. See the resolution note under M3.
+   the warn-on-dropped-settings step, kept for what is not applied yet. **Root scripts and tests now run**
+   (L12). Root vars were blocked on **L11**, now fixed with H4, and are the one root-level setting still
+   reported rather than applied — they need the typed-value shape the YAML dialect uses. See the resolution
+   note under M3.
 8. ~~**L4 + L6** — `seq` defaulting to "one past the folder maximum", and recognising `.yaml`. Papercuts, one
    PR. A Bruno collection using `.yaml` currently enumerates as empty.~~ Both fixed. L6's premise needed
    correcting first: upstream accepts `.yaml` in exactly one place and nowhere that mounts or runs a
@@ -1642,9 +1680,11 @@ posture decisions.
      already wrong for request-level vars. Cheap, and it unlocks the next slice of M3.~~ **Done with H4**, which
      it turned out to depend on: its premise was wrong (we never wrote that shape ourselves) and its fix was
      unreachable until the variables were being read from the key Bruno writes them to. M3's root vars now wait
-     only on L12.
-13b. **L12** — run collection/folder scripts and tests. Needs the ordering decision upstream already makes
-     (collection, then folder, then request).
+     only on L12, which is now done — root **vars** are the one root-level setting still unapplied.
+13b. ~~**L12** — run collection/folder scripts and tests. Needs the ordering decision upstream already makes
+     (collection, then folder, then request).~~ **Done**, and there was no decision to make: upstream's
+     `mergeScripts` settles both the ordering and whether a root `tests` block contributes, including a
+     `scripts.flow` setting in `bruno.json` that this server did not read at all. See the L12 section.
 14. ~~**L7** — environment authoring: secrets, and the unwired `dataType` / `disabled`.~~ **Done, but almost
      none of it was what the entry said** — secrets were already authorable, the unconditional `secret: false`
      was a private wrapper's flat input rather than the writer named here, and `disabled` was honoured all
