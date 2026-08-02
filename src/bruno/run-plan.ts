@@ -39,6 +39,13 @@ export interface ResolvedGroup {
   parallel: boolean;
   /** References that resolved to nothing. Empty when everything resolved. */
   missingRequests: string[];
+  /**
+   * Why this group cannot be run at all. Set when resolving its membership
+   * failed for a reason that is not absence — a named file that will not parse,
+   * most of it. The group is reported with this instead of results; every other
+   * group is unaffected.
+   */
+  error?: string;
 }
 
 export interface RunPlanInput {
@@ -64,6 +71,8 @@ export interface RunPlan {
  * bisect. Only absence is swallowed. A file that is there but will not parse,
  * or is not a runnable shape at all, still throws with the file named — the
  * caller asked for that specific request and there is no partial answer to it.
+ * That throw is caught one level up and attributed to the group that named the
+ * file, so it takes down that group and nothing else.
  *
  * A group that names no list at all is the whole collection, and a collection
  * path that will not open is a real error — it is not routed through here.
@@ -111,30 +120,40 @@ export async function buildRunPlan(
     const requests: ParsedRequest[] = [];
     const missingRequests: string[] = [];
     const references = group.requests;
+    let error: string | undefined;
 
-    if (references === undefined) {
-      // No list at all means the whole collection, which discovery spells as an
-      // undefined target. A list that is present and empty falls through to the
-      // empty-group warning below instead: the caller said which requests they
-      // wanted and the answer was none of them.
-      const discovered = await resolveRunTargets(undefined, collectionPath);
-      requests.push(...discovered.requests);
-      parseFailures.push(...discovered.parseFailures);
-      warnings.push(...discovered.warnings);
-    }
-
-    for (const reference of references ?? []) {
-      const discovered = await resolveReference(collectionPath, reference);
-      if (discovered === undefined) {
-        missingRequests.push(reference);
-        continue;
+    // Membership is resolved inside a try so that a group whose references
+    // cannot be resolved is the only casualty. Before this, the throw left
+    // `buildRunPlan` and took the whole run with it: groups that had nothing to
+    // do with the bad file reported nothing at all, and the caller could not
+    // tell which of them would have passed.
+    try {
+      if (references === undefined) {
+        // No list at all means the whole collection, which discovery spells as
+        // an undefined target. A list that is present and empty falls through
+        // to the empty-group warning below instead: the caller said which
+        // requests they wanted and the answer was none of them.
+        const discovered = await resolveRunTargets(undefined, collectionPath);
+        requests.push(...discovered.requests);
+        parseFailures.push(...discovered.parseFailures);
+        warnings.push(...discovered.warnings);
       }
-      requests.push(...discovered.requests);
-      parseFailures.push(...discovered.parseFailures);
-      warnings.push(...discovered.warnings);
+
+      for (const reference of references ?? []) {
+        const discovered = await resolveReference(collectionPath, reference);
+        if (discovered === undefined) {
+          missingRequests.push(reference);
+          continue;
+        }
+        requests.push(...discovered.requests);
+        parseFailures.push(...discovered.parseFailures);
+        warnings.push(...discovered.warnings);
+      }
+    } catch (reason) {
+      error = reason instanceof Error ? reason.message : String(reason);
     }
 
-    if (requests.length === 0) {
+    if (error === undefined && requests.length === 0) {
       warnings.push(
         `Group ${group.name ?? index} resolved to no requests. ` +
           'An empty group is reported rather than passing silently.',
@@ -149,6 +168,7 @@ export async function buildRunPlan(
       variables: { ...input.variables, ...group.variables },
       parallel: group.parallel ?? false,
       missingRequests,
+      error,
     });
   }
 

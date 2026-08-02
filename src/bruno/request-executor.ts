@@ -1038,6 +1038,15 @@ export class RequestExecutor {
     };
 
     const runGroup = async (group: ResolvedGroup): Promise<GroupRunResult> => {
+      // Membership could not be resolved at all — a named request file that is
+      // there but will not parse. That is a failure preceding every request in
+      // the group, which is exactly what group-level `error` means, so it takes
+      // the same path as one: reported on this group, counted as one failure,
+      // and costing no other group its results.
+      if (group.error !== undefined) {
+        throw new Error(group.error);
+      }
+
       const groupStart = Date.now();
       // Each group owns these three. That ownership is the whole feature: it is
       // what keeps one identity's session out of another's assertions.

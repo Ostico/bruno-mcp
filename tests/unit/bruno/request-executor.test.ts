@@ -1235,15 +1235,20 @@ http:
       mockedFs.readFile.mockResolvedValue(INVALID_YAML as any);
       setupFsStat(['/test-collection']);
 
-      // A named request that will not parse is a hard failure: there is no
-      // partial run to report, so it throws rather than being tallied — but the
-      // message has to say WHICH file, which the parser's own message does not.
-      await expect(
-        RequestExecutor.executeCollection('/test-collection', {
-          requests: [requestPath],
-          scriptRunner: TestRunner,
-        }),
-      ).rejects.toThrow(`Failed to parse ${requestPath}:`);
+      // A named request that will not parse is a hard failure for the group
+      // that named it: there is no partial run of that group to report. It is
+      // reported as the group's error rather than thrown, so sibling groups
+      // survive it — and the message has to say WHICH file, which the parser's
+      // own message does not.
+      const result = await RequestExecutor.executeCollection('/test-collection', {
+        requests: [requestPath],
+        scriptRunner: TestRunner,
+      });
+
+      expect(result.groups[0]!.error).toContain(`Failed to parse ${requestPath}:`);
+      expect(result.groups[0]!.results).toEqual([]);
+      // Nothing ran, and the run must not read green because of it.
+      expect(result.summary.failed).toBe(1);
     });
 
     it('should return parseErrors 0 when all files parse successfully', async () => {
@@ -2496,6 +2501,49 @@ http:
       expect(result.summary.passed).toBe(2);
     });
 
+    it('runs the healthy groups when another names a request that will not parse', async () => {
+      // The regression: resolving membership threw out of buildRunPlan, so a
+      // syntax error in one group's file meant the whole call failed and every
+      // other group reported nothing at all.
+      setupFsReaddirRecursive({
+        '/test-collection': [
+          { name: 'good.yml', isFile: true, isDirectory: false },
+          { name: 'broken.yml', isFile: true, isDirectory: false },
+        ],
+      });
+      setupFsReadFile({
+        'good.yml': `
+info:
+  name: Good
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/good"
+`,
+        'broken.yml': 'info:\n  name: "unterminated\n\thttp: [\n',
+      });
+      setupFsStat(['/test-collection']);
+      mockFetch.mockResolvedValue(createMockResponse({ ok: true }));
+
+      const result = await RequestExecutor.executeCollection('/test-collection', {
+        scriptRunner: TestRunner,
+        groups: [
+          { name: 'doomed', requests: ['broken.yml'] },
+          { name: 'fine', requests: ['good.yml'] },
+        ],
+      });
+
+      const doomed = result.groups.find((g) => g.name === 'doomed')!;
+      expect(doomed.error).toMatch(/broken\.yml/);
+      expect(doomed.results).toHaveLength(0);
+      // The whole point: the other group ran anyway.
+      expect(result.groups.find((g) => g.name === 'fine')!.results).toHaveLength(1);
+      // One request passed, one group died; neither may hide the other.
+      expect(result.summary.passed).toBe(1);
+      expect(result.summary.failed).toBe(1);
+    });
+
     it('keeps the original error message when exactly one group crashes', async () => {
       setupFsReaddirRecursive({
         '/test-collection': [
@@ -2911,16 +2959,20 @@ body:json {
       expect(result.groups[0]!.results[0].name).toBe('Get Users');
     });
 
-    it('throws for a requestPath that is neither a recognized file nor a directory', async () => {
+    it('fails the group for a request that is neither a recognized file nor a directory', async () => {
       mockedFs.stat.mockImplementation(async () =>
         ({ isDirectory: () => false, isFile: () => true }) as any,
       );
 
-      await expect(
-        RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner,
-          requests: ['/test-collection/notes.txt'],
-        }),
-      ).rejects.toThrow('Unsupported request file format');
+      const result = await RequestExecutor.executeCollection('/test-collection', {
+        scriptRunner: TestRunner,
+        requests: ['/test-collection/notes.txt'],
+      });
+
+      // Not absence — the file is right there and is not a request. That is the
+      // group's error, on the same footing as a file that will not parse.
+      expect(result.groups[0]!.error).toContain('Unsupported request file format');
+      expect(result.summary.failed).toBe(1);
     });
   });
 

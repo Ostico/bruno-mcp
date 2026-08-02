@@ -181,15 +181,44 @@ describe('with explicit groups', () => {
     expect(plan.groups[0]!.missingRequests).toEqual(['auth/nope.bru']);
   });
 
-  it('still throws for a named request that is there but will not parse', async () => {
+  it('records a named request that will not parse as that group\'s error', async () => {
     // Absence is a missing member; a syntax error is a fact about a file the
     // caller named, and reporting it as "missing" would send them looking for
-    // a path that is right there.
+    // a path that is right there. It is the group's error, not a missing
+    // member and not a warning.
     await writeFile(join(root, 'auth', 'broken.bru'), 'meta {\n  name: broken\n');
 
-    await expect(
-      buildRunPlan(root, { groups: [{ requests: ['auth/broken.bru'] }] }),
-    ).rejects.toThrow(/broken\.bru/);
+    const plan = await buildRunPlan(root, { groups: [{ requests: ['auth/broken.bru'] }] });
+
+    expect(plan.groups[0]!.error).toMatch(/broken\.bru/);
+    expect(plan.groups[0]!.missingRequests).toEqual([]);
+  });
+
+  it('keeps the other groups when one names a request that will not parse', async () => {
+    // The group that named the bad file cannot be run. Every other group is
+    // unaffected by it, and killing the run took their results with it.
+    await writeFile(join(root, 'auth', 'broken.bru'), 'meta {\n  name: broken\n');
+
+    const plan = await buildRunPlan(root, {
+      groups: [
+        { name: 'doomed', requests: ['auth/broken.bru'] },
+        { name: 'fine', requests: ['users/list.bru'] },
+      ],
+    });
+
+    expect(plan.groups[0]!.error).toMatch(/broken\.bru/);
+    expect(plan.groups[1]!.error).toBeUndefined();
+    expect(plan.groups[1]!.requests.map((r) => r.yaml.info.name)).toEqual(['list']);
+  });
+
+  it('does not also call a group that failed to resolve an empty group', async () => {
+    // Two reports of one fact, the second of them misleading: the group is not
+    // empty, it is broken.
+    await writeFile(join(root, 'auth', 'broken.bru'), 'meta {\n  name: broken\n');
+
+    const plan = await buildRunPlan(root, { groups: [{ requests: ['auth/broken.bru'] }] });
+
+    expect(plan.warnings.filter((w) => w.includes('no requests'))).toHaveLength(0);
   });
 
   it('reports an empty group rather than passing silently', async () => {

@@ -37,6 +37,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `maxConcurrency` caps requests in flight across the whole run; omit it and one
   is derived from this machine's cores and memory, `0` lifts it entirely.
 
+- **A named request that will not parse fails its group, not the call.** It used
+  to throw out of `run_collection`, so a syntax error in one file meant every
+  other group reported nothing at all — including the ones that would have
+  passed. The group that named the file now reports `error`, runs nothing and
+  counts as one failure; the rest of the run proceeds. The same applies to a
+  named file that is not a request at all.
+
 - **An empty `requests` list means nothing, not everything.** Omitting
   `requests` — at the run level or on a group — still runs the whole collection,
   which is how one collection runs under two identities. Supplying `requests:
