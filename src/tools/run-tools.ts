@@ -4,7 +4,7 @@
  * Moved out of server.ts unchanged apart from `this.` becoming `ctx.`.
  */
 
-import { isAbsolute, resolve } from 'node:path';
+import { isAbsolute, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import { RequestExecutor } from '../bruno/request-executor.js';
 import type { GroupInput } from '../bruno/run-plan.js';
@@ -22,7 +22,7 @@ export function registerRunCollectionTool(ctx: ToolContext): void {
       inputSchema: {
         collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to collection root directory. Use the path returned by list_collections.'),
         environment: z.string().optional().describe('Environment name to use (e.g. "dev", "staging"). Get available names from get_collection_stats.'),
-        collectionRoot: z.string().optional().describe('Path to collection root for environment resolution (if different from collectionPath)'),
+        collectionRoot: z.string().optional().describe('The collection that collectionPath belongs to, when running a subfolder of one: environments and the collection- and folder-level scripts are resolved from here. Must be collectionPath itself or an ancestor of it — a root that does not contain the collection is rejected, because its root scripts would then run against these requests.'),
         requests: z.array(z.string().min(1, 'A request entry must not be empty')).optional().describe('The requests to run, IN THE ORDER GIVEN. Each entry is a .yml or .bru request file, or a directory, which expands to every request under it, recursively. Absolute, or relative to collectionPath. Get paths from list_requests or get_collection_stats. Duplicates are allowed: naming the same request twice runs it twice. Omit to run every request in the collection; an empty [] is a selection of nothing and runs nothing. Cannot be combined with groups. An entry naming nothing is reported in missingRequests rather than failing the run, so you can see which subset ran.'),
         groups: z.array(z.object({
           name: z.string().optional().describe('Your label for this group, echoed back on its result. Omit and the group is addressed by its index.'),
@@ -98,6 +98,26 @@ export function registerRunCollectionTool(ctx: ToolContext): void {
           if (!rootCheck.valid) {
             return {
               content: [{ type: 'text', text: `Invalid collectionRoot: ${rootCheck.reason}` }],
+              isError: true,
+            };
+          }
+
+          // And it has to be the root OF THIS COLLECTION. The argument exists so
+          // a run scoped to a subfolder still resolves the collection's
+          // environments, which means the collection path sits underneath it.
+          // Pointed anywhere else it is a different collection, whose
+          // collection- and folder-level SCRIPTS are then executed against
+          // these requests — the one input here that runs code the caller did
+          // not name — and whose environment files are read and substituted in.
+          const root = resolve(args.collectionRoot);
+          const target = resolve(args.collectionPath);
+          if (target !== root && !target.startsWith(root + sep)) {
+            return {
+              content: [{
+                type: 'text',
+                text: `Invalid collectionRoot: ${args.collectionRoot} does not contain ${args.collectionPath}. `
+                  + 'collectionRoot names the collection that collectionPath belongs to, so it must be that path or an ancestor of it.',
+              }],
               isError: true,
             };
           }

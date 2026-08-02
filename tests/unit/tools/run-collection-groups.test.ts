@@ -78,6 +78,50 @@ describe('rejecting contradictory input', () => {
   });
 });
 
+describe('containing collectionRoot', () => {
+  // `collectionRoot` names the collection that `collectionPath` belongs to: it
+  // exists so a run scoped to a subfolder still resolves environments, and the
+  // collection- and folder-level SCRIPTS under it are executed. Pointed
+  // somewhere else it runs another directory's root scripts against this
+  // collection's requests, which is the one path here that executes code the
+  // caller did not name.
+  it('refuses a collectionRoot that does not contain the collection path', async () => {
+    const result = await handler({ collectionPath: '/c/sub', collectionRoot: '/elsewhere' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain('collectionRoot');
+    expect(mockedExecute).not.toHaveBeenCalled();
+  });
+
+  it('refuses a collectionRoot with a traversal in it', async () => {
+    const result = await handler({ collectionPath: '/c', collectionRoot: '/c/../../etc' });
+
+    expect(result.isError).toBe(true);
+    expect(mockedExecute).not.toHaveBeenCalled();
+  });
+
+  it('accepts an ancestor, which is what it is for', async () => {
+    await handler({ collectionPath: '/c/sub/deeper', collectionRoot: '/c' });
+
+    expect(mockedExecute).toHaveBeenCalledWith(
+      '/c/sub/deeper',
+      expect.objectContaining({ collectionRoot: '/c' }),
+    );
+  });
+
+  it('accepts the collection path itself', async () => {
+    await handler({ collectionPath: '/c', collectionRoot: '/c' });
+
+    expect(mockedExecute).toHaveBeenCalled();
+  });
+
+  it('is not required', async () => {
+    await handler({ collectionPath: '/c' });
+
+    expect(mockedExecute).toHaveBeenCalled();
+  });
+});
+
 describe('the arguments that no longer exist', () => {
   it.each(['requestPath', 'folder'])('does not accept %s', (name) => {
     // Not merely absent from the docs: zod strips an unknown key silently, and
