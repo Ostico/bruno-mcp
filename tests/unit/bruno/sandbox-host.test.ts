@@ -330,6 +330,59 @@ describe('runInWorker concurrency cap', () => {
     children[1].emit('message', passReply);
     await p2;
   });
+
+  it('queues nothing at all when the cap is lifted to unbounded', async () => {
+    // Asserting the setter returns 0 proves nothing: the value has to reach
+    // acquireSlot, or "unbounded" still queues at the old ceiling.
+    setMaxConcurrency(0);
+    const opts = baseOpts();
+
+    const jobs = [runInWorker(testJob, opts), runInWorker(testJob, opts), runInWorker(testJob, opts)];
+    await tick();
+
+    expect(forkCalls).toHaveLength(3);
+
+    children.forEach(c => c.emit('message', passReply));
+    await Promise.all(jobs);
+  });
+
+  it('starts already-queued jobs when the cap is raised', async () => {
+    // Without a drain, a job queued under the old ceiling waits on a limit
+    // that no longer applies — it only moves when some other job finishes.
+    setMaxConcurrency(1);
+    const opts = baseOpts();
+
+    const p1 = runInWorker(testJob, opts);
+    const p2 = runInWorker(testJob, opts);
+    await tick();
+    expect(forkCalls).toHaveLength(1);
+
+    setMaxConcurrency(2);
+    await tick();
+
+    // Nothing finished; the second job started because the ceiling moved.
+    expect(forkCalls).toHaveLength(2);
+
+    children.forEach(c => c.emit('message', passReply));
+    await Promise.all([p1, p2]);
+  });
+
+  it('starts every queued job when the cap is lifted to unbounded', async () => {
+    setMaxConcurrency(1);
+    const opts = baseOpts();
+
+    const jobs = [runInWorker(testJob, opts), runInWorker(testJob, opts), runInWorker(testJob, opts)];
+    await tick();
+    expect(forkCalls).toHaveLength(1);
+
+    setMaxConcurrency(0);
+    await tick();
+
+    expect(forkCalls).toHaveLength(3);
+
+    children.forEach(c => c.emit('message', passReply));
+    await Promise.all(jobs);
+  });
 });
 
 describe('runInWorker releases its slot when the spawn throws synchronously', () => {
