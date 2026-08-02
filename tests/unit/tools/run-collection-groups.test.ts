@@ -1,0 +1,88 @@
+/**
+ * The tool layer's job here is translation: what a caller writes in the schema
+ * must reach `executeCollection` unchanged. Running a real collection would
+ * test the executor a second time and say nothing about the translation, so
+ * the executor is mocked and its argument is the assertion.
+ */
+import { registerRunCollectionTool } from '../../../src/tools/run-tools';
+import { RequestExecutor } from '../../../src/bruno/request-executor';
+
+jest.mock('../../../src/bruno/request-executor', () => ({
+  RequestExecutor: { executeCollection: jest.fn() },
+}));
+
+const mockedExecute = RequestExecutor.executeCollection as jest.Mock;
+
+type Handler = (args: Record<string, unknown>) => Promise<{
+  content: { type: string; text: string }[];
+  isError?: boolean;
+}>;
+
+let handler: Handler;
+let inputSchema: Record<string, { parse: (v: unknown) => unknown }>;
+
+beforeEach(() => {
+  mockedExecute.mockReset();
+  mockedExecute.mockResolvedValue({ summary: { total: 0 }, groups: [] });
+
+  const registerTool = jest.fn(
+    (_name: string, config: { inputSchema: typeof inputSchema }, fn: Handler) => {
+      inputSchema = config.inputSchema;
+      handler = fn;
+    },
+  );
+  registerRunCollectionTool({ server: { registerTool } } as never);
+});
+
+describe('passing groups through', () => {
+  it('hands the group list to the executor unchanged', async () => {
+    const groups = [
+      { name: 'alice', requests: ['auth/login.bru'], variables: { user: 'alice' } },
+      { name: 'bob', requests: ['auth/login.bru'], environment: 'staging', parallel: true },
+    ];
+
+    await handler({ collectionPath: '/c', groups });
+
+    expect(mockedExecute).toHaveBeenCalledWith('/c', expect.objectContaining({ groups }));
+  });
+
+  it('hands an ordered top-level selection through as `requests`', async () => {
+    await handler({ collectionPath: '/c', requests: ['b.bru', 'a.bru'] });
+
+    // Order is the caller's, so it must survive the tool layer intact.
+    expect(mockedExecute).toHaveBeenCalledWith(
+      '/c',
+      expect.objectContaining({ requests: ['b.bru', 'a.bru'] }),
+    );
+  });
+
+  it('passes maxConcurrency through, including 0 for unbounded', async () => {
+    await handler({ collectionPath: '/c', maxConcurrency: 0 });
+
+    expect(mockedExecute).toHaveBeenCalledWith('/c', expect.objectContaining({ maxConcurrency: 0 }));
+  });
+});
+
+describe('rejecting contradictory input', () => {
+  it('refuses both a top-level selection and groups, naming both', async () => {
+    const result = await handler({
+      collectionPath: '/c',
+      requests: ['a.bru'],
+      groups: [{ requests: ['b.bru'] }],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain('requests');
+    expect(result.content[0]!.text).toContain('groups');
+    expect(mockedExecute).not.toHaveBeenCalled();
+  });
+});
+
+describe('the arguments that no longer exist', () => {
+  it.each(['requestPath', 'folder'])('does not accept %s', (name) => {
+    // Not merely absent from the docs: zod strips an unknown key silently, and
+    // a stripped subset argument runs the whole collection while looking like a
+    // subset. The schema must not carry these at all.
+    expect(inputSchema).not.toHaveProperty(name);
+  });
+});

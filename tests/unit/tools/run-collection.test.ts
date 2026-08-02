@@ -78,17 +78,16 @@ function createSuccessResult(total = 3, passed = 3, failed = 0): CollectionRunRe
     });
   }
 
-  return {
-    summary: {
-      total,
-      passed,
-      failed,
-      duration_ms: results.reduce((sum, r) => sum + r.duration_ms, 0),
-      tests: { total, passed: total - failed, failed },
-      requestsWithoutTests: 0,
-    },
-    results,
+  const summary = {
+    total,
+    passed,
+    failed,
+    duration_ms: results.reduce((sum, r) => sum + r.duration_ms, 0),
+    tests: { total, passed: total - failed, failed },
+    requestsWithoutTests: 0,
   };
+
+  return { summary, groups: [{ index: 0, summary, results }] };
 }
 
 describe('run_collection tool', () => {
@@ -133,10 +132,10 @@ describe('run_collection tool', () => {
     expect(tool!.config.inputSchema.collectionPath).toBeDefined();
   });
 
-  it('should accept optional environment and requestPath inputs', () => {
+  it('should accept optional environment and requests inputs', () => {
     const tool = getRegisteredTool(server);
     expect(tool!.config.inputSchema.environment).toBeDefined();
-    expect(tool!.config.inputSchema.requestPath).toBeDefined();
+    expect(tool!.config.inputSchema.requests).toBeDefined();
   });
 
   it('should accept optional parallel input', () => {
@@ -170,35 +169,37 @@ describe('run_collection tool', () => {
       expect(parsed.groups[0].results).toHaveLength(3);
     });
 
-    it('should pass requestPath for single-request mode', async () => {
+    it('should pass a single request file through as a one-entry list', async () => {
       const mockResult = createSuccessResult(1, 1, 0);
       mockedExecutor.executeCollection.mockResolvedValue(mockResult);
 
       const tool = getRegisteredTool(server)!;
       await tool.handler({
         collectionPath: collectionDir,
-        requestPath: requestFile,
+        requests: [requestFile],
       });
 
       expect(mockedExecutor.executeCollection).toHaveBeenCalledWith(
         collectionDir,
-        expect.objectContaining({ requestPath: requestFile }),
+        expect.objectContaining({ requests: [requestFile] }),
       );
     });
 
-    it('should pass directory requestPath to executor', async () => {
+    it('should pass a directory entry to the executor unexpanded', async () => {
+      // Expansion is the run plan's job, not the tool layer's: the tool must
+      // not decide what a directory means.
       const mockResult = createSuccessResult(2, 2, 0);
       mockedExecutor.executeCollection.mockResolvedValue(mockResult);
 
       const tool = getRegisteredTool(server)!;
       const response = await tool.handler({
         collectionPath: collectionDir,
-        requestPath: subfolder,
+        requests: [subfolder],
       });
 
       expect(mockedExecutor.executeCollection).toHaveBeenCalledWith(
         collectionDir,
-        expect.objectContaining({ requestPath: subfolder }),
+        expect.objectContaining({ requests: [subfolder] }),
       );
 
       const parsed = JSON.parse(response.content[0].text);
@@ -322,11 +323,11 @@ describe('run_collection tool', () => {
       expect(mockedExecutor.executeCollection).not.toHaveBeenCalled();
     });
 
-    it('should reject requestPath outside collectionPath', async () => {
+    it('should reject a request entry outside collectionPath', async () => {
       const tool = getRegisteredTool(server)!;
       const response = await tool.handler({
         collectionPath: '/workspace/collection',
-        requestPath: '/etc/passwd',
+        requests: ['/etc/passwd'],
       });
 
       expect(response.isError).toBe(true);
@@ -353,13 +354,13 @@ describe('run_collection tool', () => {
       const tool = getRegisteredTool(server)!;
       const response = await tool.handler({
         collectionPath: collectionDir,
-        requestPath: requestFile,
+        requests: [requestFile],
       });
 
       expect(response.isError).toBeUndefined();
       expect(mockedExecutor.executeCollection).toHaveBeenCalledWith(
         collectionDir,
-        expect.objectContaining({ requestPath: requestFile }),
+        expect.objectContaining({ requests: [requestFile] }),
       );
     });
 
@@ -473,123 +474,81 @@ describe('run_collection tool', () => {
   });
 
   describe('running a subset', () => {
-    it('resolves folder to the directory it names under the collection', async () => {
-      mockedExecutor.executeCollection.mockResolvedValue(createSuccessResult(2, 2, 0));
-
-      const tool = getRegisteredTool(server)!;
-      const response = await tool.handler({
-        collectionPath: collectionDir,
-        folder: 'subfolder',
-      });
-
-      expect(response.isError).toBeUndefined();
-      expect(mockedExecutor.executeCollection).toHaveBeenCalledWith(
-        collectionDir,
-        expect.objectContaining({ requestPath: subfolder }),
-      );
-    });
-
-    it('accepts an absolute folder unchanged', async () => {
-      mockedExecutor.executeCollection.mockResolvedValue(createSuccessResult(2, 2, 0));
-
-      const tool = getRegisteredTool(server)!;
-      await tool.handler({ collectionPath: collectionDir, folder: subfolder });
-
-      expect(mockedExecutor.executeCollection).toHaveBeenCalledWith(
-        collectionDir,
-        expect.objectContaining({ requestPath: subfolder }),
-      );
-    });
-
-    it('resolves a relative requestPath against collectionPath, not the cwd', async () => {
+    it('passes a relative entry through untouched, for the run plan to anchor', async () => {
+      // The tool layer does not resolve request references any more: anchoring
+      // a relative path against the collection is the run plan's job, and
+      // doing it twice is how the two could disagree.
       mockedExecutor.executeCollection.mockResolvedValue(createSuccessResult(1, 1, 0));
 
       const tool = getRegisteredTool(server)!;
-      const response = await tool.handler({
-        collectionPath: collectionDir,
-        requestPath: 'Get Users.yml',
-      });
+      await tool.handler({ collectionPath: collectionDir, requests: ['Login.bru'] });
 
-      expect(response.isError).toBeUndefined();
       expect(mockedExecutor.executeCollection).toHaveBeenCalledWith(
         collectionDir,
-        expect.objectContaining({ requestPath: requestFile }),
+        expect.objectContaining({ requests: ['Login.bru'] }),
       );
     });
 
-    it('rejects folder and requestPath together rather than picking one', async () => {
+    it('accepts an absolute entry inside the collection unchanged', async () => {
+      mockedExecutor.executeCollection.mockResolvedValue(createSuccessResult(1, 1, 0));
+
+      const tool = getRegisteredTool(server)!;
+      await tool.handler({ collectionPath: collectionDir, requests: [requestFile] });
+
+      expect(mockedExecutor.executeCollection).toHaveBeenCalledWith(
+        collectionDir,
+        expect.objectContaining({ requests: [requestFile] }),
+      );
+    });
+
+    it('rejects an entry that escapes the collection, and runs nothing', async () => {
       const tool = getRegisteredTool(server)!;
       const response = await tool.handler({
-        collectionPath: collectionDir,
-        folder: 'subfolder',
-        requestPath: 'Get Users.yml',
+        collectionPath: '/workspace/collection',
+        requests: ['../../etc/passwd'],
       });
 
       expect(response.isError).toBe(true);
-      expect(response.content[0].text).toContain('not both');
+      expect(response.content[0].text).toMatch(/path|outside|traversal/i);
       expect(mockedExecutor.executeCollection).not.toHaveBeenCalled();
     });
 
-    it('rejects a folder that does not exist instead of running everything', async () => {
+    it('rejects an escaping entry inside a group too, not just at the top level', async () => {
+      // Containment that only covers one of the two ways to name a request is
+      // no containment at all.
       const tool = getRegisteredTool(server)!;
       const response = await tool.handler({
-        collectionPath: collectionDir,
-        folder: 'Nope',
+        collectionPath: '/workspace/collection',
+        groups: [{ requests: ['/etc/passwd'] }],
       });
 
       expect(response.isError).toBe(true);
-      expect(response.content[0].text).toContain('folder does not exist');
-      expect(response.content[0].text).toContain(join(collectionDir, 'Nope'));
       expect(mockedExecutor.executeCollection).not.toHaveBeenCalled();
     });
 
-    it('rejects a requestPath that does not exist instead of running everything', async () => {
+    it('rejects requests and groups together rather than picking one', async () => {
       const tool = getRegisteredTool(server)!;
       const response = await tool.handler({
         collectionPath: collectionDir,
-        requestPath: 'Nope.yml',
+        requests: ['Login.bru'],
+        groups: [{ requests: ['Login.bru'] }],
       });
 
       expect(response.isError).toBe(true);
-      expect(response.content[0].text).toContain('requestPath does not exist');
+      expect(response.content[0].text).toMatch(/requests/);
+      expect(response.content[0].text).toMatch(/groups/);
       expect(mockedExecutor.executeCollection).not.toHaveBeenCalled();
     });
 
-    it('rejects a folder that names a file', async () => {
-      const tool = getRegisteredTool(server)!;
-      const response = await tool.handler({
-        collectionPath: collectionDir,
-        folder: 'Get Users.yml',
-      });
+    it('names requests and groups, and not the removed arguments, in its description', () => {
+      // A caller reaching for requestPath or folder must not find them
+      // described as if they still worked.
+      const description = getRegisteredTool(server)!.config.description as string;
 
-      expect(response.isError).toBe(true);
-      expect(response.content[0].text).toContain('must name a directory');
-      expect(mockedExecutor.executeCollection).not.toHaveBeenCalled();
-    });
-
-    it('rejects a folder that escapes the collection', async () => {
-      const tool = getRegisteredTool(server)!;
-      const response = await tool.handler({
-        collectionPath: collectionDir,
-        folder: '../..',
-      });
-
-      expect(response.isError).toBe(true);
-      expect(response.content[0].text).toContain('Invalid folder');
-      expect(mockedExecutor.executeCollection).not.toHaveBeenCalled();
-    });
-
-    it('names both subset arguments, and only those, in its description', () => {
-      const tool = getRegisteredTool(server)!;
-      const description: string = tool.config.description;
-
-      expect(description).toContain('folder');
-      expect(description).toContain('requestPath');
-      // A caller must be able to learn from the schema alone that the key they
-      // guessed is not read, rather than discovering it from a whole-collection
-      // run that looked like a subset.
-      expect(description).toMatch(/silently discarded/i);
-      expect(Object.keys(tool.config.inputSchema)).toContain('folder');
+      expect(description).toContain('requests');
+      expect(description).toContain('groups');
+      expect(description).not.toContain('requestPath');
+      expect(description).not.toContain('folder=');
     });
   });
 });
