@@ -31,7 +31,7 @@ Requires **Node.js >= 18.0.0**.
 - **Multipart Uploads**: `multipart/form-data` bodies with per-part `Content-Type` and multi-file fields
 - **Flexible Environment Updates**: Replace, merge, or patch a single variable in an environment
 - **Inline Scripts**: Attach pre-request/post-response/test scripts directly on `create_request`/`modify_request`
-- **Parallel Execution**: Run collection folders in parallel via `run_collection`'s `parallel` option
+- **Execution Groups**: Run one collection as several isolated groups in a single `run_collection` call — different identities, different environments, concurrent or serial, with no leakage between them
 - **Security Hardening**: SSRF protection, path traversal prevention, VM sandbox for test scripts
 
 ## Installation
@@ -577,52 +577,105 @@ already defined before merging into it with `set_environment_variable`. Values a
 — environments routinely hold tokens, and knowing a key exists is enough to merge safely.
 
 ### `run_collection`
-Execute all requests in a collection (or a single request) and run test scripts.
+Execute requests in a collection and run test scripts.
 
 **Parameters:**
 - `collectionPath` (string): Path to collection or subfolder
 - `environment` (string, optional): Environment name (loads from `environments/<name>.yml`)
 - `collectionRoot` (string, optional): Collection root for environment resolution
-- `requestPath` (string, optional): Path to a single `.yml`/`.yaml`/`.bru` request file, or a subdirectory, to run instead of the full collection
-- `parallel` (boolean, optional, default `false`): Run folders in parallel (grouped by the request file's parent directory). Requests within a folder still run serially, in `seq` order. Each folder gets its own variable store while running in parallel — `bru.setVar()` in one folder is **not** visible to another folder until results are merged; use serial mode (the default) if requests in different folders depend on each other's variables
+- `requests` (string[], optional): The requests to run, **in the order given**. Each entry is a `.yml`/`.yaml`/`.bru` request file, or a directory, which expands to every request under it recursively. Absolute, or relative to `collectionPath`. Duplicates are honoured — naming the same request twice runs it twice. Omit to run the whole collection. An entry naming nothing is reported in that group's `missingRequests` rather than failing the run
+- `groups` (object[], optional): Run the collection as several isolated groups in one call — see [Execution groups](#execution-groups) below. Each entry takes `name`, `requests`, `environment`, `variables` and `parallel`. Cannot be combined with `requests`; passing both is rejected rather than resolved by a precedence rule
+- `parallel` (boolean, optional, default `false`): Fan out. At the run level this runs the **groups** concurrently; a group's own requests stay serial unless that group sets its own `parallel`. With no `groups` given the run is one group, so `parallel` here runs every selected request concurrently **sharing one variable store and one cookie jar**. Reporting order is the listed order regardless
+- `maxConcurrency` (number, optional): Ceiling on requests in flight across the whole run. Omit and one is derived from this machine's cores and memory, held below capacity; `0` lifts it entirely, at your own risk. A ceiling below the number of requests you meant to run at once silently serialises them, so reproducing a race needs a value at least as large as the number of racers
 - `includeResponseBody` (boolean, optional, default `true`): Include each request's response body in the results
 - `maxResponseBodyBytes` (number, optional, default `10240`): Maximum response body size (bytes) returned per request; longer bodies are truncated
 - `variables` (object, optional): `{name: value}` applied over the environment for this run only. Held in memory and never written to a file, which makes it the only correct place for a secret — neither Bruno file format stores a secret's value. Overrides the environment file; a request's own `vars:pre-request` and `bru.setVar()` still override it, matching Bruno's `--env-var`
-- `cookieJar` (boolean, optional, default `true`): Keep cookies from each response and send them on later requests in the same run, so a login carries into what follows. Matched by host, path and expiry, so one host's cookie is never sent to another; `Secure` cookies go only to https (or `http://localhost`). Scoped to the run, and to the individual folder in parallel mode — nothing is written to disk and nothing is shared between runs. **Precedence, per cookie name:** a `Cookie` header the request writes itself wins, and the jar only adds names the request did not set — so a request that pins a specific credential keeps it, and a run that relies on the jar is unaffected. This is a deliberate divergence from Bruno's CLI, where the stored value wins the clash; a request whose authored value displaced a stored one names the cookie in its `warnings`. Set `false` to send only the `Cookie` headers a request writes itself. Bruno's CLI spells this as the inverse flag, `--disable-cookies`
+- `cookieJar` (boolean, optional, default `true`): Keep cookies from each response and send them on later requests in the same run, so a login carries into what follows. Matched by host, path and expiry, so one host's cookie is never sent to another; `Secure` cookies go only to https (or `http://localhost`). Scoped to the group — nothing is written to disk, nothing is shared between runs, and nothing crosses from one group to another. **Precedence, per cookie name:** a `Cookie` header the request writes itself wins, and the jar only adds names the request did not set — so a request that pins a specific credential keeps it, and a run that relies on the jar is unaffected. This is a deliberate divergence from Bruno's CLI, where the stored value wins the clash; a request whose authored value displaced a stored one names the cookie in its `warnings`. Set `false` to send only the `Cookie` headers a request writes itself. Bruno's CLI spells this as the inverse flag, `--disable-cookies`
 
 **Execution Flow:**
 1. Read the collection root (`collection.bru` / `opencollection.yml` / `collection.yml`) and each folder root (`folder.bru` / `folder.yml`) on the path to a request: their **headers** are sent under the request's own, and a request with `auth: inherit` takes the auth of the nearest root that defines one. Root-level **vars, scripts and tests are read but not applied yet** — each is named in that request's `warnings` rather than dropped silently
-2. Find all `.yml`/`.yaml`/`.bru` request files, sort by `seq` field — one **global** sort across everything the run covers, so folders do not scope it. Two requests both numbered `seq: 1` in different folders are ordered by filesystem enumeration, which is not stable; give them distinct `seq` values, or run one folder at a time, when order matters. A file that cannot be parsed is skipped, and named with its reason in `parseFailures`. Any request read from a `.yaml` file is named in the run-level `warnings`, because Bruno's own app and `bru run` do not recognise that extension — see [The `.yaml` extension](#the-yaml-extension)
+2. Resolve each group's `requests` in the order given. A directory entry expands to the `.yml`/`.yaml`/`.bru` files under it, sorted by `seq` **scoped to its own folder** — subfolders first, then that directory's own loose requests, ties broken by filename so a repeat run orders them the same way. `seq` does not order across folders, and it does not constrain execution at all: in a parallel group the requests genuinely run at the same time whatever their `seq` says. A file that cannot be parsed is skipped, and named with its reason in `parseFailures`. Any request read from a `.yaml` file is named in the run-level `warnings`, because Bruno's own app and `bru run` do not recognise that extension — see [The `.yaml` extension](#the-yaml-extension)
 3. Load environment variables (if specified)
 4. For each request: run the pre-request script (if any) → substitute `{{variables}}` (env + runtime) in URL, headers, and body → attach any jar cookies for the target → execute via `fetch()` → store the response's cookies → run post-response/test scripts → extract `bru.setVar()` variables for next request
-5. Requests execute serially in sequence order (or per-folder in parallel, see `parallel` above); variables accumulate across the run
+5. Requests execute serially in the order given unless their group is `parallel`; variables accumulate within the group and never leave it
 6. **On failure**: network errors or HTTP errors are recorded in the result — execution continues to the next request (never stops early)
 7. Requests with no test scripts report zero tests (still counted in `summary.total`)
 
 **Returns:**
+
+Results are group-shaped. There is **no top-level `results` array** — not even when you passed no `groups`, because that case is one group and flattening it would make every caller branch on whether they used the feature.
+
 ```json
 {
   "summary": { "total": 4, "passed": 3, "failed": 1, "duration_ms": 1250 },
-  "results": [
+  "groups": [
     {
-      "name": "Get Schema",
-      "method": "GET",
-      "url": "https://api.example.com/schema",
-      "status": 200,
-      "duration_ms": 312,
-      "tests": [
-        { "description": "Status is 200", "status": "pass" },
-        { "description": "Body is JSON", "status": "pass" }
+      "name": "alice",
+      "index": 0,
+      "summary": { "total": 2, "passed": 2, "failed": 0, "duration_ms": 620 },
+      "results": [
+        {
+          "name": "Get Schema",
+          "method": "GET",
+          "url": "https://api.example.com/schema",
+          "status": 200,
+          "duration_ms": 312,
+          "tests": [
+            { "description": "Status is 200", "status": "pass" },
+            { "description": "Body is JSON", "status": "pass" }
+          ],
+          "response_body": "{\"openapi\":\"3.0.0\", ...}",
+          "response_body_truncated": false,
+          "response_content_type": "application/json"
+        }
       ],
-      "response_body": "{\"openapi\":\"3.0.0\", ...}",
-      "response_body_truncated": false,
-      "response_content_type": "application/json"
+      "capturedVariableNames": ["authToken"]
     }
   ]
 }
 ```
 
+Each group carries its own `summary`, `results`, `missingRequests`, `capturedVariableNames`, `capturedVariables` and `warnings`; the top-level `summary` covers the run. A group that failed outright reports `error` instead of results, and counts as one failure in the run summary — a group that ran no requests contributes nothing to the per-request tally, so without that the run would read green.
+
 `response_body`, `response_body_truncated`, and `response_content_type` are included per result unless `includeResponseBody` is set to `false`.
+
+#### Execution groups
+
+A **group** is the unit of isolation and configuration: it owns its ordered request list, its environment, its variables, its `parallel` flag, one variable store and one cookie jar. Nothing crosses a group boundary in either direction, at any `parallel` setting. The directory a request sits in decides none of this.
+
+**Two identities in one call.** The same requests as two users, with no chance of one login's token or session cookie reaching the other:
+
+```json
+{
+  "collectionPath": "/path/to/collection",
+  "groups": [
+    { "name": "alice", "requests": ["auth/login.bru", "orders"], "variables": { "user": "alice" } },
+    { "name": "bob",   "requests": ["auth/login.bru", "orders"], "variables": { "user": "bob" } }
+  ],
+  "parallel": true
+}
+```
+
+`parallel: true` here runs the two groups against each other. Each group's own requests stay serial — which is what you want, since `orders` depends on the login before it.
+
+**Two environments in one call.** Bruno's UI runs one environment per run; a group-level `environment` **replaces** the run-level one rather than merging with it:
+
+```json
+{
+  "collectionPath": "/path/to/collection",
+  "groups": [
+    { "name": "staging",    "requests": ["smoke"], "environment": "staging" },
+    { "name": "production", "requests": ["smoke"], "environment": "production" }
+  ],
+  "parallel": true
+}
+```
+
+Group `variables`, unlike `environment`, are **merged** over the run-level ones with the group winning per name — so a run-level `baseUrl` survives a group that only overrides `user`.
+
+**Reproducing a race.** Two requests in one `parallel` group share that group's store, so they can genuinely contend on a `bru.setVar`. That is the point when you are trying to reproduce a race, and a reason to leave a group serial when you are not. Set `maxConcurrency` to at least the number of racers, or the cap will quietly serialise them and the race will not happen.
+
+> **Upgrading from 1.x:** `parallel: true` used to isolate each folder. It no longer does. With no `groups`, the whole selection is one group with one store and one cookie jar, so requests that used to be isolated now share state — silently, with nothing to fail on. Name the folders as separate groups to keep the old behaviour.
 
 ## Environment Variables
 

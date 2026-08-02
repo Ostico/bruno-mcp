@@ -8,9 +8,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 > **The next published release must be `2.0.0`.** The public API lost three
-> exports after `1.2.3` (see *Removed* below). That is a breaking change under
-> semver, so it cannot ship as a patch or minor no matter how small the diff
-> that follows it.
+> exports after `1.2.3` (see *Removed* below), and `run_collection`'s input and
+> output shapes both changed (see *Breaking changes* below). That is a breaking
+> change under semver, so it cannot ship as a patch or minor no matter how small
+> the diff that follows it.
+
+### Breaking changes
+
+- **Execution groups replace the folder as the unit of execution.** A run is now
+  an ordered list of *groups*; a group owns its request list, its environment,
+  its variables, its `parallel` flag, one variable store and one cookie jar.
+  Nothing crosses a group boundary in either direction, at any `parallel`
+  setting. The directory a request happens to sit in no longer decides any of
+  this. See `docs/superpowers/specs/2026-08-02-execution-groups-design.md`.
+
+- **`run_collection` lost `requestPath` and `folder`; use `requests`.** Both were
+  singular — one file, or one directory — and both are now one ordered
+  `requests` array whose entries are files or directories. Order is the
+  caller's, and duplicates are honoured: naming the same request twice runs it
+  twice. Migration is mechanical: `requestPath: "auth/login.bru"` becomes
+  `requests: ["auth/login.bru"]`.
+
+- **`run_collection` gained `groups` and `maxConcurrency`.** Pass `groups`
+  instead of `requests` when one call needs more than one identity or
+  configuration — the same five requests as alice and as bob, or against staging
+  and against production, in one call and without leakage. Passing both
+  `requests` and `groups` is rejected rather than resolved by a precedence rule.
+  `maxConcurrency` caps requests in flight across the whole run; omit it and one
+  is derived from this machine's cores and memory, `0` lifts it entirely.
+
+- **Results are group-shaped: there is no top-level `results` array.** Each entry
+  of `groups[]` carries its own `summary`, `results`, `capturedVariableNames`,
+  `capturedVariables` and `warnings`; the top-level `summary` covers the run.
+  This holds in the no-groups case too, where the run is one group — so a caller
+  reading `result.results` reads `undefined`, and must read `result.groups[0]
+  .results`. A group that crashed outright reports `error` and counts as one
+  failure in the run summary, because a group that ran no requests contributes
+  nothing to the per-request tally and would otherwise leave the run reading
+  green.
+
+- **`seq` no longer constrains execution.** It is the default ordering and the
+  reporting order only. Two requests in one parallel group genuinely run at the
+  same time whatever their `seq` says, and may contend on the store they share.
+
+- **Silent behaviour change, worth reading twice.** A caller passing
+  `parallel: true` today gets folder isolation: `bru.setVar` in one folder is
+  invisible to another. After upgrading, `parallel: true` with no `groups` runs
+  the whole selection as **one** group with **one** store and **one** cookie jar,
+  so those requests now share state. Nothing errors and nothing warns — the run
+  simply means something different. To keep the old isolation, name the folders
+  as separate groups. This is the one change here that a passing test suite will
+  not catch for you.
+
+- **Node 22 or newer is required** (`engines.node` moved from `>=18.0.0` to
+  `>=22.0.0`). Node 20 reached end of life in April 2026 and CI already tests
+  only 22.x and 24.x, so the floor now says what was already true.
 
 ### Added
 

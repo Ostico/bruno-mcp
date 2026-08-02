@@ -683,7 +683,7 @@ Bruno omits the block too — but silently inheriting `followRedirects: true` is
 > decision than this change, and it now has a workaround the reporter did not have (set it on create). It also
 > interacts with **L15**, filed out of this work.
 
-### M10 — no shared-state concurrency, so a credential race cannot be exercised. CONFIRMED. *(User-reported)*
+### ~~M10 — no shared-state concurrency, so a credential race cannot be exercised.~~ CONFIRMED. FIXED. *(User-reported)*
 
 `run_collection`'s `parallel` runs **folders** concurrently (`Promise.allSettled`, `request-executor.ts:1111`),
 serial within each. But parallel folders are isolated on purpose: each gets its own `VariableStore` — the code
@@ -701,6 +701,26 @@ interleave.
 
 Cheapest honest shape: an opt-in shared-state mode on `run_collection`, explicitly non-Bruno and documented as
 such, with per-folder isolation staying the default.
+
+**Resolution — not the shape proposed above.** No shared-state *mode* was added. The folder stopped being an
+isolation boundary at all, which answers the finding without inventing a second execution semantics to sit
+beside the first. A run is now an ordered list of caller-defined **groups**; a group owns its request list,
+environment, variables, `parallel` flag, one `VariableStore` and one cookie jar, and nothing crosses a group
+boundary. Design: `docs/superpowers/specs/2026-08-02-execution-groups-design.md`.
+
+That makes the race a caller's choice rather than a mode:
+
+- Two contending requests **in one parallel group** share that group's store, so they genuinely race on
+  `bru.setVar`. That is the token-renewal race this finding could not exercise, and it needs no `curl`.
+- The same two requests **in separate groups** are isolated, as parallel folders were.
+
+So both semantics exist, neither is a flag, and the question the proposed mode would have had to answer — what
+`bru.setVar` means under a race — is answered by the caller putting the requests where they mean them to be.
+`seq` no longer constrains any of it: it is the default ordering and the reporting order only.
+
+The cost is a real break, recorded in the changelog: a caller who passes `parallel: true` today gets folder
+isolation, and after upgrading gets one store and one jar for the whole selection. Nothing errors. That is the
+one part of this a passing test suite will not catch.
 
 ### M11 — the cookie jar overrides a `Cookie` header the request set itself. CONFIRMED. FIXED. *(User-reported)*
 
@@ -1646,10 +1666,10 @@ What an agent needs and does not have. Direct field feedback first.
     the tool description and README as this list required. Cheap as predicted; the surprise was that two existing
     tests had *pinned* the old order, so it was defended rather than merely untested. See the resolution note
     under M11.
-8d. **M10** — an opt-in shared-state concurrency mode. Larger, and the only item here with no upstream answer to
-    copy: Bruno has no concurrency at all, so folder parallelism is already ours and shared state means defining
-    semantics upstream never had to. Do it after M9 and M11, and expect it to be a design discussion rather
-    than a patch.
+8d. **M10** — an opt-in shared-state concurrency mode. DONE, but not as a mode. It was the design discussion
+    predicted here, and the discussion's answer was that the second semantics did not need to exist: removing
+    the folder as an isolation boundary gives both behaviours through where the caller puts a request. See the
+    resolution note under M10.
 8e. **L13** — a return channel for captured values. DONE. The redaction decision it was waiting on turned out
     to be answered by the shape of the tool rather than by a policy: values are opt-in by name, and
     `response_body` is returned by default anyway, so masking a value a caller asked for would break the
