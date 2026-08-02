@@ -180,9 +180,9 @@ export async function buildFetchOptions(
 }> {
   // Surface any {{var}} that substitution could not resolve so an
   // unsubstituted placeholder can no longer reach the wire silently. The
-  // failure mode is starkest under parallel per-folder isolation — a variable
-  // set by a script in one folder is invisible to another folder's requests —
-  // but an unresolved placeholder is a latent bug in serial mode too. Detection
+  // failure mode is starkest across groups — a variable set by a script in one
+  // group is invisible to every other group's requests, by design — but an
+  // unresolved placeholder is a latent bug within one serial group too. Detection
   // runs on the ORIGINAL templates below, not the substituted output, so a
   // resolved value that itself contains `{{...}}` is never mis-flagged
   // (substitution is deliberately single-pass). Names accumulate across every

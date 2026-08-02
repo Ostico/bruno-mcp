@@ -9,7 +9,7 @@ A Model Context Protocol (MCP) server for creating, managing, and executing Brun
 
 Use this when you want an AI agent (Claude, Copilot, etc.) to create, inspect, or execute Bruno API test collections programmatically — without opening the Bruno GUI or installing the Bruno CLI. Typical use cases: AI-assisted test generation, CI pipeline integration, automated API exploration.
 
-Requires **Node.js >= 18.0.0**.
+Requires **Node.js >= 22.0.0**, matching `engines` in `package.json`. CI tests 22.x and 24.x.
 
 ## Features
 

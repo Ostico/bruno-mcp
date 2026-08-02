@@ -149,7 +149,7 @@ describe('Disabled multipart form parts are dropped', () => {
     setupSingleFile('Upload.bru', bruContent);
 
     const result = await RequestExecutor.executeCollection('/test-collection', {
-      requestPath: '/test-collection/Upload.bru',
+      requests: ['/test-collection/Upload.bru'],
     });
 
     expect(result.summary.total).toBe(1);
@@ -190,7 +190,7 @@ runtime:
     setupSingleFile('Pre Fails.yml', YAML);
 
     const result = await RequestExecutor.executeCollection('/test-collection', {
-      requestPath: '/test-collection/Pre Fails.yml',
+      requests: ['/test-collection/Pre Fails.yml'],
       scriptRunner: mockScriptRunner({ error: 'pre-request boom' }),
     });
 
@@ -224,7 +224,7 @@ runtime:
     setupSingleFile('Pre Fails Secret.yml', SECRET_YAML);
 
     const result = await RequestExecutor.executeCollection('/test-collection', {
-      requestPath: '/test-collection/Pre Fails Secret.yml',
+      requests: ['/test-collection/Pre Fails Secret.yml'],
       scriptRunner: mockScriptRunner({ error: 'boom' }),
     });
 
@@ -268,7 +268,7 @@ runtime:
     setupSingleFile('Uses Prevar.yml', YAML);
 
     const result = await RequestExecutor.executeCollection('/test-collection', {
-      requestPath: '/test-collection/Uses Prevar.yml',
+      requests: ['/test-collection/Uses Prevar.yml'],
       scriptRunner: mockScriptRunner({ variables: { host: 'api.example.com', tok: 't123' } }),
     });
 
@@ -307,7 +307,7 @@ runtime:
     setupSingleFile('Var And Mutate.yml', YAML);
 
     const result = await RequestExecutor.executeCollection('/test-collection', {
-      requestPath: '/test-collection/Var And Mutate.yml',
+      requests: ['/test-collection/Var And Mutate.yml'],
       scriptRunner: mockScriptRunner({
         variables: { host: 'api.example.com', tok: 'ignored-by-mutation' },
         mutations: {
@@ -345,7 +345,7 @@ runtime:
     setupSingleFile('Mutate Only.yml', YAML);
 
     const result = await RequestExecutor.executeCollection('/test-collection', {
-      requestPath: '/test-collection/Mutate Only.yml',
+      requests: ['/test-collection/Mutate Only.yml'],
       scriptRunner: mockScriptRunner({
         mutations: {
           url: 'https://mutated.test/y',

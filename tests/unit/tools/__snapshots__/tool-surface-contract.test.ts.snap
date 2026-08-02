@@ -85,7 +85,7 @@ exports[`MCP tool surface contract matches the recorded surface exactly (titles,
     "title": "Delete Request",
   },
   "get_collection_stats": {
-    "description": "Get statistics about a Bruno collection — request counts by method, folders, environments, and per-request details including file paths. environmentDetails lists each environment with the NAMES of the variables it declares (values are withheld), so you can see what an environment already defines before merging into it with set_environment_variable. Use filePath values as requestPath in run_collection.",
+    "description": "Get statistics about a Bruno collection — request counts by method, folders, environments, and per-request details including file paths. environmentDetails lists each environment with the NAMES of the variables it declares (values are withheld), so you can see what an environment already defines before merging into it with set_environment_variable. Use filePath values as entries in the requests list of run_collection.",
     "schema": {
       "collectionPath": "string",
     },
@@ -99,7 +99,7 @@ exports[`MCP tool surface contract matches the recorded surface exactly (titles,
     "title": "List Collections",
   },
   "list_requests": {
-    "description": "List all request files (.yml/.bru) in a Bruno collection. Returns absolute file paths that can be used as requestPath in run_collection.",
+    "description": "List all request files (.yml/.bru) in a Bruno collection. Returns absolute file paths, each usable as an entry in the requests list of run_collection, or of one of its groups.",
     "schema": {
       "collectionPath": "string",
     },

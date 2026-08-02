@@ -1230,7 +1230,7 @@ http:
 
     it('names the file when a single requested request will not parse', async () => {
       const INVALID_YAML = `not: [valid: yaml: request`;
-      const requestPath = path.join('/test-collection', 'broken.yml');
+      const brokenPath = path.join('/test-collection', 'broken.yml');
 
       mockedFs.readFile.mockResolvedValue(INVALID_YAML as any);
       setupFsStat(['/test-collection']);
@@ -1241,11 +1241,11 @@ http:
       // survive it — and the message has to say WHICH file, which the parser's
       // own message does not.
       const result = await RequestExecutor.executeCollection('/test-collection', {
-        requests: [requestPath],
+        requests: [brokenPath],
         scriptRunner: TestRunner,
       });
 
-      expect(result.groups[0]!.error).toContain(`Failed to parse ${requestPath}:`);
+      expect(result.groups[0]!.error).toContain(`Failed to parse ${brokenPath}:`);
       expect(result.groups[0]!.results).toEqual([]);
       // Nothing ran, and the run must not read green because of it.
       expect(result.summary.failed).toBe(1);
@@ -3013,7 +3013,7 @@ body:json {
       expect(result.groups[0]!.results[0].tests).toHaveLength(0);
     });
 
-    it('executes a single .bru file passed directly via requestPath', async () => {
+    it('executes a single .bru file named directly in requests', async () => {
       setupFsReadFile({ 'Data.bru': JSON_BODY_BRU });
 
       mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true }));
@@ -3028,11 +3028,11 @@ body:json {
   });
 
   // =========================================================================
-  // requestPath resolution edge cases
+  // request reference resolution edge cases
   // =========================================================================
 
-  describe('requestPath resolution', () => {
-    it('treats a non-file requestPath that stats as a directory as a sub-collection', async () => {
+  describe('request reference resolution', () => {
+    it('treats a non-file reference that stats as a directory as a sub-collection', async () => {
       setupFsReaddirRecursive({
         '/test-collection/sub': [{ name: 'Get Users.yml', isFile: true, isDirectory: false }],
       });
