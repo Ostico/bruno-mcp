@@ -40,4 +40,11 @@ export interface ExecutionOptions {
    * upstream's process-wide jar.
    */
   cookieJar?: boolean;
+  /**
+   * Names of variables set by `bru.setVar` during the run whose values the
+   * caller wants back. Names a run captured are always reported; values are not,
+   * until asked for here. See `captured-variables.ts` for why that is the whole
+   * of the policy.
+   */
+  captureVariables?: string[];
 }

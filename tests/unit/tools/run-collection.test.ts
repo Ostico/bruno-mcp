@@ -404,6 +404,35 @@ describe('run_collection tool', () => {
       );
     });
 
+    it('passes captureVariables through to the run', async () => {
+      mockedExecutor.executeCollection.mockResolvedValue(createSuccessResult(1, 1, 0));
+
+      const tool = getRegisteredTool(server)!;
+      await tool.handler({
+        collectionPath: '/workspace/collection',
+        captureVariables: ['token', 'orderId'],
+      });
+
+      expect(mockedExecutor.executeCollection).toHaveBeenCalledWith(
+        '/workspace/collection',
+        expect.objectContaining({ captureVariables: ['token', 'orderId'] }),
+      );
+    });
+
+    it('asks for no captured values when the caller names none', async () => {
+      // Values are opt-in: an undefined here is what keeps a token a script
+      // captured out of the result of a run that never asked about it.
+      mockedExecutor.executeCollection.mockResolvedValue(createSuccessResult(1, 1, 0));
+
+      const tool = getRegisteredTool(server)!;
+      await tool.handler({ collectionPath: '/workspace/collection' });
+
+      expect(mockedExecutor.executeCollection).toHaveBeenCalledWith(
+        '/workspace/collection',
+        expect.objectContaining({ captureVariables: undefined }),
+      );
+    });
+
     it('defaults the cookie jar to on, matching Bruno\'s --disable-cookies', () => {
       // The default lives in the schema: the SDK parses args before the handler
       // sees them, so it is asserted where it actually applies. (Calling the

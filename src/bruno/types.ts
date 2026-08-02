@@ -1094,10 +1094,27 @@ export interface CollectionRunResult {
   parseFailures?: ParseFailure[];
   /**
    * Notes about the run as a whole rather than about one request — a request's
-   * own warnings live on its `RequestExecutionResult`. Currently only the
-   * `.yaml`-extension divergence; absent when there is nothing to say.
+   * own warnings live on its `RequestExecutionResult`. Absent when there is
+   * nothing to say.
    */
   warnings?: string[];
+  /**
+   * Every variable name a script set with `bru.setVar` during the run, sorted.
+   * Absent when no script set anything.
+   *
+   * Names come back unasked because they are already readable in the
+   * collection's script source; the values behind them are not. Ask for a value
+   * by naming it in `captureVariables`.
+   */
+  capturedVariableNames?: string[];
+  /**
+   * Values for the names given in `captureVariables`, for those a script
+   * actually set. Absent when none were asked for or none matched — a requested
+   * name that no script set is reported in `warnings` rather than returned as
+   * an empty string, which would be indistinguishable from a script that set
+   * one.
+   */
+  capturedVariables?: Record<string, string>;
 }
 
 // Utility types for better type safety
