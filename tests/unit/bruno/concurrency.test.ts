@@ -144,13 +144,28 @@ describe('the run-wide semaphore', () => {
   });
 
   it('does not double-release when a holder calls release twice', async () => {
-    // A release that credits the pool twice lets `limit + 1` tasks run.
+    // A release that credits the pool twice lets `limit + 1` tasks run. The
+    // measurement must use the SAME semaphore the double release happened on —
+    // measuring a fresh one passes with the guard deleted, which is how this
+    // test first shipped.
     const semaphore = createSemaphore(1);
     const release = await semaphore.acquire();
     release();
     release();
 
-    expect(await peakOf(1, 2)).toBe(1);
+    let active = 0;
+    let peak = 0;
+    const task = async (): Promise<void> => {
+      const done = await semaphore.acquire();
+      active++;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setImmediate(resolve));
+      active--;
+      done();
+    };
+    await Promise.all([task(), task()]);
+
+    expect(peak).toBe(1);
   });
 
   it('hands the slot to waiters in the order they asked', async () => {
