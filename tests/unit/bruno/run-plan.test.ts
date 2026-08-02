@@ -140,7 +140,26 @@ describe('with explicit groups', () => {
       groups: [{ requests: ['auth/login.bru', 'auth/login.bru'] }],
     });
 
-    expect(plan.groups[0]!.requests).toHaveLength(2);
+    // By path, not by object identity: two resolutions of one file produce two
+    // distinct objects, so a length check alone survives a dedupe.
+    expect(plan.groups[0]!.requests.map((r) => r.filePath)).toEqual([
+      join(root, 'auth', 'login.bru'),
+      join(root, 'auth', 'login.bru'),
+    ]);
+  });
+
+  it('says the same thing once when two references warn identically', async () => {
+    // Naming one unconventional file twice is one fact about the collection,
+    // not two.
+    await writeFile(
+      join(root, 'users', 'legacy.yaml'),
+      'info:\n  name: legacy\n  type: http\n  seq: 1\nhttp:\n  method: GET\n  url: https://example.test/legacy\n',
+    );
+    const plan = await buildRunPlan(root, {
+      groups: [{ requests: ['users/legacy.yaml', 'users/legacy.yaml'] }],
+    });
+
+    expect(plan.warnings.filter((w) => w.includes('legacy.yaml'))).toHaveLength(1);
   });
 
   it('records an unresolvable reference instead of throwing', async () => {
