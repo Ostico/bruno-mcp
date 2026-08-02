@@ -102,6 +102,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   spelling on disk (`.bru` `enabled`, `.yml` `disabled`) while the tool surface
   exposes only `disabled`, absent meaning active.
 
+### Security
+
+- **An environment name may no longer be a path.** Names arriving from
+  `run_collection` (per run and per group) and from every `EnvironmentManager`
+  entry point were joined straight into `<collection>/environments/`, so a name
+  containing a separator left the collection: on the read side it loaded any
+  YAML the process could open and substituted its values into outbound
+  requests, and on the write side it could overwrite or unlink a file outside
+  the collection. Names containing `/`, `\` or a null byte, and the names `.`
+  and `..`, are now refused.
+
+- **`collectionRoot` must contain `collectionPath`.** It decides which
+  collection- and folder-level scripts are executed, so a root pointing
+  elsewhere ran another collection's root scripts against these requests and
+  read its environments into these variables. It now has to be the collection
+  path itself or an ancestor of it.
+
+- **A run's OAuth2 tokens no longer outlive its group.** The token cache was
+  run-wide, so a second group with different credentials was served the first
+  group's bearer token, never contacted the provider, and reported success
+  under its own name. The cache is per group, and the client secret and
+  password are part of its key (hashed).
+
+- **`maxConcurrency` no longer changes the process.** A run's ceiling was
+  written into process-global state: overlapping runs re-capped each other,
+  and a single `maxConcurrency: 0` left the process unbounded for every run
+  after it. It is now a reservation released when the run ends.
+
 ### Removed
 
 - **BREAKING:** `BruGenerator`, `generateBruFile`, and `createBasicBruFile` are
