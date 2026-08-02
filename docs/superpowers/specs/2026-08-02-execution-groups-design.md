@@ -192,7 +192,9 @@ The two resources are not alike:
 maxConcurrency = max(1, floor(0.9 × min(cores × 2, memoryBudgetMB / 64)))
 ```
 
-- `cores` from `os.availableParallelism()`, falling back to `os.cpus().length` on Node < 18.14.
+- `cores` from `os.availableParallelism()`, unconditionally — see the Node floor below. No `os.cpus().length`
+  fallback: `cpus()` counts hyperthreads and ignores cgroup CPU quota, so the fallback would silently derive a
+  different (larger) cap than the primary path on exactly the constrained machines that need it most.
 - `cores × 2` because forks spend most of their life blocked on IO rather than computing.
 - `64` MB as a conservative per-child budget.
 - `0.9` as the safety margin.
@@ -228,6 +230,22 @@ path access, `execSync('ulimit -n')` reports the *shell's* limit rather than thi
 
 Instead: if `EMFILE` ever surfaces, catch it and name the soft limit from `userLimits` in the error message, so
 diagnosis is immediate. Error-time honesty over startup fortune-telling.
+
+### Node floor: 22
+
+2.0.0 raises `engines.node` to `>=22.0.0`. Node 20 reached end of life in April 2026; 18 is long past it.
+
+This corrects a declaration that is already false rather than tightening a working one. `package.json` claims
+`>=18.0.0`, but CI has only ever run **22.x and 24.x** (`.github/workflows/ci.yml:33`) and the release job builds
+on 24.x (`.github/workflows/release.yml:23`). No 18 or 20 run has verified anything in a long time, so the
+declared floor is a promise nothing keeps.
+
+Landing it means:
+
+- `engines.node` → `>=22.0.0`.
+- `@types/node` → `^22`, currently `^20.0.0` and inconsistent with the floor either way.
+- `tsconfig` `target: ES2022` can stay; nothing here needs a newer lib.
+- CI matrix unchanged — it is already the thing being made honest.
 
 ### `maxConcurrency: 0`
 
@@ -364,6 +382,7 @@ collection- and folder-level script chain. The root-scripts work paid for this i
 | `parallel: true` — folders concurrent, isolated, requests serial within each | `groups: [...]` with `parallel: true` to keep isolation; bare `parallel: true` now runs **all** requests concurrently sharing one store |
 | `result.results[]` | `result.groups[].results[]` |
 | `result.capturedVariables` | `result.groups[].capturedVariables` |
+| `engines.node: ">=18.0.0"` | `">=22.0.0"` — Node 20 EOL April 2026, and CI already only tests 22.x/24.x |
 
 The silent-behavior-change risk is concentrated in one place: a caller who passes `parallel: true` today and
 relies on folder isolation gets shared state after upgrading. The changelog must name it explicitly, and the
