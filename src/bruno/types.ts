@@ -1090,9 +1090,49 @@ export interface ParseFailure {
   message: string;
 }
 
+/**
+ * One group's outcome. A group owns its own store and cookie jar, so its
+ * captures are unambiguous in a way a run-wide capture map never was: group
+ * A's `token` belongs to group A and to nothing else.
+ */
+export interface GroupRunResult {
+  /** As supplied by the caller. Absent when the group was not named. */
+  name?: string;
+  /** Position in the run. Always present, so an unnamed group is still addressable. */
+  index: number;
+  summary: CollectionRunSummary;
+  /** In listed order, whatever order they executed in. */
+  results: RequestExecutionResult[];
+  /** References that resolved to nothing. Absent when everything resolved. */
+  missingRequests?: string[];
+  /**
+   * Every variable name a script set with `bru.setVar` in this group, sorted.
+   * Absent when no script set anything.
+   *
+   * Names come back unasked because they are already readable in the
+   * collection's script source; the values behind them are not. Ask for a value
+   * by naming it in `captureVariables`.
+   */
+  capturedVariableNames?: string[];
+  /**
+   * Values for the names given in `captureVariables`, for those a script in
+   * this group actually set. Absent when none were asked for or none matched.
+   */
+  capturedVariables?: Record<string, string>;
+  /** Notes about this group rather than about one request. */
+  warnings?: string[];
+  /** Set when the group itself failed, as opposed to a request within it. */
+  error?: string;
+}
+
 export interface CollectionRunResult {
   summary: CollectionRunSummary;
-  results: RequestExecutionResult[];
+  /**
+   * One entry per group, in the order the caller listed them. Always present,
+   * with a single implicit group when the caller named none: flattening that
+   * case would make every caller branch on whether they passed groups.
+   */
+  groups: GroupRunResult[];
   /**
    * How many discovered files failed to parse and were skipped. Always equals
    * `parseFailures.length` — it is derived from it, not counted separately.
@@ -1111,23 +1151,6 @@ export interface CollectionRunResult {
    * nothing to say.
    */
   warnings?: string[];
-  /**
-   * Every variable name a script set with `bru.setVar` during the run, sorted.
-   * Absent when no script set anything.
-   *
-   * Names come back unasked because they are already readable in the
-   * collection's script source; the values behind them are not. Ask for a value
-   * by naming it in `captureVariables`.
-   */
-  capturedVariableNames?: string[];
-  /**
-   * Values for the names given in `captureVariables`, for those a script
-   * actually set. Absent when none were asked for or none matched — a requested
-   * name that no script set is reported in `warnings` rather than returned as
-   * an empty string, which would be indistinguishable from a script that set
-   * one.
-   */
-  capturedVariables?: Record<string, string>;
 }
 
 // Utility types for better type safety

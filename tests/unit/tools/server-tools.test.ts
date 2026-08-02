@@ -532,22 +532,20 @@ describe('Server tool handlers', () => {
       expect(parsed.summary.total).toBe(2);
     });
 
-    it('should pass environment and requestPath', async () => {
+    it('should pass environment and the request selection', async () => {
       (RequestExecutor.executeCollection as jest.Mock).mockResolvedValue({
-        summary: { total: 1, passed: 1, failed: 0, duration_ms: 50 }, results: [],
+        summary: { total: 1, passed: 1, failed: 0, duration_ms: 50 }, groups: [],
       });
-      // A real file: run_collection confirms the named request exists before
-      // running, so an invented path is rejected rather than forwarded.
       const col = await mkdtemp(join(tmpdir(), 'server-tools-run-'));
       const request = join(col, 'test.yml');
       await writeFile(request, 'info:\n  name: T\n');
       const handler = getHandler(server, 'run_collection');
       await handler({
         collectionPath: col, environment: 'dev',
-        collectionRoot: col, requestPath: request,
+        collectionRoot: col, requests: [request],
       });
       expect(RequestExecutor.executeCollection).toHaveBeenCalledWith(
-        col, expect.objectContaining({ environment: 'dev', requestPath: request }),
+        col, expect.objectContaining({ environment: 'dev', requests: [request] }),
       );
       await rm(col, { recursive: true, force: true });
     });
@@ -564,9 +562,9 @@ describe('Server tool handlers', () => {
       );
     });
 
-    it('should reject requestPath outside collectionPath', async () => {
+    it('should reject a request entry outside collectionPath', async () => {
       const handler = getHandler(server, 'run_collection');
-      const result = await handler({ collectionPath: '/col', requestPath: '/other/evil.yml' });
+      const result = await handler({ collectionPath: '/col', requests: ['/other/evil.yml'] });
       expect(result.isError).toBe(true);
     });
 

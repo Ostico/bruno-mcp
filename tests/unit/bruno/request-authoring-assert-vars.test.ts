@@ -519,7 +519,7 @@ describe('an authored request actually asserts and substitutes when run', () => 
     const run = await RequestExecutor.executeCollection(collectionPath, { scriptRunner: TestRunner });
     expect(String(mockFetch.mock.calls[0][0])).toBe('https://api.example.com/users/42');
 
-    const request = run.results[0];
+    const request = run.groups[0]!.results[0];
     expect(request.tests.map((t) => [t.description, t.status])).toEqual([
       ['res.status eq 200', 'pass'],
       ['bru.getVar("widgetId") eq 7', 'pass'],

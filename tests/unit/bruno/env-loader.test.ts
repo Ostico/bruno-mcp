@@ -19,6 +19,51 @@ describe('Environment Loader', () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
+  describe('loadEnvironment — a name is a name, not a path', () => {
+    // An environment name indexes `environments/<name>.yml` inside the
+    // collection. Anything that can leave that directory is refused before a
+    // path is built from it: the file that gets read becomes the run's
+    // variables, so a name that escapes reads a YAML file the caller was never
+    // given access to and substitutes its values into outbound requests.
+    it.each([
+      ['a parent traversal', '../../../../etc/hosts'],
+      ['a traversal in the middle', 'dev/../../../secrets/prod'],
+      ['a posix separator', 'nested/dev'],
+      ['an absolute path', '/etc/hosts'],
+      ['a null byte', 'dev\0.yml'],
+    ])('refuses %s', async (_label, name) => {
+      await expect(loadEnvironment(tempDir, name)).rejects.toThrow(/environment name/i);
+    });
+
+    it.each([['the current directory', '.'], ['the parent directory', '..']])(
+      'refuses %s, which names a directory rather than an environment',
+      async (_label, name) => {
+        // No separator to catch these on: `..` would resolve to
+        // `environments/...yml`, which is a nonsense read rather than a
+        // dangerous one, but it is still not an environment.
+        await expect(loadEnvironment(tempDir, name)).rejects.toThrow(/directory, not an environment/);
+      },
+    );
+
+    it('refuses a Windows separator on every platform', async () => {
+      // The server may run on Windows, and a name is not portable state: a
+      // backslash reaching a POSIX host is still an attempt to leave.
+      await expect(loadEnvironment(tempDir, 'nested\\dev')).rejects.toThrow(/environment name/i);
+    });
+
+    it('still accepts the ordinary names Bruno collections use', async () => {
+      // The guard must not cost dots and dashes, which real environment files
+      // are full of.
+      const envDir = join(tempDir, 'environments');
+      await fs.mkdir(envDir, { recursive: true });
+      await fs.writeFile(join(envDir, 'dev.eu-west-1.yml'), 'name: dev\nvariables:\n  - name: url\n    value: https://dev.test\n');
+
+      const vars = await loadEnvironment(tempDir, 'dev.eu-west-1');
+
+      expect(vars.get('url')).toBe('https://dev.test');
+    });
+  });
+
   describe('loadEnvironment', () => {
     it('should load a YAML environment file and return a Map of active variables', async () => {
       const envDir = join(tempDir, 'environments');

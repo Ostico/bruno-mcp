@@ -206,12 +206,21 @@ bruno-mcp/
 {
   collectionPath: string;         // Path to collection
   environment?: string;           // Environment name
-  requestPath?: string;           // Single request path (optional)
+  requests?: string[];            // Ordered request files or directories; omit for all
+  groups?: Array<{                // Isolated groups; cannot be combined with requests
+    name?: string;
+    requests?: string[];          // Omit for the whole collection under this identity
+    environment?: string;         // Replaces the run-level environment
+    variables?: Record<string, string | number | boolean>;
+    parallel?: boolean;           // This group's own requests, concurrently
+  }>;
+  parallel?: boolean;             // Runs the GROUPS concurrently
+  maxConcurrency?: number;        // Requests in flight; 0 is unbounded
 }
 ```
 
 **Output:**
-- Executes HTTP requests with SSRF protection, runs test scripts in sandboxed VM, returns results with pass/fail counts.
+- Executes HTTP requests with SSRF protection, runs test scripts in sandboxed VM, and returns group-shaped results: each group carries its own summary and results, and the top-level summary covers the run. There is no top-level `results` array.
 
 ## Bruno BRU File Format
 

@@ -221,7 +221,7 @@ describe('ordering requests across folders', () => {
     const names = async (parallel: boolean): Promise<string[]> => {
       const root = await collection(layout);
       const result = await RequestExecutor.executeCollection(root, { parallel });
-      return (result.results ?? []).map((r) => (r as { name: string }).name);
+      return (result.groups[0]!.results ?? []).map((r) => (r as { name: string }).name);
     };
 
     expect(await names(true)).toEqual(['from-bravo', 'from-alpha']);

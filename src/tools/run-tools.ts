@@ -4,12 +4,13 @@
  * Moved out of server.ts unchanged apart from `this.` becoming `ctx.`.
  */
 
+import { isAbsolute, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import { RequestExecutor } from '../bruno/request-executor.js';
+import type { GroupInput } from '../bruno/run-plan.js';
 import { forkingScriptRunner } from '../bruno/sandbox-host.js';
 import { normalizeVariableOverrides } from '../bruno/runtime-variables.js';
 import { validateToolPath } from './tool-path.js';
-import { resolveRunTarget } from './run-target.js';
 import type { ToolContext } from './context.js';
 
 export function registerRunCollectionTool(ctx: ToolContext): void {
@@ -17,19 +18,26 @@ export function registerRunCollectionTool(ctx: ToolContext): void {
     'run_collection',
     {
       title: 'Run Collection',
-      description: 'Execute requests in a Bruno collection and run test scripts. HOW TO RUN A SUBSET — there are exactly two arguments for it and no others: folder runs every request under one directory, requestPath runs one .yml/.bru request file (or, for backwards compatibility, a directory, exactly as folder does). Both accept either an absolute path or a path relative to collectionPath, so folder="Auth" and folder="/abs/collection/Auth" are the same request. Supplying both folder and requestPath is REJECTED rather than resolved for you. Omit both to run ALL requests. Any other key you might reach for — a name, a tag, a glob — does not exist and is silently discarded before this tool sees it, which would run the whole collection while looking like a subset, so use folder or requestPath. A folder or requestPath that does not exist is an error, not a whole-collection run. Each result includes the response body (response_body, response_content_type, response_body_truncated) by default — disable with includeResponseBody=false or cap the size with maxResponseBodyBytes. Execution order matches Bruno\'s: seq is scoped to a folder, so requests are ordered by seq WITHIN their own directory, and two requests both numbered seq 1 in different folders no longer interleave. Sibling folders run in alphabetical order unless a folder root file (folder.bru / folder.yml) gives a seq, which names the POSITION that folder takes rather than a key it is sorted on. Within a directory, subfolders run BEFORE that directory\'s own loose requests — so a request at the collection root runs after every folder, however low its seq. Requests tied on seq are ordered by filename, which is stable across filesystems. A request file that cannot be parsed is skipped rather than failing the run: the count is parseErrors and each skipped file is named with its reason in parseFailures, so a run over a whole collection can be a subset without looking like one. Values captured by scripts come back out: every name a bru.setVar set during the run is listed in capturedVariableNames, and the values of the names you list in captureVariables are returned in capturedVariables — so a token a login captured no longer has to be echoed through a response body or a test name to be readable. Outbound requests are SSRF-filtered: targets resolving to private, loopback, link-local or otherwise reserved addresses are refused unless the server operator has allowlisted them, and a refusal is reported per-request as an "SSRF blocked" error with status 0.',
+      description: 'Execute requests in a Bruno collection and run test scripts. HOW TO RUN A SUBSET: requests takes an ORDERED list of entries, each a .yml/.bru request file or a directory (which expands to every request under it, recursively). Absolute, or relative to collectionPath. Order is yours and duplicates are allowed \u2014 naming the same request twice runs it twice. Omit requests to run the whole collection. GROUPS: pass groups instead when one call needs more than one identity or configuration. Each group owns its OWN variable store and cookie jar, so nothing a group sets \u2014 a bru.setVar, a session cookie \u2014 is visible to any other group. That is what makes running the same five requests as alice and as bob in one call safe. Passing both requests and groups is REJECTED rather than resolved for you. PARALLELISM: parallel on the RUN fans the groups out against each other; parallel on a GROUP fans that group\'s own requests out. A group is serial unless it says otherwise, whatever the run does. seq no longer constrains execution \u2014 it is the default order and the reporting order only, so two requests in one parallel group genuinely run at the same time and may contend on the store they share. RESULTS are group-shaped: groups[] each carry their own summary, results, capturedVariableNames, capturedVariables and warnings, and the top-level summary is the run. There is no top-level results array, in the no-groups case either. A group that crashed outright reports error and counts as one failure in the run summary. Each result includes the response body (response_body, response_content_type, response_body_truncated) by default \u2014 disable with includeResponseBody=false or cap the size with maxResponseBodyBytes. Within a group, requests run in the order given; a directory expands by seq, scoped to its own folder, with subfolders before that directory\'s own loose requests, ties broken by filename. A request file that cannot be parsed is skipped rather than failing the run: the count is parseErrors and each skipped file is named with its reason in parseFailures. A named request that does not exist is reported in that group\'s missingRequests rather than failing the run, so you can see which subset ran. Outbound requests are SSRF-filtered: targets resolving to private, loopback, link-local or otherwise reserved addresses are refused unless the server operator has allowlisted them, and a refusal is reported per-request as an "SSRF blocked" error with status 0.',
       inputSchema: {
         collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to collection root directory. Use the path returned by list_collections.'),
         environment: z.string().optional().describe('Environment name to use (e.g. "dev", "staging"). Get available names from get_collection_stats.'),
-        collectionRoot: z.string().optional().describe('Path to collection root for environment resolution (if different from collectionPath)'),
-        requestPath: z.string().optional().describe('One .yml or .bru request file to run, or a subdirectory to run all requests under it (same effect as folder). Absolute, or relative to collectionPath. Get paths from list_requests or get_collection_stats. Omit — and omit folder — to run all requests in the collection. Cannot be combined with folder.'),
-        folder: z.string().min(1, 'Folder must not be empty').optional().describe('One folder to run, e.g. "Auth" or "Auth/Login". Absolute, or relative to collectionPath. Runs every request underneath it, recursively. Equivalent to passing the same directory as requestPath; supply one or the other, never both. A value naming a file, or naming nothing, is an error rather than a whole-collection run.'),
-        parallel: z.boolean().optional().default(false).describe('Run folders in parallel. Requests within each folder still run sequentially by seq order, and folders are reported in the same order a serial run would produce. Default: false.'),
+        collectionRoot: z.string().optional().describe('The collection that collectionPath belongs to, when running a subfolder of one: environments and the collection- and folder-level scripts are resolved from here. Must be collectionPath itself or an ancestor of it — a root that does not contain the collection is rejected, because its root scripts would then run against these requests.'),
+        requests: z.array(z.string().min(1, 'A request entry must not be empty')).optional().describe('The requests to run, IN THE ORDER GIVEN. Each entry is a .yml or .bru request file, or a directory, which expands to every request under it, recursively. Absolute, or relative to collectionPath. Get paths from list_requests or get_collection_stats. Duplicates are allowed: naming the same request twice runs it twice. Omit to run every request in the collection; an empty [] is a selection of nothing and runs nothing. Cannot be combined with groups. An entry naming nothing is reported in missingRequests rather than failing the run, so you can see which subset ran.'),
+        groups: z.array(z.object({
+          name: z.string().optional().describe('Your label for this group, echoed back on its result. Omit and the group is addressed by its index.'),
+          requests: z.array(z.string().min(1, 'A request entry must not be empty')).optional().describe('This group\'s requests, in the order given. Same forms as the top-level requests: a file, or a directory that expands. Duplicates allowed. OMIT to run the whole collection under this group\'s identity — that is how one collection runs as two users. An empty [] is not the same thing: it is a selection of nothing, and runs nothing.'),
+          environment: z.string().optional().describe('Environment file for this group, REPLACING the run-level environment rather than merging with it. Bruno\'s UI runs one environment per run; here two groups can run two.'),
+          variables: z.record(z.union([z.string(), z.number(), z.boolean()])).optional().describe('Variables for this group, MERGED over the run-level variables with this group winning per name. So a run-level baseUrl survives a group that only overrides user.'),
+          parallel: z.boolean().optional().describe('Run this group\'s own requests concurrently. Default false, whatever the run-level parallel says. Two concurrent requests in one group share that group\'s store, so they can genuinely contend on a bru.setVar — which is the point when reproducing a race, and a reason to keep a group serial when it is not.'),
+        })).optional().describe('Run the same collection under more than one identity or configuration in one call. Each group owns its OWN variable store and cookie jar: nothing a group sets is visible to any other group, in either direction, at any parallel setting. Groups are reported in the order given. The same request may appear in several groups. Cannot be combined with requests; omit both to run the whole collection as one group.'),
+        parallel: z.boolean().optional().default(false).describe('Fan out. At the run level this runs the GROUPS concurrently; a group\'s own requests are serial unless that group sets its own parallel. With no groups given the run is one group, so parallel here runs every selected request concurrently. Reporting order is the listed order regardless. Default: false.'),
+        maxConcurrency: z.number().int().min(0).optional().describe('Ceiling on requests in flight across the whole run. Omit to derive one from this machine\'s cores and memory, held below capacity. 0 lifts it entirely, at your own risk. Applies to THIS run and is given back when it ends, so it neither re-caps another run already in flight nor outlives the call that asked for it. A ceiling below the number of requests you meant to run at once silently serialises them, so reproducing a race needs a value at least as large as the number of racers.'),
         includeResponseBody: z.boolean().optional().default(true).describe('Include the response body of each request in the results. Default: true.'),
         maxResponseBodyBytes: z.number().optional().default(10240).describe('Maximum response body size (bytes) to return per request; longer bodies are truncated and response_body_truncated is set. Default: 10240.'),
         variables: z.record(z.union([z.string(), z.number(), z.boolean()])).optional().describe('Variables for this run only, as {name: value}. They override the environment file and work without one. Held in memory and never written to any file — this is the only correct way to supply a secret, because neither Bruno file format stores a secret value. Referenced as {{name}} in urls, headers, bodies and auth. A request-level vars:pre-request entry or a bru.setVar in a script still overrides these, matching Bruno\'s --env-var precedence.'),
         captureVariables: z.array(z.string()).optional().describe('Names of variables set by bru.setVar during the run whose values you want back, e.g. ["token"]. A script that captures a value out of a response — bru.setVar("token", res.body.token) — makes it available to later requests as {{token}}, and this is the only way to see it yourself; without it the value exists only inside the run. Every name a script set is listed in capturedVariableNames on every run, so run once to see what is there and then ask for the one you need. Values are only returned for names you list here, and they are returned verbatim. Nothing is captured from the environment file or from variables you supplied — only what a script set.'),
-        cookieJar: z.boolean().optional().default(true).describe('Keep cookies from each response and send them on later requests in the same run, so a login carries into the requests after it. Scoped per run (per folder when parallel), held in memory, never written to disk, and matched by host/path/expiry — a cookie set by one host is not sent to another. Precedence, per cookie name: a Cookie header the request writes itself WINS over the jar, and the jar only adds names the request did not set, so a request that pins a specific credential keeps it and a run that relies on the jar is unaffected. This diverges from Bruno\'s CLI, where the stored value wins the clash; a warning names any cookie whose stored value was dropped. Default: true, matching Bruno\'s CLI. Set false to send only the Cookie headers a request writes itself.')
+        cookieJar: z.boolean().optional().default(true).describe('Keep cookies from each response and send them on later requests in the same run, so a login carries into the requests after it. Scoped to the group — nothing crosses from one group to another, at any parallel setting — held in memory, never written to disk, and matched by host/path/expiry — a cookie set by one host is not sent to another. Precedence, per cookie name: a Cookie header the request writes itself WINS over the jar, and the jar only adds names the request did not set, so a request that pins a specific credential keeps it and a run that relies on the jar is unaffected. This diverges from Bruno\'s CLI, where the stored value wins the clash; a warning names any cookie whose stored value was dropped. Default: true, matching Bruno\'s CLI. Set false to send only the Cookie headers a request writes itself.')
       }
     },
     async (args) => {
@@ -43,16 +51,43 @@ export function registerRunCollectionTool(ctx: ToolContext): void {
           };
         }
 
-        // One target from the two arguments that can name one: validated,
-        // anchored to the collection, and confirmed to exist.
-        const target = await resolveRunTarget(
-          args.collectionPath,
-          args.requestPath,
-          args.folder,
-        );
-        if (!target.ok) {
+        // Every reference must stay under the collection. `buildRunPlan` will
+        // happily open an absolute path anywhere, so containment is enforced
+        // here, at the boundary where the caller's string first arrives.
+        const escaped = [
+          ...(args.requests ?? []),
+          ...(args.groups ?? []).flatMap((group) => group.requests ?? []),
+        ]
+          .map((reference) => ({
+            reference,
+            check: validateToolPath(
+              isAbsolute(reference) ? reference : resolve(args.collectionPath, reference),
+              args.collectionPath,
+            ),
+          }))
+          .filter(({ check }) => !check.valid);
+        if (escaped.length > 0) {
           return {
-            content: [{ type: 'text', text: target.message }],
+            content: [{
+              type: 'text',
+              text: `Invalid requests: ${escaped
+                .map(({ reference, check }) => `"${reference}": ${check.reason}`)
+                .join('; ')}`,
+            }],
+            isError: true,
+          };
+        }
+
+        // Refused rather than resolved by a precedence rule: the two express
+        // different intentions and silently honouring one drops the other.
+        if (args.requests?.length && args.groups?.length) {
+          return {
+            content: [{
+              type: 'text',
+              text: 'Pass `requests` or `groups`, not both. `requests` runs one ordered '
+                + 'selection; `groups` runs several isolated ones. There is no correct '
+                + 'way to pick one for you.',
+            }],
             isError: true,
           };
         }
@@ -63,6 +98,26 @@ export function registerRunCollectionTool(ctx: ToolContext): void {
           if (!rootCheck.valid) {
             return {
               content: [{ type: 'text', text: `Invalid collectionRoot: ${rootCheck.reason}` }],
+              isError: true,
+            };
+          }
+
+          // And it has to be the root OF THIS COLLECTION. The argument exists so
+          // a run scoped to a subfolder still resolves the collection's
+          // environments, which means the collection path sits underneath it.
+          // Pointed anywhere else it is a different collection, whose
+          // collection- and folder-level SCRIPTS are then executed against
+          // these requests — the one input here that runs code the caller did
+          // not name — and whose environment files are read and substituted in.
+          const root = resolve(args.collectionRoot);
+          const target = resolve(args.collectionPath);
+          if (target !== root && !target.startsWith(root + sep)) {
+            return {
+              content: [{
+                type: 'text',
+                text: `Invalid collectionRoot: ${args.collectionRoot} does not contain ${args.collectionPath}. `
+                  + 'collectionRoot names the collection that collectionPath belongs to, so it must be that path or an ancestor of it.',
+              }],
               isError: true,
             };
           }
@@ -79,12 +134,35 @@ export function registerRunCollectionTool(ctx: ToolContext): void {
           };
         }
 
+        // A group's variables go through the same gate as the run's, and the
+        // error names the group: "Invalid variables" alone would leave a caller
+        // with five groups reading all five.
+        const groupErrors: string[] = [];
+        const groups: GroupInput[] | undefined = args.groups?.map((group, index) => {
+          const { variables: supplied, ...rest } = group;
+          const normalized = normalizeVariableOverrides(supplied);
+          if (normalized.errors.length > 0) {
+            groupErrors.push(`group ${group.name ?? index}: ${normalized.errors.join('; ')}`);
+          }
+          // Only when the caller supplied some: adding an empty map would put a
+          // key on a group the caller left plain.
+          return supplied ? { ...rest, variables: normalized.variables } : rest;
+        });
+        if (groupErrors.length > 0) {
+          return {
+            content: [{ type: 'text', text: `Invalid variables: ${groupErrors.join('; ')}` }],
+            isError: true,
+          };
+        }
+
         const result = await RequestExecutor.executeCollection(
           args.collectionPath,
           {
             environment: args.environment,
             collectionRoot: args.collectionRoot,
-            requestPath: target.requestPath,
+            ...(args.requests ? { requests: args.requests } : {}),
+            ...(groups ? { groups } : {}),
+            maxConcurrency: args.maxConcurrency,
             parallel: args.parallel,
             includeResponseBody: args.includeResponseBody,
             maxResponseBodyBytes: args.maxResponseBodyBytes,

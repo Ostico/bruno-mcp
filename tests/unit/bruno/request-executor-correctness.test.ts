@@ -149,7 +149,7 @@ describe('Disabled multipart form parts are dropped', () => {
     setupSingleFile('Upload.bru', bruContent);
 
     const result = await RequestExecutor.executeCollection('/test-collection', {
-      requestPath: '/test-collection/Upload.bru',
+      requests: ['/test-collection/Upload.bru'],
     });
 
     expect(result.summary.total).toBe(1);
@@ -190,7 +190,7 @@ runtime:
     setupSingleFile('Pre Fails.yml', YAML);
 
     const result = await RequestExecutor.executeCollection('/test-collection', {
-      requestPath: '/test-collection/Pre Fails.yml',
+      requests: ['/test-collection/Pre Fails.yml'],
       scriptRunner: mockScriptRunner({ error: 'pre-request boom' }),
     });
 
@@ -198,7 +198,7 @@ runtime:
     expect(mockFetch).not.toHaveBeenCalled();
 
     // The result carries the script error as a failure.
-    const r = result.results[0];
+    const r = result.groups[0]!.results[0];
     expect(r.status).toBe(0);
     expect(r.error).toBe('pre-request boom');
     expect(r.url).toBe('https://api.test/thing');
@@ -224,12 +224,12 @@ runtime:
     setupSingleFile('Pre Fails Secret.yml', SECRET_YAML);
 
     const result = await RequestExecutor.executeCollection('/test-collection', {
-      requestPath: '/test-collection/Pre Fails Secret.yml',
+      requests: ['/test-collection/Pre Fails Secret.yml'],
       scriptRunner: mockScriptRunner({ error: 'boom' }),
     });
 
     expect(mockFetch).not.toHaveBeenCalled();
-    const r = result.results[0];
+    const r = result.groups[0]!.results[0];
     expect(r.error).toBe('boom');
     expect(r.url).toContain('api_key=REDACTED');
     expect(r.url).not.toContain('super-secret');
@@ -268,7 +268,7 @@ runtime:
     setupSingleFile('Uses Prevar.yml', YAML);
 
     const result = await RequestExecutor.executeCollection('/test-collection', {
-      requestPath: '/test-collection/Uses Prevar.yml',
+      requests: ['/test-collection/Uses Prevar.yml'],
       scriptRunner: mockScriptRunner({ variables: { host: 'api.example.com', tok: 't123' } }),
     });
 
@@ -278,7 +278,7 @@ runtime:
     expect(opts.headers['X-Token']).toBe('t123');
 
     // No unresolved-variable warning, since the vars now resolve.
-    const r = result.results[0];
+    const r = result.groups[0]!.results[0];
     expect(r.warnings ?? []).not.toContain('unresolved variable: {{host}}');
     expect(r.warnings ?? []).not.toContain('unresolved variable: {{tok}}');
   });
@@ -307,7 +307,7 @@ runtime:
     setupSingleFile('Var And Mutate.yml', YAML);
 
     const result = await RequestExecutor.executeCollection('/test-collection', {
-      requestPath: '/test-collection/Var And Mutate.yml',
+      requests: ['/test-collection/Var And Mutate.yml'],
       scriptRunner: mockScriptRunner({
         variables: { host: 'api.example.com', tok: 'ignored-by-mutation' },
         mutations: {
@@ -324,7 +324,7 @@ runtime:
     expect(url).toBe('https://mutated.example.com/final');
     expect(opts.headers['X-Token']).toBe('mutated-token');
     expect(opts.body).toBe(JSON.stringify({ from: 'mutation' }));
-    expect(result.results[0].status).toBe(200);
+    expect(result.groups[0]!.results[0].status).toBe(200);
   });
 
   it('applies req.set* mutations even when the script sets no variables (no re-substitution)', async () => {
@@ -345,7 +345,7 @@ runtime:
     setupSingleFile('Mutate Only.yml', YAML);
 
     const result = await RequestExecutor.executeCollection('/test-collection', {
-      requestPath: '/test-collection/Mutate Only.yml',
+      requests: ['/test-collection/Mutate Only.yml'],
       scriptRunner: mockScriptRunner({
         mutations: {
           url: 'https://mutated.test/y',
@@ -360,6 +360,6 @@ runtime:
     expect(url).toBe('https://mutated.test/y');
     expect(opts.headers['X-Added']).toBe('1');
     expect(opts.body).toBe('raw-string-body');
-    expect(result.results[0].status).toBe(200);
+    expect(result.groups[0]!.results[0].status).toBe(200);
   });
 });

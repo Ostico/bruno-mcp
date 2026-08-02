@@ -85,9 +85,9 @@ describe('running root-level scripts', () => {
 
     const result = await run(root);
 
-    expect(result.capturedVariables).toEqual({ order: 'C' });
+    expect(result.groups[0]!.capturedVariables).toEqual({ order: 'C' });
     // And it no longer claims the script was ignored.
-    expect((result.results?.[0] as { warnings?: string[] })?.warnings?.join(' ') ?? '')
+    expect((result.groups[0]!.results?.[0] as { warnings?: string[] })?.warnings?.join(' ') ?? '')
       .not.toContain('not applied');
   });
 
@@ -98,7 +98,7 @@ describe('running root-level scripts', () => {
       'sub/req.yml': request([{ type: 'before-request', code: mark('R') }]),
     });
 
-    expect((await run(root)).capturedVariables).toEqual({ order: 'CFR' });
+    expect((await run(root)).groups[0]!.capturedVariables).toEqual({ order: 'CFR' });
   });
 
   it('nests folders from the collection downwards', async () => {
@@ -109,7 +109,7 @@ describe('running root-level scripts', () => {
       'a/b/req.yml': request(),
     });
 
-    expect((await run(root)).capturedVariables).toEqual({ order: 'C12' });
+    expect((await run(root)).groups[0]!.capturedVariables).toEqual({ order: 'C12' });
   });
 
   it('reverses post-response by default, because the default flow is sandwich', async () => {
@@ -121,7 +121,7 @@ describe('running root-level scripts', () => {
       'sub/req.yml': request([{ type: 'after-response', code: mark('R') }]),
     });
 
-    expect((await run(root)).capturedVariables).toEqual({ order: 'RFC' });
+    expect((await run(root)).groups[0]!.capturedVariables).toEqual({ order: 'RFC' });
   });
 
   it('keeps post-response outermost-first when bruno.json asks for sequential', async () => {
@@ -132,7 +132,7 @@ describe('running root-level scripts', () => {
       'sub/req.yml': request([{ type: 'after-response', code: mark('R') }]),
     });
 
-    expect((await run(root)).capturedVariables).toEqual({ order: 'CFR' });
+    expect((await run(root)).groups[0]!.capturedVariables).toEqual({ order: 'CFR' });
   });
 
   it('falls back to sandwich when bruno.json is unreadable rather than failing the run', async () => {
@@ -142,7 +142,7 @@ describe('running root-level scripts', () => {
       'req.yml': request([{ type: 'after-response', code: mark('R') }]),
     });
 
-    expect((await run(root)).capturedVariables).toEqual({ order: 'RC' });
+    expect((await run(root)).groups[0]!.capturedVariables).toEqual({ order: 'RC' });
   });
 
   it('runs every post-response script before any tests', async () => {
@@ -155,7 +155,7 @@ describe('running root-level scripts', () => {
       ]),
     });
 
-    expect((await run(root, ['seen'])).capturedVariables).toEqual({ seen: 'from-collection' });
+    expect((await run(root, ['seen'])).groups[0]!.capturedVariables).toEqual({ seen: 'from-collection' });
   });
 
   it('runs a collection-level test and reports it in the results', async () => {
@@ -166,7 +166,7 @@ describe('running root-level scripts', () => {
 
     const result = await run(root, []);
 
-    const tests = (result.results?.[0] as { tests?: { description: string; status: string }[] })
+    const tests = (result.groups[0]!.results?.[0] as { tests?: { description: string; status: string }[] })
       ?.tests ?? [];
     expect(tests.map((t) => t.description)).toContain('collection says ok');
     expect(tests.every((t) => t.status === 'pass')).toBe(true);
@@ -183,7 +183,7 @@ describe('running root-level scripts', () => {
       ]),
     });
 
-    expect((await run(root)).capturedVariables).toEqual({ order: 'CR' });
+    expect((await run(root)).groups[0]!.capturedVariables).toEqual({ order: 'CR' });
   });
 
   it('reads root scripts out of a .yml collection too', async () => {
@@ -192,7 +192,7 @@ describe('running root-level scripts', () => {
       'req.yml': request([{ type: 'before-request', code: mark('R') }]),
     });
 
-    expect((await run(root)).capturedVariables).toEqual({ order: 'CR' });
+    expect((await run(root)).groups[0]!.capturedVariables).toEqual({ order: 'CR' });
   });
 
   it('reads the string spelling of a .yml root as well as the typed list', async () => {
@@ -201,7 +201,7 @@ describe('running root-level scripts', () => {
       'req.yml': request([{ type: 'before-request', code: mark('R') }]),
     });
 
-    expect((await run(root)).capturedVariables).toEqual({ order: 'CR' });
+    expect((await run(root)).groups[0]!.capturedVariables).toEqual({ order: 'CR' });
   });
 
   it('leaves a request with no root scripts sharing one scope, as it always has', async () => {
@@ -216,7 +216,7 @@ describe('running root-level scripts', () => {
       ]),
     });
 
-    expect((await run(root)).capturedVariables).toEqual({ order: 'yes' });
+    expect((await run(root)).groups[0]!.capturedVariables).toEqual({ order: 'yes' });
   });
 
   it('does not let a folder root reach a request outside that folder', async () => {
@@ -228,6 +228,6 @@ describe('running root-level scripts', () => {
 
     const result = await run(root, ['order', 'outsideOrder']);
 
-    expect(result.capturedVariables).toEqual({ order: 'FR', outsideOrder: 'R' });
+    expect(result.groups[0]!.capturedVariables).toEqual({ order: 'FR', outsideOrder: 'R' });
   });
 });

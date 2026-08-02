@@ -8,9 +8,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 > **The next published release must be `2.0.0`.** The public API lost three
-> exports after `1.2.3` (see *Removed* below). That is a breaking change under
-> semver, so it cannot ship as a patch or minor no matter how small the diff
-> that follows it.
+> exports after `1.2.3` (see *Removed* below), and `run_collection`'s input and
+> output shapes both changed (see *Breaking changes* below). That is a breaking
+> change under semver, so it cannot ship as a patch or minor no matter how small
+> the diff that follows it.
+
+### Breaking changes
+
+- **Execution groups replace the folder as the unit of execution.** A run is now
+  an ordered list of *groups*; a group owns its request list, its environment,
+  its variables, its `parallel` flag, one variable store and one cookie jar.
+  Nothing crosses a group boundary in either direction, at any `parallel`
+  setting. The directory a request happens to sit in no longer decides any of
+  this. See `docs/superpowers/specs/2026-08-02-execution-groups-design.md`.
+
+- **`run_collection` lost `requestPath` and `folder`; use `requests`.** Both were
+  singular — one file, or one directory — and both are now one ordered
+  `requests` array whose entries are files or directories. Order is the
+  caller's, and duplicates are honoured: naming the same request twice runs it
+  twice. Migration is mechanical: `requestPath: "auth/login.bru"` becomes
+  `requests: ["auth/login.bru"]`.
+
+- **`run_collection` gained `groups` and `maxConcurrency`.** Pass `groups`
+  instead of `requests` when one call needs more than one identity or
+  configuration — the same five requests as alice and as bob, or against staging
+  and against production, in one call and without leakage. Passing both
+  `requests` and `groups` is rejected rather than resolved by a precedence rule.
+  `maxConcurrency` caps requests in flight across the whole run; omit it and one
+  is derived from this machine's cores and memory, `0` lifts it entirely.
+
+- **A named request that will not parse fails its group, not the call.** It used
+  to throw out of `run_collection`, so a syntax error in one file meant every
+  other group reported nothing at all — including the ones that would have
+  passed. The group that named the file now reports `error`, runs nothing and
+  counts as one failure; the rest of the run proceeds. The same applies to a
+  named file that is not a request at all.
+
+- **An empty `requests` list means nothing, not everything.** Omitting
+  `requests` — at the run level or on a group — still runs the whole collection,
+  which is how one collection runs under two identities. Supplying `requests:
+  []` now runs no requests and warns, where before it ran the entire collection.
+  A caller that filters a selection down to nothing was getting the widest
+  possible run at the moment it asked for the narrowest.
+
+- **Results are group-shaped: there is no top-level `results` array.** Each entry
+  of `groups[]` carries its own `summary`, `results`, `capturedVariableNames`,
+  `capturedVariables` and `warnings`; the top-level `summary` covers the run.
+  This holds in the no-groups case too, where the run is one group — so a caller
+  reading `result.results` reads `undefined`, and must read `result.groups[0]
+  .results`. A group that crashed outright reports `error` and counts as one
+  failure in the run summary, because a group that ran no requests contributes
+  nothing to the per-request tally and would otherwise leave the run reading
+  green.
+
+- **`seq` no longer constrains execution.** It is the default ordering and the
+  reporting order only. Two requests in one parallel group genuinely run at the
+  same time whatever their `seq` says, and may contend on the store they share.
+
+- **Silent behaviour change, worth reading twice.** A caller passing
+  `parallel: true` today gets folder isolation: `bru.setVar` in one folder is
+  invisible to another. After upgrading, `parallel: true` with no `groups` runs
+  the whole selection as **one** group with **one** store and **one** cookie jar,
+  so those requests now share state. Nothing errors and nothing warns — the run
+  simply means something different. To keep the old isolation, name the folders
+  as separate groups. This is the one change here that a passing test suite will
+  not catch for you.
+
+- **Node 22 or newer is required** (`engines.node` moved from `>=18.0.0` to
+  `>=22.0.0`). Node 20 reached end of life in April 2026 and CI already tests
+  only 22.x and 24.x, so the floor now says what was already true.
 
 ### Added
 
@@ -35,6 +101,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Both formats are covered, and the switched-off flag keeps its per-format
   spelling on disk (`.bru` `enabled`, `.yml` `disabled`) while the tool surface
   exposes only `disabled`, absent meaning active.
+
+### Security
+
+- **An environment name may no longer be a path.** Names arriving from
+  `run_collection` (per run and per group) and from every `EnvironmentManager`
+  entry point were joined straight into `<collection>/environments/`, so a name
+  containing a separator left the collection: on the read side it loaded any
+  YAML the process could open and substituted its values into outbound
+  requests, and on the write side it could overwrite or unlink a file outside
+  the collection. Names containing `/`, `\` or a null byte, and the names `.`
+  and `..`, are now refused.
+
+- **`collectionRoot` must contain `collectionPath`.** It decides which
+  collection- and folder-level scripts are executed, so a root pointing
+  elsewhere ran another collection's root scripts against these requests and
+  read its environments into these variables. It now has to be the collection
+  path itself or an ancestor of it.
+
+- **A run's OAuth2 tokens no longer outlive its group.** The token cache was
+  run-wide, so a second group with different credentials was served the first
+  group's bearer token, never contacted the provider, and reported success
+  under its own name. The cache is per group, and the client secret and
+  password are part of its key (hashed).
+
+- **`maxConcurrency` no longer changes the process.** A run's ceiling was
+  written into process-global state: overlapping runs re-capped each other,
+  and a single `maxConcurrency: 0` left the process unbounded for every run
+  after it. It is now a reservation released when the run ends.
 
 ### Removed
 

@@ -1,3 +1,4 @@
+import type { GroupInput } from './run-plan.js';
 import type { ScriptRunner } from './sandbox-host.js';
 
 /**
@@ -9,8 +10,28 @@ import type { ScriptRunner } from './sandbox-host.js';
 export interface ExecutionOptions {
   environment?: string;
   collectionRoot?: string;
-  requestPath?: string;
+  /**
+   * Ordered selection when no groups are given, each entry a request file or a
+   * directory, relative to the collection or absolute. Mutually exclusive with
+   * `groups`. Omit to run the whole collection.
+   */
+  requests?: string[];
+  /** Explicit groups. Each owns its store, jar, environment and variables. */
+  groups?: GroupInput[];
+  /**
+   * Fan out. At the run level this means the groups run concurrently; within a
+   * group it is the group's own `parallel` that decides, defaulting to serial.
+   */
   parallel?: boolean;
+  /**
+   * In-flight request ceiling for the whole run. Omit to derive it from the
+   * machine; 0 is unbounded, at the caller's risk.
+   *
+   * A cap below the number of contending requests silently serialises them, so
+   * a run trying to reproduce a race needs a cap at least as large as the
+   * number of racers.
+   */
+  maxConcurrency?: number;
   includeResponseBody?: boolean;
   maxResponseBodyBytes?: number;
   /**

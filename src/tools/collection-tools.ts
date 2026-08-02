@@ -154,7 +154,7 @@ export function registerGetCollectionStatsTool(ctx: ToolContext): void {
     'get_collection_stats',
     {
       title: 'Get Collection Statistics',
-      description: 'Get statistics about a Bruno collection — request counts by method, folders, environments, and per-request details including file paths. environmentDetails lists each environment with the NAMES of the variables it declares (values are withheld), so you can see what an environment already defines before merging into it with set_environment_variable. Use filePath values as requestPath in run_collection.',
+      description: 'Get statistics about a Bruno collection — request counts by method, folders, environments, and per-request details including file paths. environmentDetails lists each environment with the NAMES of the variables it declares (values are withheld), so you can see what an environment already defines before merging into it with set_environment_variable. Use filePath values as entries in the requests list of run_collection.',
       inputSchema: {
         collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to collection directory. Use the path returned by list_collections.')
       }

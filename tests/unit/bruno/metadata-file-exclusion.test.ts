@@ -130,7 +130,7 @@ describe('metadata files are excluded from every collection walk', () => {
 
       const result = await RequestExecutor.executeCollection(empty);
 
-      expect(result.results).toEqual([]);
+      expect(result.groups[0]!.results).toEqual([]);
       expect(result.parseErrors ?? 0).toBe(0);
     } finally {
       await fs.rm(empty, { recursive: true, force: true });

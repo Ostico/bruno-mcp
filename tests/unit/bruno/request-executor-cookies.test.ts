@@ -227,7 +227,7 @@ describe('RequestExecutor — cookie jar', () => {
 
     // And the caller is told, because nothing in the collection shows that a
     // stored value was in play at all.
-    const warnings = result.results[1].warnings ?? [];
+    const warnings = result.groups[0]!.results[1].warnings ?? [];
     expect(warnings.some((w) => w.includes('"mine"'))).toBe(true);
     expect(warnings.some((w) => w.includes('"sid"'))).toBe(false);
   });
@@ -281,7 +281,7 @@ describe('RequestExecutor — cookie jar', () => {
     expect(sentCookie(2)).toBe('mine=1');
     // ...and that is one fact, reported once — one warning naming the cookie
     // once, not the same name repeated per hop inside it.
-    const cookieWarnings = (result.results[0].warnings ?? [])
+    const cookieWarnings = (result.groups[0]!.results[0].warnings ?? [])
       .filter((w) => w.includes('"mine"'));
     expect(cookieWarnings).toHaveLength(1);
     expect(cookieWarnings[0].match(/"mine"/g)).toHaveLength(1);
@@ -299,7 +299,7 @@ describe('RequestExecutor — cookie jar', () => {
     );
 
     expect(sentCookie(1)).toBe('sid=abc');
-    for (const request of result.results) {
+    for (const request of result.groups[0]!.results) {
       expect(request.warnings ?? []).toEqual([]);
     }
   });
@@ -366,9 +366,10 @@ describe('RequestExecutor — cookie jar', () => {
     expect(sentCookie(1)).toBeUndefined();
   });
 
-  it('keeps folders isolated when they run in parallel', async () => {
-    // Two folders, each with a login that sets a different session, running
-    // concurrently. Sharing one jar would let a folder send the other's cookie.
+  it('keeps groups isolated when they run in parallel', async () => {
+    // Two groups, each a login followed by a profile, running concurrently.
+    // Sharing one jar would let a group send the other's session. The folder is
+    // only where these requests happen to live — the group is what isolates.
     mockedFs.readdir.mockImplementation(async (dirPath: any) => {
       const p = typeof dirPath === 'string' ? dirPath : dirPath.toString();
       if (p === '/test-collection') {
@@ -412,11 +413,15 @@ describe('RequestExecutor — cookie jar', () => {
     const result = await RequestExecutor.executeCollection('/test-collection', {
       scriptRunner: TestRunner,
       parallel: true,
+      groups: [
+        { name: 'a', requests: ['a'] },
+        { name: 'b', requests: ['b'] },
+      ],
     });
 
     expect(result.summary.total).toBe(4);
     // Every profile request carries a session, and each got it from the login
-    // in its own folder — never from a jar shared with the other folder.
+    // in its own group — never from a jar shared with the other group.
     const profileCalls = mockFetch.mock.calls.filter(([u]) => String(u).endsWith('/profile'));
     expect(profileCalls).toHaveLength(2);
     for (const [, opts] of profileCalls) {

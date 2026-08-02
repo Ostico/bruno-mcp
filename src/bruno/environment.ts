@@ -6,6 +6,7 @@
 import { promises as fs } from 'fs';
 import { writeFileAtomic } from './atomic-write.js';
 import { withPathLock } from './path-mutex.js';
+import { assertPlainEnvironmentName } from './env-loader.js';
 import { join } from 'path';
 import {
   BrunoEnvironment,
@@ -165,6 +166,11 @@ function parseYamlEnvironmentFile(content: string, environmentName: string): Env
  * the filesystem, so a caller can take the lock before any format detection.
  */
 function environmentLockKey(collectionPath: string, environmentName: string): string {
+  // Validated here rather than after: every method that mutates an environment
+  // derives this key as its first act, so a name that is really a path is
+  // refused before a lock is taken on a key that does not describe the file the
+  // rest of the method would go on to write.
+  assertPlainEnvironmentName(environmentName);
   return join(collectionPath, 'environments', environmentName);
 }
 
@@ -276,6 +282,9 @@ export class EnvironmentManager {
    * Load an existing environment
    */
   async loadEnvironment(collectionPath: string, environmentName: string): Promise<BrunoEnvironment> {
+    // Before the try, so the refusal reaches the caller as itself rather than
+    // wrapped in "failed to load", which reads like a missing file.
+    assertPlainEnvironmentName(environmentName);
     try {
       const detection = await detectFormat(collectionPath);
       const ext = detection.format === 'yaml' ? '.yml' : '.bru';
@@ -326,6 +335,7 @@ export class EnvironmentManager {
    * that gets deleted from the file on the next edit.
    */
   async loadEnvironmentFile(collectionPath: string, environmentName: string): Promise<EnvFile> {
+    assertPlainEnvironmentName(environmentName);
     try {
       const detection = await detectFormat(collectionPath);
       const ext = detection.format === 'yaml' ? '.yml' : '.bru';

@@ -372,7 +372,7 @@ describe('MCP stdio transport (real child process)', () => {
       results: Array<{ error?: string }>;
     };
     expect(report.summary.total).toBe(1);
-    expect(report.results[0].error).toContain('SSRF blocked');
+    expect(report.groups[0]!.results[0].error).toContain('SSRF blocked');
 
     // The warning fired...
     await waitForStderr(session, '[bruno-mcp SSRF allowlist]');

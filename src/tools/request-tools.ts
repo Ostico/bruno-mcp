@@ -517,7 +517,7 @@ export function registerListRequestsTool(ctx: ToolContext): void {
     'list_requests',
     {
       title: 'List Requests',
-      description: 'List all request files (.yml/.bru) in a Bruno collection. Returns absolute file paths that can be used as requestPath in run_collection.',
+      description: 'List all request files (.yml/.bru) in a Bruno collection. Returns absolute file paths, each usable as an entry in the requests list of run_collection, or of one of its groups.',
       inputSchema: {
         collectionPath: z.string().min(1).describe('Absolute path to collection directory. Use the path returned by list_collections.')
       }

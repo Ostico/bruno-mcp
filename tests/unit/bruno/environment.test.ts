@@ -734,4 +734,53 @@ describe('EnvironmentManager', () => {
       expect(fs.writeFile).not.toHaveBeenCalled();
     });
   });
+
+  describe('an environment name is a name, not a path', () => {
+    // Every one of these takes the name from a tool argument and joins it into
+    // `<collection>/environments/`. A name carrying a separator leaves the
+    // collection: on the read side it loads any YAML the process can open and
+    // hands its values to the caller, and on the write side it creates,
+    // overwrites or unlinks a file the caller was never given.
+    const ESCAPE = '../../../../tmp/bruno-mcp-escape';
+
+    const surface: Array<[string, () => Promise<unknown>]> = [
+      ['loadEnvironment', () => manager.loadEnvironment('/c', ESCAPE)],
+      ['loadEnvironmentRaw', () => manager.loadEnvironmentRaw('/c', ESCAPE)],
+      ['loadEnvironmentFile', () => manager.loadEnvironmentFile('/c', ESCAPE)],
+      ['getEnvironmentVariables', () => manager.getEnvironmentVariables('/c', ESCAPE)],
+      ['updateEnvironment', () => manager.updateEnvironment('/c', ESCAPE, { a: '1' })],
+      ['updateEnvironmentVariables', () => manager.updateEnvironmentVariables('/c', ESCAPE, [])],
+      ['mergeEnvironment', () => manager.mergeEnvironment('/c', ESCAPE, { a: '1' })],
+      ['setEnvironmentVariable', () => manager.setEnvironmentVariable('/c', ESCAPE, 'a', '1')],
+      ['removeEnvironmentVariable', () => manager.removeEnvironmentVariable('/c', ESCAPE, 'a')],
+      ['deleteEnvironment', () => manager.deleteEnvironment('/c', ESCAPE)],
+    ];
+
+    it.each(surface)('%s refuses a name that leaves the collection', async (_name, call) => {
+      await expect(call()).rejects.toThrow(/environment name/i);
+    });
+
+    it('createEnvironment refuses it too, as a result rather than a throw', async () => {
+      // Creation had its own charset check already, and reports refusal in the
+      // result it returns to the tool. Pinned here so the two paths cannot
+      // drift into disagreeing about which names exist.
+      const result = await manager.createEnvironment({
+        collectionPath: '/c',
+        name: ESCAPE,
+        variables: {},
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/invalid characters/i);
+    });
+
+    it('touches nothing on disk when it refuses', async () => {
+      await Promise.allSettled(surface.map(([, call]) => call()));
+
+      expect(fs.writeFile).not.toHaveBeenCalled();
+      expect(fs.unlink).not.toHaveBeenCalled();
+      expect(fs.readFile).not.toHaveBeenCalled();
+    });
+  });
+
 });

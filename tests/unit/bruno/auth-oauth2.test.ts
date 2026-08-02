@@ -231,3 +231,61 @@ describe('fetching a token', () => {
     expect(result.error).toContain('no access token URL');
   });
 });
+
+describe('what counts as the same token', () => {
+  /**
+   * The cache key decides who gets served someone else's bearer token, so the
+   * cases below are about identity rather than about caching.
+   */
+  const fetchTwice = async (
+    first: Record<string, string>,
+    second: Record<string, string>,
+  ): Promise<number> => {
+    const cache = createTokenCache();
+    const fetchFn = jest.fn().mockResolvedValue(tokenResponse({ access_token: 't' }));
+
+    await fetchAccessToken({ ...config, ...first }, fetchFn as unknown as typeof fetch, cache);
+    await fetchAccessToken({ ...config, ...second }, fetchFn as unknown as typeof fetch, cache);
+
+    return fetchFn.mock.calls.length;
+  };
+
+  it('does not serve one client secret’s token to another', async () => {
+    // Two services sharing a clientId and differing only by secret used to
+    // collide: the second never contacted the provider and ran on the first
+    // one's token, so its assertions passed on a credential it never sent.
+    expect(await fetchTwice({ clientSecret: 'SECRET_A' }, { clientSecret: 'SECRET_B' })).toBe(2);
+  });
+
+  it('does not serve one password’s token to another', async () => {
+    // The rotation case: same username, old and new password. Sharing the
+    // token meant a revoked credential kept passing.
+    expect(
+      await fetchTwice(
+        { grantType: 'password', username: 'u', password: 'old' },
+        { grantType: 'password', username: 'u', password: 'new' },
+      ),
+    ).toBe(2);
+  });
+
+  it('still shares a token when the credentials are genuinely identical', async () => {
+    // The reason the cache exists: forty requests under one identity are one
+    // login, not forty, and a provider that rate-limits issuance is ordinary.
+    expect(await fetchTwice({}, {})).toBe(1);
+  });
+
+  it('keeps the secret out of the key itself', async () => {
+    // A Map key is legible in a heap dump. The key must depend on the secret
+    // without containing it.
+    const cache = createTokenCache();
+    const fetchFn = jest.fn().mockResolvedValue(tokenResponse({ access_token: 't' }));
+
+    await fetchAccessToken(
+      { ...config, clientSecret: 'PLAINTEXT_SECRET' },
+      fetchFn as unknown as typeof fetch,
+      cache,
+    );
+
+    expect([...cache.keys()].join('|')).not.toContain('PLAINTEXT_SECRET');
+  });
+});

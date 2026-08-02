@@ -80,7 +80,7 @@ async function runHandWritten(label: string, source: string) {
   return {
     url: String(call?.[0] ?? ''),
     headers: (call?.[1]?.headers ?? {}) as Record<string, string>,
-    warnings: run.results[0]?.warnings ?? [],
+    warnings: run.groups[0]!.results[0]?.warnings ?? [],
   };
 }
 
@@ -324,6 +324,6 @@ describe('an api-key request we authored runs correctly when we run it', () => {
     expect(String(mockFetch.mock.calls[0][0])).toBe(
       'https://api.example.com/x?api_key=secret123',
     );
-    expect(run.results[0]?.warnings ?? []).toEqual([]);
+    expect(run.groups[0]!.results[0]?.warnings ?? []).toEqual([]);
   });
 });

@@ -196,8 +196,8 @@ describe('run-level test accounting', () => {
 
       expect(result.summary.failed).toBe(1);
       expect(result.summary.passed).toBe(0);
-      expect(result.results[0].error).toMatch(/1 declared assertion/i);
-      expect(result.results[0].error).toMatch(/no result/i);
+      expect(result.groups[0]!.results[0].error).toMatch(/1 declared assertion/i);
+      expect(result.groups[0]!.results[0].error).toMatch(/no result/i);
     });
 
     it('leaves a request with no declared assertions alone', async () => {
@@ -208,7 +208,7 @@ describe('run-level test accounting', () => {
         scriptRunner: runnerReturning([]),
       });
 
-      expect(result.results[0].error).toBeUndefined();
+      expect(result.groups[0]!.results[0].error).toBeUndefined();
       expect(result.summary.failed).toBe(0);
     });
 
@@ -234,7 +234,7 @@ runtime:
         },
       });
 
-      expect(result.results[0].error).toBe('pre-request script failed: boom');
+      expect(result.groups[0]!.results[0].error).toBe('pre-request script failed: boom');
       expect(result.summary.failed).toBe(1);
     });
   });
