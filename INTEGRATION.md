@@ -7,9 +7,13 @@ This guide explains how to integrate the Bruno MCP Server with various MCP-compa
 - [Prerequisites](#prerequisites)
 - [Claude Desktop App](#claude-desktop-app)
 - [Claude Code (VS Code Extension)](#claude-code-vs-code-extension)
+- [OpenAI Compatible Clients](#openai-compatible-clients)
+- [Other MCP-Compatible Clients](#other-mcp-compatible-clients) — Cursor, Codex CLI, opencode, Continue, Cline, LM Studio
 - [MCP Inspector (Testing)](#mcp-inspector-testing)
-- [Custom MCP Clients](#custom-mcp-clients)
+- [Docker Integration](#docker-integration)
+- [Environment Variables](#environment-variables)
 - [Troubleshooting](#troubleshooting)
+- [Configuration Examples](#configuration-examples)
 
 ## Prerequisites
 
@@ -215,6 +219,49 @@ console.log(result);
 ```
 
 ## Other MCP-Compatible Clients
+
+This server is a plain stdio MCP server with no client-specific code, so **any MCP client can run it** — the sections here are the ones with worked examples, not the ones that are supported. If your client is not listed, give it `command: node` and `args: ["/path/to/bruno-mcp/dist/index.js"]` in whatever shape it expects.
+
+### Cursor
+
+`.cursor/mcp.json` in the project (or the global equivalent), same shape as Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "bruno-mcp": {
+      "command": "node",
+      "args": ["/path/to/bruno-mcp/dist/index.js"]
+    }
+  }
+}
+```
+
+### Codex CLI
+
+`~/.codex/config.toml` — TOML rather than JSON, same fields:
+
+```toml
+[mcp_servers.bruno-mcp]
+command = "node"
+args = ["/path/to/bruno-mcp/dist/index.js"]
+```
+
+### opencode
+
+`opencode.json`, under its `mcp` key, as a local server:
+
+```json
+{
+  "mcp": {
+    "bruno-mcp": {
+      "type": "local",
+      "command": ["node", "/path/to/bruno-mcp/dist/index.js"],
+      "enabled": true
+    }
+  }
+}
+```
 
 ### Continue (VS Code Extension)
 

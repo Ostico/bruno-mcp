@@ -20,7 +20,16 @@ npm run build
 
 ## Connect a client
 
-Claude Desktop — add to your config, then restart:
+**Any MCP client works.** This is a plain stdio MCP server with no client-specific code: whatever your client calls it, point it at
+
+```
+command: node
+args:    ["/absolute/path/to/bruno-mcp/dist/index.js"]
+```
+
+Claude Desktop, Claude Code, Cursor, Codex CLI, opencode, Windsurf, Zed, Cline, Continue, LM Studio, Gemini CLI, MCP Inspector, your own SDK client — all the same server. Nothing below is a compatibility list; it is just where each client keeps its config.
+
+Most clients use the same JSON shape:
 
 ```json
 {
@@ -34,15 +43,18 @@ Claude Desktop — add to your config, then restart:
 }
 ```
 
-Config file lives at:
-
-| OS | Path |
+| Client | Where it goes |
 |---|---|
-| macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` |
-| Windows | `%APPDATA%/Claude/claude_desktop_config.json` |
-| Linux | `~/.config/Claude/claude_desktop_config.json` |
+| Claude Desktop | macOS `~/Library/Application Support/Claude/claude_desktop_config.json` · Windows `%APPDATA%/Claude/claude_desktop_config.json` · Linux `~/.config/Claude/claude_desktop_config.json` |
+| Claude Code | `claude mcp add`, or `.mcp.json` in the project |
+| Cursor | `.cursor/mcp.json` in the project, or the global one |
+| Codex CLI | `~/.codex/config.toml`, under an `[mcp_servers.bruno-mcp]` table (TOML, same fields) |
+| opencode | `opencode.json`, under `mcp` as a local server (its own schema) |
+| Others | Whatever that client documents — the command and args above are all it needs |
 
-Also works with Claude Code, Continue, Cline, LM Studio, MCP Inspector, and any custom MCP client. See [INTEGRATION.md](./INTEGRATION.md).
+Config schemas are the client's, not this server's, and they move. If a client's format differs from the JSON above, follow the client's docs; only `command` and `args` matter here.
+
+See [INTEGRATION.md](./INTEGRATION.md) for worked examples, Docker, and troubleshooting.
 
 ## Quick start
 
