@@ -2433,13 +2433,67 @@ http:
         ],
       });
 
-      // The failure is attributed, not thrown: one dead group must not hide
+      // The failure is attributed, not thrown: one dead request must not hide
       // the other group's results the way a rethrow did.
-      expect(result.groups.find((g) => g.name === 'bad')!.error).toMatch(/Invalid URL/);
+      const bad = result.groups.find((g) => g.name === 'bad')!;
+      expect(bad.results).toHaveLength(1);
+      expect(bad.results[0]!.error).toMatch(/Invalid URL/);
+      // On the request, not the group. A throw from one request is one
+      // request's failure; hoisting it to the group discarded whatever its
+      // siblings had already produced.
+      expect(bad.error).toBeUndefined();
       expect(result.groups.find((g) => g.name === 'good')!.results).toHaveLength(1);
-      // And it must not read as a fully passing run, which is what the tally
-      // would say if only completed requests counted.
+      // And it must not read as a fully passing run.
       expect(result.summary.failed).toBe(1);
+    });
+
+    it('keeps the results of the requests that succeeded alongside one that threw', async () => {
+      // The regression this pins: Promise.all rejected on the first throw and
+      // discarded every fulfilled result with it, so a group of three reported
+      // zero results and a run of three requests summarised as one.
+      const good = (name: string, path: string): string => `
+info:
+  name: ${name}
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/${path}"
+`;
+
+      setupFsReaddirRecursive({
+        '/test-collection': [
+          { name: 'ok1.yml', isFile: true, isDirectory: false },
+          { name: 'bad.yml', isFile: true, isDirectory: false },
+          { name: 'ok2.yml', isFile: true, isDirectory: false },
+        ],
+      });
+      setupFsReadFile({
+        'ok1.yml': good('Ok One', 'one'),
+        'bad.yml': BAD_PROXY_REQ('Bad'),
+        'ok2.yml': good('Ok Two', 'two'),
+      });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValue(createMockResponse({ ok: true }));
+      throwOnBadProxy();
+
+      const result = await RequestExecutor.executeCollection('/test-collection', {
+        scriptRunner: TestRunner,
+        groups: [{ name: 'mixed', requests: ['ok1.yml', 'bad.yml', 'ok2.yml'], parallel: true }],
+      });
+
+      const group = result.groups[0]!;
+      expect(group.results).toHaveLength(3);
+      // In listed order, which is what GroupRunResult.results promises.
+      expect(group.results.map((r) => r.name)).toEqual(['Ok One', 'Bad', 'Ok Two']);
+      expect(group.results[1]!.error).toMatch(/Invalid URL/);
+      expect(group.results[1]!.status).toBe(0);
+      // Two ran and passed; the summary has to say so rather than reporting a
+      // single failure for the whole group.
+      expect(result.summary.total).toBe(3);
+      expect(result.summary.failed).toBe(1);
+      expect(result.summary.passed).toBe(2);
     });
 
     it('keeps the original error message when exactly one group crashes', async () => {
@@ -2461,7 +2515,7 @@ http:
         parallel: true,
       });
 
-      expect(result.groups[0]!.error).toContain('Invalid URL');
+      expect(result.groups[0]!.results[0]!.error).toContain('Invalid URL');
       expect(result.summary.failed).toBe(1);
     });
 
@@ -2517,12 +2571,15 @@ http:
       });
 
       // An AggregateError concatenated the reasons into one string; a caller
-      // could read that they had two failures but not which groups.
-      expect(result.groups.filter((g) => g.error !== undefined).map((g) => g.name)).toEqual([
-        'b',
-        'c',
-      ]);
-      expect(result.groups.find((g) => g.name === 'b')!.error).toContain('Invalid URL');
+      // could read that they had two failures but not which groups. Each
+      // failure now sits on the request that caused it, inside its own group,
+      // so the group is still identifiable and its siblings are still reported.
+      expect(
+        result.groups
+          .filter((g) => g.results.some((r) => r.error !== undefined))
+          .map((g) => g.name),
+      ).toEqual(['b', 'c']);
+      expect(result.groups.find((g) => g.name === 'b')!.results[0]!.error).toContain('Invalid URL');
       expect(result.summary.failed).toBe(2);
     });
 
@@ -2567,7 +2624,7 @@ http:
         ],
       });
 
-      expect(result.groups.map((g) => g.error)).toEqual([
+      expect(result.groups.map((g) => g.results[0]!.error)).toEqual([
         expect.stringContaining('Invalid URL'),
         'plain string reason',
       ]);

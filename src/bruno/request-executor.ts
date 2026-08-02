@@ -1011,18 +1011,20 @@ export class RequestExecutor {
       await applyDerivedConcurrency(undefined, options?.maxConcurrency),
     );
 
-    // One loader and one token cache for the run. The loader's cache is
-    // read-only so it is safe to share across concurrent groups; a token
-    // belongs to the credentials, so a run of forty requests should not look
-    // like forty logins to the provider.
+    // One loader for the run: its cache holds parsed collection and folder root
+    // files, which are read-only, so sharing it across concurrent groups saves
+    // the re-parse without letting anything cross between them.
+    //
+    // The token cache is NOT here. It is per group, below, beside the store and
+    // the jar — see the comment there.
     const rootLoader: RootLoader = createRootLoader(options?.collectionRoot ?? collectionPath);
-    const tokenCache = createTokenCache();
 
     const runOne = async (
       req: ParsedRequest,
       vars: Map<string, string>,
       store: VariableStore,
       jar: ReturnType<typeof createRunCookieJar> | undefined,
+      tokenCache: TokenCache,
     ): Promise<RequestExecutionResult> => {
       const release = await slots.acquire();
       try {
@@ -1037,10 +1039,19 @@ export class RequestExecutor {
 
     const runGroup = async (group: ResolvedGroup): Promise<GroupRunResult> => {
       const groupStart = Date.now();
-      // Each group owns these. That ownership is the whole feature: it is what
-      // keeps one identity's session out of another's assertions.
+      // Each group owns these three. That ownership is the whole feature: it is
+      // what keeps one identity's session out of another's assertions.
+      //
+      // The token cache is the third of them, and it did not used to be. It sat
+      // beside the root loader as run-wide state, on the reasoning that a token
+      // belongs to its credentials — true within one identity, and false the
+      // moment two groups exist. Sharing it meant the second group was served
+      // the first group's bearer token, never contacted the provider, and
+      // reported success under its own name. A token is credential-shaped state
+      // exactly like the store and the jar, so it gets their lifetime.
       const store = new VariableStore();
       const jar = cookiesEnabled ? createRunCookieJar() : undefined;
+      const tokenCache = createTokenCache();
 
       let vars = new Map<string, string>();
       if (group.environment) {
@@ -1050,14 +1061,31 @@ export class RequestExecutor {
       // the point, since a secret has no correct on-disk home to load from.
       vars = applyVariableOverrides(vars, group.variables);
 
+      // Never rejects, and that is load-bearing rather than defensive.
+      //
+      // `Promise.all` here used to discard every fulfilled result the moment
+      // one request rejected: three requests, one throwing, and the group
+      // reported zero results with a group-level error — two real outcomes
+      // destroyed to report the third. The serial loop lost the results it had
+      // already accumulated the same way. Since a rejection is one request's
+      // failure, it is reported as one request's result, and the group keeps
+      // its shape. That leaves group-level `error` for what it should mean:
+      // a failure that precedes every request, like an environment that will
+      // not load.
+      const runOneSafely = async (req: ParsedRequest): Promise<RequestExecutionResult> => {
+        try {
+          return await runOne(req, vars, store, jar, tokenCache);
+        } catch (reason) {
+          return crashedRequestResult(req, reason);
+        }
+      };
+
       const results: RequestExecutionResult[] = [];
       if (group.parallel) {
-        results.push(...(await Promise.all(
-          group.requests.map((req) => runOne(req, vars, store, jar)),
-        )));
+        results.push(...(await Promise.all(group.requests.map(runOneSafely))));
       } else {
         for (const req of group.requests) {
-          results.push(await runOne(req, vars, store, jar));
+          results.push(await runOneSafely(req));
         }
       }
 
@@ -1140,6 +1168,28 @@ async function runGroupsInOrder(
     }
   }
   return settled;
+}
+
+/**
+ * The result for a request that threw before it could produce one.
+ *
+ * `executeSingleRequest` turns a network failure into a result, so getting here
+ * takes a throw from the setup around it — `rootLoader.forRequest` on a folder
+ * root that will not read, or `buildDispatcher` on a malformed `settings.proxy`.
+ * Rare, but one request's problem either way, so it is reported as one
+ * request's result. `status: 0` matches how an SSRF refusal is already
+ * reported: no response was received, rather than one that came back as zero.
+ */
+function crashedRequestResult(req: ParsedRequest, reason: unknown): RequestExecutionResult {
+  return {
+    name: req.yaml.info.name,
+    method: req.yaml.http.method,
+    url: req.yaml.http.url,
+    status: 0,
+    duration_ms: 0,
+    tests: [],
+    error: reason instanceof Error ? reason.message : String(reason),
+  };
 }
 
 /**
