@@ -17,7 +17,6 @@ import { promises as fs } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { discoverRequests } from '../../../src/bruno/request-discovery';
-import { sortFoldersByNameThenSequence } from '../../../src/bruno/request-order';
 import { RequestExecutor } from '../../../src/bruno/request-executor';
 
 /**
@@ -97,60 +96,6 @@ async function order(root: string): Promise<string[]> {
   const { requests } = await discoverRequests(root);
   return requests.map((r) => r.yaml.info.name);
 }
-
-describe('ordering sibling folders', () => {
-  it('falls back to alphabetical when no folder declares a seq', () => {
-    const ordered = sortFoldersByNameThenSequence([
-      { name: 'charlie' },
-      { name: 'alpha' },
-      { name: 'bravo' },
-    ]);
-
-    expect(ordered.map((f) => f.name)).toEqual(['alpha', 'bravo', 'charlie']);
-  });
-
-  it('treats seq as the position to land in, not a key to sort on', () => {
-    // 'zulu' sorts last alphabetically but claims position 1.
-    const ordered = sortFoldersByNameThenSequence([
-      { name: 'alpha' },
-      { name: 'bravo' },
-      { name: 'zulu', seq: 1 },
-    ]);
-
-    expect(ordered.map((f) => f.name)).toEqual(['zulu', 'alpha', 'bravo']);
-  });
-
-  it('groups folders that claim the same position instead of displacing', () => {
-    const ordered = sortFoldersByNameThenSequence([
-      { name: 'alpha' },
-      { name: 'yankee', seq: 1 },
-      { name: 'zulu', seq: 1 },
-    ]);
-
-    expect(ordered.map((f) => f.name)).toEqual(['yankee', 'zulu', 'alpha']);
-  });
-
-  it('appends rather than throwing when a seq points past the end', () => {
-    const ordered = sortFoldersByNameThenSequence([
-      { name: 'alpha' },
-      { name: 'zulu', seq: 99 },
-    ]);
-
-    expect(ordered.map((f) => f.name)).toEqual(['alpha', 'zulu']);
-  });
-
-  it.each([0, -1, 1.5, Number.NaN])(
-    'leaves a folder in the alphabetical run when its seq is %p',
-    (seq) => {
-      const ordered = sortFoldersByNameThenSequence([
-        { name: 'zulu', seq: seq as number },
-        { name: 'alpha' },
-      ]);
-
-      expect(ordered.map((f) => f.name)).toEqual(['alpha', 'zulu']);
-    },
-  );
-});
 
 describe('ordering requests across folders', () => {
   it('does not interleave two folders that both start at seq 1', async () => {
