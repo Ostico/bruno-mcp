@@ -81,7 +81,13 @@ describe('createRootLoader', () => {
 
     const chain = await loader.forRequest('/c/Request.yml');
 
-    expect(chain).toEqual({ headers: [], auth: undefined, unapplied: [] });
+    expect(chain).toEqual({
+      headers: [],
+      auth: undefined,
+      unapplied: [],
+      scripts: [],
+      scriptFlow: 'sandwich',
+    });
   });
 
   it('reads headers and auth from collection.bru', async () => {
@@ -187,11 +193,21 @@ tests {
     const chain = await loader.forRequest('/c/Request.yml');
 
     // Named individually so a caller knows which setting is missing, not just
-    // that something is.
+    // that something is. Scripts and tests used to be listed here too; L12 runs
+    // them now, so the only thing left unapplied is root vars.
     expect(chain.unapplied.join(' | ')).toContain('pre-request variables');
-    expect(chain.unapplied.join(' | ')).toContain('a pre-request script');
-    expect(chain.unapplied.join(' | ')).toContain('tests');
+    expect(chain.unapplied.join(' | ')).not.toContain('script');
+    expect(chain.unapplied.join(' | ')).not.toContain('tests');
     expect(chain.unapplied.every(note => note.startsWith('collection.bru'))).toBe(true);
+    // ...and they are reported as something to run rather than dropped.
+    expect(chain.scripts).toEqual([
+      {
+        source: 'collection.bru',
+        preRequest: "bru.setVar('x', 1);",
+        postResponse: undefined,
+        tests: 'test("t", function() {});',
+      },
+    ]);
   });
 
   it('says nothing when a root declares only what is applied', async () => {
