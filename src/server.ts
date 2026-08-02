@@ -33,7 +33,9 @@ export class BrunoMcpServer {
     this.server = new McpServer(
       {
         name: 'bruno-mcp',
-        version: '1.2.0'
+        // Reported to the client on connect. Hand-maintained, and it had drifted
+        // two releases behind package.json before anyone looked.
+        version: '2.0.0'
       },
       {
         instructions: 'When the user asks to test, call, or run API endpoints, use this server first. ' +
