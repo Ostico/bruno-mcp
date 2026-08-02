@@ -25,7 +25,7 @@ import type { ExecutionOptions } from './execution-options.js';
 import { type ParsedRequest } from './request-discovery.js';
 import { buildRunPlan, type ResolvedGroup } from './run-plan.js';
 import { createSemaphore } from './concurrency.js';
-import { applyDerivedConcurrency } from './sandbox-host.js';
+import { applyDerivedConcurrency, withReservedConcurrency } from './sandbox-host.js';
 import { createRootLoader, type RootChain, type RootLoader } from './collection-roots.js';
 import { applyVariableOverrides } from './runtime-variables.js';
 import {
@@ -1006,10 +1006,12 @@ export class RequestExecutor {
 
     // The same ceiling governs both resources a run can exhaust: the forked
     // script workers, which cost memory and a scheduler slot, and the in-flight
-    // requests themselves.
-    const slots = createSemaphore(
-      await applyDerivedConcurrency(undefined, options?.maxConcurrency),
-    );
+    // requests themselves. This semaphore is the run's own; the fork semaphore
+    // is shared with every other run in the process, so this run's ceiling is
+    // reserved there for the duration of the groups below rather than written
+    // into it.
+    const machineCeiling = await applyDerivedConcurrency();
+    const slots = createSemaphore(options?.maxConcurrency ?? machineCeiling);
 
     // One loader for the run: its cache holds parsed collection and folder root
     // files, which are read-only, so sharing it across concurrent groups saves
@@ -1116,9 +1118,11 @@ export class RequestExecutor {
     // on a malformed `settings.proxy`, for example — escapes as a rejection.
     // Reported as that group's `error` rather than thrown, so one bad group
     // cannot hide the results of every other one.
-    const settled = options?.parallel
-      ? await Promise.allSettled(plan.groups.map(runGroup))
-      : await runGroupsInOrder(plan.groups, runGroup);
+    const settled = await withReservedConcurrency(options?.maxConcurrency, async () =>
+      options?.parallel
+        ? await Promise.allSettled(plan.groups.map(runGroup))
+        : await runGroupsInOrder(plan.groups, runGroup),
+    );
 
     const groups: GroupRunResult[] = settled.map((outcome, index) =>
       outcome.status === 'fulfilled'

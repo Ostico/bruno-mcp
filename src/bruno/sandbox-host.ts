@@ -78,16 +78,99 @@ const waiters: Array<() => void> = [];
 let maxConcurrency = DEFAULT_MAX_CONCURRENCY;
 
 /**
- * Override the concurrency cap.
+ * What this machine can take, and what the semaphore falls back to whenever no
+ * run is asking for anything else.
+ */
+let machineCeiling = DEFAULT_MAX_CONCURRENCY;
+
+/**
+ * The ceiling each run currently in flight asked for, one entry per run.
+ *
+ * Runs overlap: this process serves one MCP client, and nothing stops two
+ * `run_collection` calls being in flight at once. The ceiling used to be a
+ * single variable each run overwrote on its way in, which went wrong twice
+ * over. Last writer won, so a run asking for 64 quietly re-capped a running one
+ * at 2 (or the reverse), and nobody put the value back afterwards — a single
+ * `maxConcurrency: 0` left the process unbounded for every run that followed
+ * it, long after the run that asked had finished.
+ */
+const reservations: number[] = [];
+
+/**
+ * Coerce a requested ceiling.
  *
  * 0 is meaningful — unbounded — and is preserved rather than clamped up to 1.
  * Clamping it made unbounded the most serial setting available, the exact
  * opposite of what it says. Negative and fractional values are still coerced to
  * a usable integer.
  */
-export function setMaxConcurrency(n: number): void {
-  maxConcurrency = n === 0 ? 0 : Math.max(1, Math.floor(n));
+function coerceCeiling(n: number): number {
+  return n === 0 ? 0 : Math.max(1, Math.floor(n));
+}
+
+/**
+ * The ceiling in force: the largest thing any run in flight asked for, or the
+ * machine's own when none is.
+ *
+ * Largest rather than smallest, because a reservation is that run's permission
+ * to reach its own ceiling, not a limit it imposes on its neighbours. 0 is the
+ * largest of all, being no ceiling.
+ */
+function effectiveCeiling(): number {
+  if (reservations.length === 0) return machineCeiling;
+  return reservations.includes(0) ? 0 : Math.max(...reservations);
+}
+
+function applyEffectiveCeiling(): void {
+  maxConcurrency = effectiveCeiling();
   drainWaiters();
+}
+
+/**
+ * Set the machine ceiling directly. Takes effect immediately unless a run is
+ * holding a reservation, which outranks it until that run ends.
+ */
+export function setMaxConcurrency(n: number): void {
+  machineCeiling = coerceCeiling(n);
+  applyEffectiveCeiling();
+}
+
+/**
+ * Claim a ceiling for one run. The returned function gives it back.
+ *
+ * `undefined` reserves the machine ceiling, so a run that asked for nothing
+ * still holds a place and is not squeezed below what the machine allows by a
+ * neighbour that asked for less.
+ *
+ * Releasing twice is a no-op rather than removing a matching reservation
+ * belonging to another run: two runs asking for the same number are two
+ * entries, and dropping the wrong one would leave a live run uncovered.
+ */
+export function reserveConcurrency(requested: number | undefined): () => void {
+  const claim = requested === undefined ? machineCeiling : coerceCeiling(requested);
+  reservations.push(claim);
+  applyEffectiveCeiling();
+
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    reservations.splice(reservations.indexOf(claim), 1);
+    applyEffectiveCeiling();
+  };
+}
+
+/** Hold a reservation for exactly as long as `run` takes, however it ends. */
+export async function withReservedConcurrency<T>(
+  requested: number | undefined,
+  run: () => Promise<T>,
+): Promise<T> {
+  const release = reserveConcurrency(requested);
+  try {
+    return await run();
+  } finally {
+    release();
+  }
 }
 
 /** Reports the ceiling currently in force. Exists so a caller can assert it. */
@@ -96,20 +179,14 @@ export function currentMaxConcurrency(): number {
 }
 
 /**
- * Sizes the fork semaphore for this machine, or to `requested` when the caller
- * names one. Returns what it applied.
+ * Sizes the fork semaphore for this machine and returns what it derived.
  *
- * A `requested` of 0 lifts the semaphore entirely: a run told to be unbounded
- * that still queued at the fork cap would be unbounded in name only.
+ * It takes no per-run override any more. A run that wants a different ceiling
+ * reserves one for its own duration with `reserveConcurrency`; writing it here
+ * put one call's request into state shared by every other call. Deriving is
+ * idempotent, so a run calling this cannot move the ceiling for anyone.
  */
-export async function applyDerivedConcurrency(
-  readings?: MachineReadings,
-  requested?: number,
-): Promise<number> {
-  if (requested !== undefined) {
-    setMaxConcurrency(requested);
-    return maxConcurrency;
-  }
+export async function applyDerivedConcurrency(readings?: MachineReadings): Promise<number> {
   const derived = deriveMaxConcurrency(readings ?? (await readMachine()));
   setMaxConcurrency(derived);
   return derived;
