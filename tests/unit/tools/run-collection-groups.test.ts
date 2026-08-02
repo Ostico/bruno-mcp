@@ -78,6 +78,54 @@ describe('rejecting contradictory input', () => {
   });
 });
 
+describe('a group that lists no requests', () => {
+  it('passes the containment scan rather than tripping over an absent list', async () => {
+    // The scan walks every group's references; a group that omits the key has
+    // none to walk, and reading through the absent list would fail the call
+    // before the run started.
+    await handler({ collectionPath: '/c', groups: [{ name: 'everything' }] });
+
+    expect(mockedExecute).toHaveBeenCalledWith(
+      '/c',
+      expect.objectContaining({ groups: [{ name: 'everything' }] }),
+    );
+  });
+});
+
+describe('rejecting variables a placeholder could never reference', () => {
+  // A group's variables are normalised at the tool layer, and a name no
+  // `{{placeholder}}` can name is refused rather than accepted and silently
+  // unusable. Diagnosing that from a run report means reading a 401 and
+  // guessing; refusing before the run names the group and the variable.
+  it('names the group and the variable, and runs nothing', async () => {
+    const result = await handler({
+      collectionPath: '/c',
+      groups: [
+        { name: 'alice', requests: ['a.bru'], variables: { ' user': 'alice' } },
+      ],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain('alice');
+    expect(result.content[0]!.text).toContain('whitespace');
+    expect(mockedExecute).not.toHaveBeenCalled();
+  });
+
+  it('addresses a group with no name by its index', async () => {
+    const result = await handler({
+      collectionPath: '/c',
+      groups: [
+        { requests: ['a.bru'] },
+        { requests: ['b.bru'], variables: { 'to{ken}': 'x' } },
+      ],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toMatch(/group 1|groups\[1\]/);
+    expect(mockedExecute).not.toHaveBeenCalled();
+  });
+});
+
 describe('containing collectionRoot', () => {
   // `collectionRoot` names the collection that `collectionPath` belongs to: it
   // exists so a run scoped to a subfolder still resolves environments, and the

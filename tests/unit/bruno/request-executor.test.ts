@@ -2544,6 +2544,62 @@ http:
       expect(result.summary.failed).toBe(1);
     });
 
+    it('holds a parallel group to maxConcurrency, and does not without it', async () => {
+      // Nothing pinned the ceiling: the semaphore could be deleted and every
+      // test still passed, which for a knob whose whole job is "no more than N
+      // at once" means the knob was untested. Both halves are here because a
+      // test that only asserts "at most 1" also passes when the run is serial
+      // for some unrelated reason.
+      setupFsReaddirRecursive({
+        '/test-collection': [
+          { name: 'a.yml', isFile: true, isDirectory: false },
+          { name: 'b.yml', isFile: true, isDirectory: false },
+          { name: 'c.yml', isFile: true, isDirectory: false },
+        ],
+      });
+      const racer = (name: string, seq: number): string => `
+info:
+  name: ${name}
+  type: http
+  seq: ${seq}
+http:
+  method: GET
+  url: "https://api.example.com/${name}"
+`;
+      setupFsReadFile({
+        'a.yml': racer('A', 1),
+        'b.yml': racer('B', 2),
+        'c.yml': racer('C', 3),
+      });
+      setupFsStat(['/test-collection']);
+
+      let inFlight = 0;
+      let peak = 0;
+      mockFetch.mockImplementation(async () => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        // Long enough that the others are dispatched if anything lets them be.
+        await new Promise((r) => setTimeout(r, 5));
+        inFlight -= 1;
+        return createMockResponse({ ok: true });
+      });
+
+      const run = async (maxConcurrency?: number): Promise<number> => {
+        inFlight = 0;
+        peak = 0;
+        await RequestExecutor.executeCollection('/test-collection', {
+          scriptRunner: TestRunner,
+          groups: [{ name: 'racers', requests: ['a.yml', 'b.yml', 'c.yml'], parallel: true }],
+          maxConcurrency,
+        });
+        return peak;
+      };
+
+      expect(await run(1)).toBe(1);
+      // Same group, same parallel flag: the ceiling is the only difference.
+      expect(await run(3)).toBeGreaterThan(1);
+    });
+
     it('refuses a group environment that leaves the collection without touching the others', async () => {
       // A group's environment name is caller input joined into the collection's
       // environments/ directory. One that escapes reads a YAML file the caller
