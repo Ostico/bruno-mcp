@@ -268,13 +268,22 @@ export class RequestBuilder {
   }
 
   /**
-   * Create multiple related requests (CRUD operations)
+   * Create multiple related requests (CRUD operations).
+   *
+   * `auth` defaults to `inherit`, not `none`. Omitting it used to write an
+   * explicit `auth: none` into all five files, which is not "no opinion" — it is
+   * an opt-out that stops the collection's own auth block from applying, so a
+   * generated set against an authenticated API returned 401 until every file was
+   * edited by hand. `inherit` is what Bruno's own new-request path defaults to
+   * (`bruno-app` .../slices/collections/actions.js, `auth ?? { mode: 'inherit' }`).
+   * Pass `{ type: 'none', config: {} }` to opt out deliberately.
    */
   async createCrudRequests(
     collectionPath: string,
     entityName: string,
     baseUrl: string,
-    folder?: string
+    folder?: string,
+    auth: CreateRequestInput['auth'] = { type: 'inherit', config: {} }
   ): Promise<FileOperationResult[]> {
     const results: FileOperationResult[] = [];
 
@@ -335,7 +344,8 @@ export class RequestBuilder {
       const result = await this.createRequest({
         collectionPath,
         ...operation,
-        folder
+        folder,
+        auth
       });
       results.push(result);
     }
