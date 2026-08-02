@@ -22,6 +22,7 @@
 
 import { fork as realFork, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
+import { deriveMaxConcurrency, readMachine, type MachineReadings } from './concurrency.js';
 import {
   DEFAULT_TIMEOUT,
   WORKER_ARGV_SENTINEL,
@@ -49,6 +50,10 @@ const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
 /**
  * Concurrent children allowed at once. A 100-request collection must not fork
  * 100 cold starts simultaneously; excess jobs queue and run as slots free.
+ *
+ * A starting value only. `applyDerivedConcurrency` replaces it with a number
+ * sized for this machine — 8 was wrong on a developer laptop and wrong in a
+ * small container, in opposite directions.
  */
 const DEFAULT_MAX_CONCURRENCY = 8;
 
@@ -72,13 +77,57 @@ let activeChildren = 0;
 const waiters: Array<() => void> = [];
 let maxConcurrency = DEFAULT_MAX_CONCURRENCY;
 
-/** Override the concurrency cap (tests, or a future config surface). */
+/**
+ * Override the concurrency cap.
+ *
+ * 0 is meaningful — unbounded — and is preserved rather than clamped up to 1.
+ * Clamping it made unbounded the most serial setting available, the exact
+ * opposite of what it says. Negative and fractional values are still coerced to
+ * a usable integer.
+ */
 export function setMaxConcurrency(n: number): void {
-  maxConcurrency = Math.max(1, Math.floor(n));
+  maxConcurrency = n === 0 ? 0 : Math.max(1, Math.floor(n));
+  drainWaiters();
+}
+
+/** Reports the ceiling currently in force. Exists so a caller can assert it. */
+export function currentMaxConcurrency(): number {
+  return maxConcurrency;
+}
+
+/**
+ * Sizes the fork semaphore for this machine, or to `requested` when the caller
+ * names one. Returns what it applied.
+ *
+ * A `requested` of 0 lifts the semaphore entirely: a run told to be unbounded
+ * that still queued at the fork cap would be unbounded in name only.
+ */
+export async function applyDerivedConcurrency(
+  readings?: MachineReadings,
+  requested?: number,
+): Promise<number> {
+  if (requested !== undefined) {
+    setMaxConcurrency(requested);
+    return maxConcurrency;
+  }
+  const derived = deriveMaxConcurrency(readings ?? (await readMachine()));
+  setMaxConcurrency(derived);
+  return derived;
+}
+
+/**
+ * Starts whatever the new ceiling now has room for. Without this, raising the
+ * cap — or lifting it to unbounded — would leave already-queued jobs waiting on
+ * a limit that no longer applies.
+ */
+function drainWaiters(): void {
+  while (waiters.length > 0 && (maxConcurrency === 0 || activeChildren < maxConcurrency)) {
+    waiters.shift()!();
+  }
 }
 
 function acquireSlot(): Promise<void> {
-  if (activeChildren < maxConcurrency) {
+  if (maxConcurrency === 0 || activeChildren < maxConcurrency) {
     activeChildren++;
     return Promise.resolve();
   }
