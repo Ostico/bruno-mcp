@@ -9,6 +9,36 @@ Both Bruno formats work and the server detects which one you have: `.yml` (openc
 
 Requires **Node.js >= 22**. CI tests 22.x and 24.x.
 
+## Features
+
+**Authoring**
+
+- **Collections** — create and organise them, or discover the ones Bruno already knows from its `workspace.yml`
+- **Requests** — every HTTP method, with headers, query and path params, bodies, auth, assertions, vars and settings
+- **Read back** — `read_request` and `read_environment` return structured JSON, identical for `.bru` and `.yml`, so an agent can inspect before it edits
+- **Partial-merge edits** — `modify_request` changes only the fields you pass and leaves the rest of the file alone
+- **CRUD and suites** — five-request CRUD sets, and test suites with topological dependency ordering
+- **Environments** — create, replace, merge, or patch a single variable
+- **Dual format** — `.bru` (legacy) and `.yml` (opencollection), auto-detected; `.yaml` is read and flagged
+- **Multipart uploads** — `form-data` with per-part `Content-Type` and multi-file fields
+
+**Running**
+
+- **Execution groups** — run one collection as several isolated groups in a single call: different identities, different environments, serial or concurrent, with no leakage between them
+- **Real parallelism** — fan out groups, or requests inside a group, under a concurrency ceiling sized for the machine
+- **Cookie jar** — a login carries into the requests after it, scoped to its group and never written to disk
+- **Variable chaining** — `bru.setVar()`/`bru.getVar()` across requests, and `captureVariables` to read the values back out
+- **Async scripts** — top-level `await`, `bru.sleep(ms)`, `setTimeout`/`setInterval` inside the sandbox
+- **Inline scripts** — attach pre-request, post-response and test scripts directly when creating or modifying a request
+- **Auth applied for you** — bearer, basic, api-key, digest, OAuth 2.0 (client credentials and password grants), or `inherit` from the collection or folder
+- **Honest results** — per-group summaries, captured response bodies, per-request warnings, parse failures and missing requests all reported; a crashed group cannot make a run read green
+
+**Safety**
+
+- **SSRF protection** on every request and every redirect hop, with the approved addresses pinned
+- **Path confinement** for request references, collection roots, environment names and file uploads
+- **Process-isolated scripts** — a forked V8 sandbox with a scrubbed environment and a hard kill
+
 ## Install
 
 ```bash
