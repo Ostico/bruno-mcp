@@ -6,6 +6,7 @@ import { forkingScriptRunner, type ScriptRunner } from './sandbox-host.js';
 import { wrapFetchResponse } from './response-wrapper.js';
 import { validateUrl, ssrfRemediation } from './url-validator.js';
 import { VariableStore } from './variable-store.js';
+import { collectCapturedVariables } from './captured-variables.js';
 import { buildDispatcher, type DispatcherResult } from './fetch-dispatcher.js';
 import { describeNetworkError } from './network-error.js';
 import { applyParams } from './request-params.js';
@@ -1129,6 +1130,9 @@ export class RequestExecutor {
       await resolveRunTargets(options?.requestPath, collectionPath);
 
     let results: RequestExecutionResult[];
+    // One serial, one per folder in parallel, in execution order. See
+    // captured-variables.ts for what is reported out of them.
+    const stores: VariableStore[] = [];
 
     if (options?.parallel) {
       // Group requests by folder (derived from file path relative to collectionPath)
@@ -1151,9 +1155,12 @@ export class RequestExecutor {
       // is the answer.
       const sortedFolders = [...folderMap.keys()];
 
+      // Up front, not inside each task: reported order is folder order.
+      sortedFolders.forEach(() => stores.push(new VariableStore()));
+
       // Execute folders in parallel, serial within each folder
       const folderResults = await Promise.allSettled(
-        sortedFolders.map(async (folder) => {
+        sortedFolders.map(async (folder, folderIndex) => {
           const folderRequests = folderMap.get(folder)!;
           // Folders are isolated by design: each gets its own VariableStore so
           // concurrent folder tasks never share a mutable store (which would
@@ -1163,7 +1170,7 @@ export class RequestExecutor {
           // surfaces any {{var}} left unresolved as a per-request warning
           //, so this isolation can no longer let an unsubstituted
           // placeholder reach the wire silently the way serial mode would not.
-          const folderStore = new VariableStore();
+          const folderStore = stores[folderIndex];
           // The cookie jar is scoped per folder for the same reason: two
           // folders running concurrently must not share mutable session state.
           const folderJar = cookiesEnabled ? createRunCookieJar() : undefined;
@@ -1213,6 +1220,7 @@ export class RequestExecutor {
     } else {
       // Serial execution (default)
       const variableStore = new VariableStore();
+      stores.push(variableStore);
       const runJar = cookiesEnabled ? createRunCookieJar() : undefined;
       results = [];
       for (const req of requests) {
@@ -1222,6 +1230,11 @@ export class RequestExecutor {
     }
 
     const totalDuration = Date.now() - startTime;
+    const captured = collectCapturedVariables(
+      stores.map((store) => store.getAll()),
+      options?.captureVariables,
+    );
+    const warnings = [...discoveryWarnings, ...captured.warnings];
 
     return {
       summary: summarise(results, totalDuration),
@@ -1230,7 +1243,9 @@ export class RequestExecutor {
       // detail cannot drift apart if only one of them is maintained.
       parseErrors: parseFailures.length,
       parseFailures,
-      ...(discoveryWarnings.length > 0 ? { warnings: discoveryWarnings } : {}),
+      ...(warnings.length > 0 ? { warnings } : {}),
+      ...(captured.names.length > 0 ? { capturedVariableNames: captured.names } : {}),
+      ...(Object.keys(captured.values).length > 0 ? { capturedVariables: captured.values } : {}),
     };
   }
 }
