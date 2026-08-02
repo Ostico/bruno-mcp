@@ -2544,6 +2544,40 @@ http:
       expect(result.summary.failed).toBe(1);
     });
 
+    it('refuses a group environment that leaves the collection without touching the others', async () => {
+      // A group's environment name is caller input joined into the collection's
+      // environments/ directory. One that escapes reads a YAML file the caller
+      // was never given and substitutes its values into outbound requests — an
+      // exfiltration path with the delivery built in.
+      setupFsReaddirRecursive({
+        '/test-collection': [{ name: 'good.yml', isFile: true, isDirectory: false }],
+      });
+      setupFsReadFile({
+        'good.yml': `
+info:
+  name: Good
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/good"
+`,
+      });
+      setupFsStat(['/test-collection']);
+      mockFetch.mockResolvedValue(createMockResponse({ ok: true }));
+
+      const result = await RequestExecutor.executeCollection('/test-collection', {
+        scriptRunner: TestRunner,
+        groups: [
+          { name: 'escaping', requests: ['good.yml'], environment: '../../../../etc/hosts' },
+          { name: 'honest', requests: ['good.yml'] },
+        ],
+      });
+
+      expect(result.groups.find((g) => g.name === 'escaping')!.error).toMatch(/environment name/i);
+      expect(result.groups.find((g) => g.name === 'honest')!.results).toHaveLength(1);
+    });
+
     it('keeps the original error message when exactly one group crashes', async () => {
       setupFsReaddirRecursive({
         '/test-collection': [

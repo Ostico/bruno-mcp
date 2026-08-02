@@ -31,10 +31,41 @@ function isUnavailableSecret(entry: EnvVariable): boolean {
   return entry.value === undefined || entry.value === null || String(entry.value) === '';
 }
 
+/**
+ * An environment name indexes `environments/<name>` inside the collection. It
+ * is a name, never a path, and this is where that is enforced.
+ *
+ * The name arrives from the caller — `run_collection` takes one per run and one
+ * per group — and `join` will happily follow `../..` out of the collection. The
+ * file it lands on becomes the run's variables, so a name that escapes reads
+ * any YAML on the host the process can open and substitutes its values into
+ * outbound requests. That is a read primitive with a delivery mechanism
+ * attached, not a mis-resolved path.
+ *
+ * Refused rather than sanitised: a caller who wrote a separator meant something
+ * this tool does not do, and quietly running a different environment than the
+ * one they named is its own failure.
+ */
+export function assertPlainEnvironmentName(envName: string): void {
+  if (envName.includes('/') || envName.includes('\\') || envName.includes('\0')) {
+    throw new Error(
+      `Invalid environment name "${envName}": an environment name is a name, not a path. ` +
+        'Environments live in the collection\'s environments/ directory and are named ' +
+        'without separators.',
+    );
+  }
+  // Caught by the separator test on every real traversal, but a bare `..` names
+  // the environments directory itself and is still not an environment.
+  if (envName === '.' || envName === '..') {
+    throw new Error(`Invalid environment name "${envName}": that is a directory, not an environment.`);
+  }
+}
+
 export async function loadEnvironment(
   collectionPath: string,
   envName: string,
 ): Promise<Map<string, string>> {
+  assertPlainEnvironmentName(envName);
   const envFilePath = join(collectionPath, 'environments', `${envName}.yml`);
 
   let content: string;
