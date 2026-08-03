@@ -1,7 +1,9 @@
 # Execution Groups — design
 
 **Date:** 2026-08-02
-**Status:** approved, not implemented
+**Status:** implemented, released in 2.0.0. One divergence from what is written below: a group's
+`requests` is **optional**, not required — absent means the whole collection under that group's identity, which
+is what running one collection as alice and as bob needs, and an empty `[]` still means a selection of nothing.
 **Supersedes:** defect-report item **M10** ("no shared-state concurrency, so a credential race cannot be exercised")
 **Target release:** 2.0.0 (breaking)
 
