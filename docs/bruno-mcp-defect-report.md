@@ -5,7 +5,7 @@
 before acting**, files move.
 
 Everything filed here between 2026-07-29 and 2026-08-02 — six High, eleven Medium, twenty Low — is closed
-except the two below. The closed entries carried a great deal of investigation detail; that text lives in git
+except the one below. The closed entries carried a great deal of investigation detail; that text lives in git
 history (`git log -p -- docs/bruno-mcp-defect-report.md`; the last full version is at `main@903533d`) rather
 than in this file, so the register stays a queue instead of an archive.
 
@@ -37,35 +37,6 @@ create time.
 
 Interacts with L15, which was withdrawn — authoring `settings` no longer turns URL encoding on.
 
-### L16 — `.bru` `tags` cannot survive a rewrite
-
-Upstream's reader and writer disagree on the shape. `meta { tags: smoke }` is read by `bruToJsonV2` as the
-**string** `'smoke'` and written back by `jsonToBruV2` as a **list**, which iterates whatever it is handed — so
-a string comes back one character per line:
-
-```
-tags: [
-    s
-    m
-    o
-    k
-    e
-]
-```
-
-Verified against the installed `@usebruno/lang` with both a single tag and with `tags: smoke, fast`. A
-genuinely unknown key (`reviewedBy: qa`) round-trips verbatim, which isolates this to `tags` rather than to
-unknown keys in general.
-
-**Not our defect, and currently contained.** It bites only because M7 started carrying unmodelled `meta` keys,
-so `tags` is excluded from the `.bru` carry list on purpose, with a test pinning the exclusion and the reason.
-Before M7 the server dropped `tags` silently; carrying it would have replaced a silent drop with a corrupted
-file, which is worse. `.yml` is unaffected — that document is serialized whole.
-
-The real fix is to model `tags` on both sides: parse the comma-separated string into a list, write a list
-back. That also removes the exclusion. Small, but it is a model change needing its own round-trip fixtures,
-and `.yml` needs the same field for parity. Worth reporting upstream.
-
 ---
 
 ## Closed since the last revision, for orientation
@@ -86,6 +57,16 @@ it was:
   incomplete, which the warning now does. The author path refuses: writing a request that cannot run and
   reporting success is the shape a caller cannot diagnose, and no parity argument covers it because Bruno's
   own GUI cannot produce it.
+
+- **L16** — `tags` could not survive a rewrite. Modelled now in both formats as what upstream says it is: a
+  list of strings or absent, normalized with `Array.isArray(tags) ? tags : []` exactly as
+  `bruno-cli/src/utils/bru.js:80` and `bruno-filestore`'s `parseApp.ts:22` do, written only when non-empty.
+  Three separate losses: `.bru` dropped every list because the key was excluded to avoid `jsonToBruV2` spelling
+  a string one character per line, `.yml` carried it only as an opaque `info.extra` entry, and the
+  `.bru`-to-`.yml` conversion had no field to put it in. The single-line `tags: smoke` is still dropped, now on
+  purpose — upstream's runner reads any non-list as no tags, so promoting it would change which requests a
+  `--tags` run selects. That also corrects what this entry used to propose: splitting on commas would have
+  invented a format appearing nowhere upstream. `read_request` reports tags; authoring them is not part of it.
 
 The 2.0.0 release (PR #121) closed the execution-model findings — M2, M10, L13, L14 — and the review of that
 work closed six more found in the implementation itself. See CHANGELOG.md.

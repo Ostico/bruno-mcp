@@ -90,7 +90,7 @@ export const YAML_REQUEST_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /** Fields of `YamlInfo` that generateYamlRequest writes itself. */
-export const YAML_INFO_KEYS: ReadonlySet<string> = new Set(['name', 'type', 'seq', 'extra']);
+export const YAML_INFO_KEYS: ReadonlySet<string> = new Set(['name', 'type', 'seq', 'tags', 'extra']);
 
 /** Fields of `YamlHttp` that generateYamlRequest writes itself. */
 export const YAML_HTTP_KEYS: ReadonlySet<string> = new Set([
@@ -141,19 +141,15 @@ export const YAML_PARAM_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Keys of a `.bru` `meta` block that must not go in the bag: the three
- * `generateBruRequest` writes from the model, plus `tags`.
+ * Keys of a `.bru` `meta` block that must not go in the bag: the four
+ * `generateBruRequest` writes from the model.
  *
- * `tags` is not modelled here, so by the rule above it should be carried — and
- * it must not be, because upstream's grammar is not symmetric on it. The reader
- * returns the raw string (`tags: smoke` becomes `'smoke'`) while the writer
- * emits the key as a list and iterates whatever it is given, so a carried string
- * comes back out one character per line. Carrying the key would turn today's
- * silent drop into a corrupted file, which is the worse of the two.
- *
- * The `.yml` dialect has no such problem — that document is serialized whole —
- * so this exclusion is deliberately local to `.bru`. Modelling `tags` properly
- * on both sides is the real fix and is a separate change.
+ * `tags` is one of them, and stays on this list for a second reason as well. The
+ * grammar accepts a list value and a single-line value at the same key, and only
+ * the list form is a tags list — see `meta-tags.ts`. Were `tags` absent from this
+ * set, a single-line value would be carried as an unmodelled key and handed back
+ * to a writer that iterates whatever it is given, arriving on disk one character
+ * per line.
  */
 export const BRU_META_KEYS: ReadonlySet<string> = new Set([
   'name',

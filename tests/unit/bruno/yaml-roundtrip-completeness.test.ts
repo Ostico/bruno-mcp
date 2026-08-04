@@ -53,8 +53,12 @@ const FIXTURES: YamlFixture[] = [
   },
   {
     // Every level that can carry a key this model does not name. Bruno's grammar
-    // has `tags` and `examples` today and will grow more; rebuilding the document
-    // from the model on each write deleted them, so they belong in this table.
+    // has `description` and `examples` today and will grow more; rebuilding the
+    // document from the model on each write deleted them, so they belong in this
+    // table. `tags` was the info-level example until the model named it — it
+    // stays here to exercise the modelled field, with `description`, which
+    // `stringifyHttpRequest.ts:40` writes and this model still does not name,
+    // taking over as the unmodelled one.
     name: 'keys the model does not name, at every level that can carry one',
     src: `info:
   name: Fixture
@@ -62,6 +66,7 @@ const FIXTURES: YamlFixture[] = [
   seq: 7
   tags:
     - smoke
+  description: what this fixture is for
 
 http:
   method: GET

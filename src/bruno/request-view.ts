@@ -72,6 +72,8 @@ export interface RequestView {
   name: string;
   type?: string;
   seq?: number;
+  /** Runner tags, omitted when the request has none. */
+  tags?: string[];
   method: string;
   url: string;
   headers: RequestViewEntry[];
@@ -123,6 +125,9 @@ function compact(view: RequestView): RequestView {
   if (view.docs === undefined || view.docs === '') delete view.docs;
   if (view.type === undefined) delete view.type;
   if (view.seq === undefined) delete view.seq;
+  // Absent rather than empty, so a request with no tags does not read as one
+  // whose tags were removed.
+  if (view.tags === undefined) delete view.tags;
   return view;
 }
 
@@ -194,6 +199,7 @@ function fromBru(bru: BruFile, filePath: string): RequestView {
     name: bru.meta.name,
     type: bru.meta.type,
     seq: bru.meta.seq,
+    tags: bru.meta.tags,
     method: bru.http.method,
     url: bru.http.url,
     headers,
@@ -277,6 +283,7 @@ function fromYaml(yaml: YamlRequest, filePath: string): RequestView {
     name: yaml.info.name,
     type: yaml.info.type,
     seq: yaml.info.seq,
+    tags: yaml.info.tags,
     method: yaml.http.method,
     url: yaml.http.url,
     headers: (yaml.http.headers ?? []).map((h) => entry(h.name, h.value, h.disabled === true)),

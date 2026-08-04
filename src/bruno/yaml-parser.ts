@@ -1,5 +1,6 @@
 import { parse as parseYaml } from 'yaml';
 import { toHttpMethod, toBodyType } from './parse-guards.js';
+import { normalizeTags } from './meta-tags.js';
 import {
   BrunoError,
   type YamlRequest,
@@ -90,6 +91,7 @@ function parseInfo(raw: Record<string, unknown>): YamlInfo {
     name: String(raw.name ?? ''),
     type: raw.type as YamlInfo['type'],
     seq: typeof raw.seq === 'number' ? raw.seq : undefined,
+    tags: normalizeTags(raw.tags),
   };
   const extra = collectExtraKeys(raw, YAML_INFO_KEYS);
   if (extra) info.extra = extra;

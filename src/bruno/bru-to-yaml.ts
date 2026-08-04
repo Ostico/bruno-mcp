@@ -119,7 +119,7 @@ export function bruFileToYamlRequest(bru: BruFile): YamlRequest {
   // directory. Supporting it needs the block to exist upstream first.
 
   return {
-    info: { name: bru.meta.name, type: bru.meta.type, seq: bru.meta.seq },
+    info: { name: bru.meta.name, type: bru.meta.type, seq: bru.meta.seq, tags: bru.meta.tags },
     http: {
       method: bru.http.method,
       url: bru.http.url,

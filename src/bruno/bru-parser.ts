@@ -24,13 +24,17 @@ import {
   type BruOAuth2ParamTarget,
 } from './types.js';
 import { toHttpMethod, normalizeBodyType } from './parse-guards.js';
+import { normalizeTags } from './meta-tags.js';
 import { applyExtraKeys, BRU_META_KEYS, collectExtraKeys } from './extra-keys.js';
 import { toFormUrlEncodedEntries } from './request-inputs.js';
 
 const MAX_SCRIPT_SIZE = 50_000;
 
 interface BruLangJson {
-  meta?: { name?: string; type?: string; seq?: string | number };
+  // `tags` is `unknown` rather than `string[]`: the grammar accepts a list
+  // value and a single-line value at the same key, so what comes back is only a
+  // list when the file used the list form. normalizeTags is what decides.
+  meta?: { name?: string; type?: string; seq?: string | number; tags?: unknown };
   http?: { method?: string; url?: string; body?: string; auth?: string };
   headers?: Array<{ name: string; value: string; enabled?: boolean }>;
   auth?: Record<string, unknown>;
@@ -72,6 +76,8 @@ export function parseBruRequest(content: string): BruFile {
     const seq = typeof json.meta.seq === 'string' ? parseInt(json.meta.seq, 10) : json.meta.seq;
     if (!isNaN(seq)) meta.seq = seq;
   }
+  const tags = normalizeTags(json.meta?.tags);
+  if (tags) meta.tags = tags;
   const metaExtra = collectExtraKeys(json.meta, BRU_META_KEYS);
   if (metaExtra) meta.extra = metaExtra;
 
@@ -446,6 +452,14 @@ export function generateBruRequest(bruFile: BruFile): string {
       // the literal text "seq: undefined" — a value, and not a number. Absent
       // has to mean absent.
       ...(bruFile.meta.seq != null ? { seq: String(bruFile.meta.seq) } : {}),
+      // Absent for an empty list, for the same reason `seq` is: the serializer
+      // writes a list block for whatever key it finds, so an empty one would
+      // put a bare `tags: [` / `]` pair in the file. Upstream also writes the
+      // key only when `tags?.length` is truthy.
+      //
+      // A list and never a string. Handed a string, the serializer iterates its
+      // characters and writes one tag per letter.
+      ...(bruFile.meta.tags?.length ? { tags: bruFile.meta.tags } : {}),
       // Keys of the meta block this model does not name. The serializer walks a
       // dictionary block's keys, so an unmodelled one survives here — unlike an
       // unmodelled top-level block, which it drops outright.
