@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Bruno's dynamic variables work now: `{{$guid}}`, `{{$timestamp}}`, `{{$randomEmail}}`
+  and the ~120 others.** A collection written in Bruno that uses one used to send the
+  placeholder verbatim — a literal `{{$guid}}` in the path — and then report it as an
+  unresolved variable, because nothing declares a generator. They are expanded from
+  `mockDataFunctions`, the same table Bruno's app and CLI use, in urls, headers, query
+  params, bodies and auth, once per occurrence rather than once per request. A keyword
+  no generator answers to is still left as written and still named in the warnings, so
+  `{{$gid}}` remains a typo the run tells you about.
+
+  In a JSON body and in a GraphQL variables block the generated value is escaped first.
+  `{{$randomLoremParagraphs}}` emits newlines, and a raw newline inside a JSON string
+  ends the document; unescaped it produced a body the server could not parse. The
+  GraphQL *query* is deliberately not escaped — it is a string in an envelope this
+  server stringifies itself, so escaping there would reach the server doubled.
+
+  One nuance worth knowing: a generator written inside an environment variable's value
+  is expanded when variables are prepared, before the target field is known, so it is
+  not JSON-escaped. Writing the generator in the body rather than in the variable gets
+  the escaping.
+
 - **A drift gate: everything we write is read back by Bruno's own reader.** Our
   tests assert our bytes against our own expectations, which cannot catch the one
   failure that actually costs users — a field written under a key Bruno does not

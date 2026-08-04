@@ -3,6 +3,7 @@ import { join } from 'path';
 import { parse as parseYaml } from 'yaml';
 import type { EnvFile, EnvVariable } from './types.js';
 import { parseBruEnvironmentRaw } from './bru-parser.js';
+import { expandDynamicVariables, isDynamicVariable } from './dynamic-variables.js';
 
 /**
  * Whether this variable is a secret with no value available to bind.
@@ -158,12 +159,21 @@ async function loadBruEnvironment(
 export function substitute(
   template: string,
   vars: Map<string, string>,
+  options: { escapeJSONStrings?: boolean } = {},
 ): string {
-  if (template.length === 0 || vars.size === 0) {
+  if (template.length === 0) {
     return template;
   }
 
-  return template.replace(/\{\{([^}]+)\}\}/g, (match, name: string) => {
+  // Generators run first, and on the template rather than on substituted output:
+  // that is the order upstream uses, and it keeps a `{{$guid}}` that arrives
+  // inside a response-captured value literal, like every other placeholder does.
+  const expanded = expandDynamicVariables(template, options.escapeJSONStrings === true);
+  if (vars.size === 0) {
+    return expanded;
+  }
+
+  return expanded.replace(/\{\{([^}]+)\}\}/g, (match, name: string) => {
     const value = vars.get(name);
     return value !== undefined ? value : match;
   });
@@ -179,6 +189,10 @@ export function substitute(
  * (a template-injection mitigation), so a resolved value that itself contains
  * `{{...}}` is never re-expanded and must not be mis-reported as unresolved.
  * Names are de-duplicated, preserving first-seen order.
+ *
+ * Generators (`{{$guid}}` and the rest of Bruno's table) are not variables and
+ * are skipped: they resolve, just not from `vars`. A near miss like `{{$gid}}`
+ * names no generator, so it is still reported — which is the point of the report.
  */
 export function findUnresolvedPlaceholders(
   template: string,
@@ -194,6 +208,9 @@ export function findUnresolvedPlaceholders(
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(template)) !== null) {
     const name = match[1];
+    if (isDynamicVariable(name)) {
+      continue;
+    }
     if (vars.get(name) === undefined && !seen.has(name)) {
       seen.add(name);
       unresolved.push(name);

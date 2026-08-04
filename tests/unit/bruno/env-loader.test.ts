@@ -412,3 +412,43 @@ describe('Environment Loader', () => {
     });
   });
 });
+
+describe('generators in templates', () => {
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+  it('substitute expands a generator with no variables in play', () => {
+    // The early return used to be `vars.size === 0`, which sent `{{$guid}}`
+    // through untouched and put the literal text on the wire.
+    expect(substitute('{{$guid}}', new Map())).toMatch(UUID);
+  });
+
+  it('substitute expands generators alongside variables', () => {
+    const result = substitute('{{host}}/{{$guid}}', new Map([['host', 'api.test']]));
+    expect(result.startsWith('api.test/')).toBe(true);
+    expect(result.slice('api.test/'.length)).toMatch(UUID);
+  });
+
+  it('substitute escapes a generated value when the target is JSON', () => {
+    const escaped = substitute('{"t":"{{$randomLoremParagraphs}}"}', new Map(), {
+      escapeJSONStrings: true,
+    });
+    expect(escaped).toContain('\\n');
+    expect(escaped).not.toContain('{{$');
+    expect(() => JSON.parse(escaped) as unknown).not.toThrow();
+  });
+
+  it('leaves a generator that arrives inside a variable value alone', () => {
+    // Substitution stays single-pass: a value captured from a response is never
+    // re-scanned, so a generator it happens to contain is not run.
+    const vars = new Map([['echoed', '{{$guid}}']]);
+    expect(substitute('{{echoed}}', vars)).toBe('{{$guid}}');
+  });
+
+  it('does not report a generator as an unresolved variable', () => {
+    expect(findUnresolvedPlaceholders('{{$guid}}/{{$timestamp}}', new Map())).toEqual([]);
+  });
+
+  it('still reports a keyword no generator answers to', () => {
+    expect(findUnresolvedPlaceholders('{{$gid}}', new Map())).toEqual(['$gid']);
+  });
+});
