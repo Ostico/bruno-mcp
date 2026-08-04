@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A drift gate: everything we write is read back by Bruno's own reader.** Our
+  tests assert our bytes against our own expectations, which cannot catch the one
+  failure that actually costs users — a field written under a key Bruno does not
+  read. That file parses, round-trips through our parser, and reaches the runner
+  empty; it has happened twice. `@usebruno/filestore`, the package Bruno's app
+  and CLI parse with, is a devDependency now, and one test hands it our output
+  for every body mode, auth, header, query param, assertion and post-response
+  variable in both dialects, asserting the values land where upstream's model
+  puts them. Nothing here runs at runtime.
+
+  A weekly job re-runs that test against the published `filestore` rather than
+  the locked one, so a dialect change upstream shows up as a failing scheduled
+  build instead of a user's bug report. It gates no pull request.
+
 ### Fixed
 
 - **The graphql envelope matches Bruno's bytes.** `variables` is now always on

@@ -1,0 +1,37 @@
+name: Upstream drift
+
+# The oracle test in the normal suite runs against the locked @usebruno/filestore,
+# so it proves our writers speak the dialect of the version we pinned. It cannot
+# notice Bruno changing the dialect — the lockfile hides that by design.
+#
+# This job installs the current published filestore instead and runs the same
+# test. A failure here means the two sides no longer agree: either upstream moved
+# a field, or it now rejects something we write. Neither is an emergency, and
+# neither blocks a pull request — nothing else in this workflow gates a merge.
+
+on:
+  schedule:
+    # Mondays, 05:00 UTC.
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+
+jobs:
+  oracle-against-latest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+
+      - name: Install
+        run: npm ci
+
+      - name: Upgrade the oracle to the published release
+        run: |
+          npm install --no-save @usebruno/filestore@latest
+          node -e "console.log('filestore', require('@usebruno/filestore/package.json').version)"
+
+      - name: Read our output with Bruno's current reader
+        run: npx jest tests/unit/bruno/upstream-reader-oracle.test.ts
