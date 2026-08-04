@@ -126,6 +126,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A redirect chain stops after 5 hops, not 10 — the number Bruno stops at.** An
+  unset `maxRedirects` now resolves to 5, and a negative one to 5 as well, matching
+  the arithmetic in Bruno's own runner. A chain that survives in the app survives
+  here, and one that dies there dies here at the same hop, so a collection tuned
+  against `bru run` behaves the same way under this server. An authored value is
+  still honored exactly, and `followRedirects: false` still returns the 3xx
+  untouched.
+
 - **A graphql body with no query is refused when authored, and warned about when
   run.** `create_request` and `modify_request` now reject a graphql body whose
   query is empty — variables on their own, or nothing at all — in both formats.

@@ -733,9 +733,17 @@ async function executeSingleRequest(
 
   // Redirect handling honors request settings:
   //   followRedirects === false -> return the 3xx response as-is (no follow)
-  //   maxRedirects -> hop cap (defaults to 10 when unset)
+  //   maxRedirects -> hop cap (defaults to 5 when unset)
+  //
+  // The default and the clamp are Bruno's, not a choice made here: its runner
+  // resolves the cap as `settings?.maxRedirects ?? 5`, replaces anything negative
+  // with 5, then zeroes it when redirects are not followed, so a chain dies at the
+  // same hop under `bru run` as it does here. That last rule is expressed by the
+  // `followRedirects &&` guard on the loop below rather than by a value, so a
+  // follow-disabled request still reports its cap honestly instead of zero.
   const followRedirects = yaml.settings?.followRedirects !== false;
-  const maxRedirects = yaml.settings?.maxRedirects ?? 10;
+  const configuredMaxRedirects = yaml.settings?.maxRedirects ?? 5;
+  const maxRedirects = configuredMaxRedirects < 0 ? 5 : configuredMaxRedirects;
 
   try {
     // Built inside the try on purpose. AbortSignal.timeout throws synchronously

@@ -104,7 +104,7 @@ export const requestSettingsSchema = z.object({
     'to read the headers of the redirect itself.'
   ),
   maxRedirects: z.number().int().nonnegative().optional().describe(
-    'Maximum redirect hops to follow. Defaults to 10 when unset. Irrelevant once ' +
+    'Maximum redirect hops to follow. Defaults to 5 when unset, as it does in Bruno. Irrelevant once ' +
     'followRedirects is false; 0 likewise stops the first hop being followed.'
   ),
   encodeUrl: z.boolean().optional().describe(

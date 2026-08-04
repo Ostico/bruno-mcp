@@ -1,13 +1,13 @@
 # bruno-mcp defect register
 
 **Status:** living document. The single list of known **open** defects.
-**Last verified:** 2026-08-04, against `main@565655f` (v2.0.0). Line numbers were read there — **re-verify
+**Last verified:** 2026-08-04, against `main@5c69c4e` (v2.0.0). Line numbers were read there — **re-verify
 before acting**, files move.
 
-Everything filed here between 2026-07-29 and 2026-08-02 — six High, eleven Medium, twenty Low — is closed
-except the one below. The closed entries carried a great deal of investigation detail; that text lives in git
-history (`git log -p -- docs/bruno-mcp-defect-report.md`; the last full version is at `main@903533d`) rather
-than in this file, so the register stays a queue instead of an archive.
+Everything filed here between 2026-07-29 and 2026-08-02 — six High, eleven Medium, twenty Low — is now closed.
+The closed entries carried a great deal of investigation detail; that text lives in git history (`git log -p --
+docs/bruno-mcp-defect-report.md`; the last full version is at `main@903533d`) rather than in this file, so the
+register stays a queue instead of an archive.
 
 It supersedes `adversarial-review-2026-07-29.md` and the field-audit report it was merged from; both are in git
 history. `blind-discoverability-test.md` is methodology, not findings.
@@ -16,33 +16,35 @@ history. `blind-discoverability-test.md` is methodology, not findings.
 
 ## Open
 
-### M9 (second half) — a created request carries no `settings`, so it silently follows redirects
-
-**A product decision, not a coding task.** The first half shipped in PR #100: `settings` is accepted on
-`create_request` and `modify_request` and written in both dialects, merged per field.
-
-What remains: a request created through this server writes no `settings` block at all, and absent settings
-means follow — `followRedirects = yaml.settings?.followRedirects !== false` (`request-executor.ts:700`). That
-default is what the original report cost. A reset flow whose session cookie rode on a 302 lost the
-`Set-Cookie` when the redirect was followed, and the next call returned 500. It presented as the endpoint
-issuing no session at all.
-
-The decision: should a created request carry Bruno's defaults **explicitly**? Emitting them is not obviously
-right — Bruno omits the block too, and writing it changes what a round-trip produces for every request this
-server creates. But silently inheriting `followRedirects: true` is what caused the incident.
-
-Severity M rather than L, because a wrong default that cannot be seen from inside a run produces a wrong
-result the agent cannot diagnose. There is now a workaround the reporter did not have: set `settings` at
-create time.
-
-Interacts with L15, which was withdrawn — authoring `settings` no longer turns URL encoding on.
+Nothing. The queue is empty as of 2026-08-04; M9, the last entry, closed with the decision recorded below.
 
 ---
 
 ## Closed since the last revision, for orientation
 
-Two entries stayed marked unfinished after the work that finished them, which made the queue read longer than
-it was:
+**M9 (second half)** — a created request carries no `settings`, so it silently follows redirects. This one was
+a product decision, not a coding task, and the decision taken on 2026-08-04 was: **behave exactly as Bruno
+behaves, per dialect.** The two dialects are not made to agree with each other, because upstream's own writers
+do not agree — each is mirrored on its own terms.
+
+- `.yml` writes the block unconditionally and fully resolved (`encodeUrl`, `timeout`, `followRedirects`,
+  `maxRedirects`), because `bruno-filestore`'s `stringifyHttpRequest.ts` does — so a request created here is
+  byte-comparable to one the app created, and the defaults are visible in the file rather than implied.
+- `.bru` writes the block only when the model carries one, because `jsonToBru.js` is a passthrough — 248 of the
+  275 `.bru` files in upstream's own test collection carry no settings block at all.
+- The runtime default moved from 10 hops to Bruno's 5, with a negative value replaced by 5, matching
+  `bruno-cli/src/runner/run-single-request.js`. Upstream's third rule — zero the cap when redirects are not
+  followed — was already expressed by the `followRedirects &&` guard on the follow loop.
+
+This does not undo the incident that opened the entry: a reset flow lost its `Set-Cookie` because the 302 was
+followed, and Bruno follows it too. What is different now is that the default is authorable (PR #100), visible
+in the `.yml` file, and capped where Bruno caps it. Choosing not to follow is the caller's call to make per
+request, not a default this server invents. Interacted with L15, which was withdrawn — authoring `settings` no
+longer turns URL encoding on.
+
+The entries below stayed marked unfinished after the work that finished them, which made the queue read longer
+than it was:
+
 
 - **M3** — collection- and folder-level settings ignored. Root files are read now, and the leftover (root
   scripts declared but not run) closed with L12. The phrase "not applied to requests yet" survives only in a
