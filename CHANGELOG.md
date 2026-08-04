@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A drift gate: everything we write is read back by Bruno's own reader.** Our
+  tests assert our bytes against our own expectations, which cannot catch the one
+  failure that actually costs users — a field written under a key Bruno does not
+  read. That file parses, round-trips through our parser, and reaches the runner
+  empty; it has happened twice. `@usebruno/filestore`, the package Bruno's app
+  and CLI parse with, is a devDependency now, and one test hands it our output
+  for every body mode, auth, header, query param, assertion and post-response
+  variable in both dialects, asserting the values land where upstream's model
+  puts them. Nothing here runs at runtime.
+
+  A weekly job re-runs that test against the published `filestore` rather than
+  the locked one, so a dialect change upstream shows up as a failing scheduled
+  build instead of a user's bug report. It gates no pull request.
+
+- **`res` is callable: Bruno's query language works in scripts and assertions.**
+  `res("data.pets..name")` descends to every `name` in the tree, `[0]` indexes and
+  `[?]` filters or maps with a callback — the syntax Bruno's docs use, and the only
+  way it can reach a declared assertion, since a deep descent is not valid
+  JavaScript on its own and a left-hand side must be one expression. Previously
+  `res(...)` threw `res is not a function`, so every such path had to be written
+  out by hand as loops in a script.
+
+  The implementation is `@usebruno/query`, Bruno's own package, and it is not
+  imported into the sandbox — a host function placed in a V8 context is a route
+  out of it. Its source is compiled inside the context instead, so the function
+  the script calls belongs to the sandbox's realm. A test asserts the published
+  bundle still requires nothing and generates no code from strings, which is the
+  property that makes this safe; another asserts the response kept every accessor
+  and property it had before it became callable.
+
 ### Fixed
 
 - **A variable built out of other variables resolves, as it does under `bru run`.**
@@ -32,26 +64,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that member inside an authored value, because Bruno resolves against a plain
   object. It reaches nothing outside the variable set — `{{process.env.HOME}}`
   and `{{global}}` stay literal.
-
-### Added
-
-- **`res` is callable: Bruno's query language works in scripts and assertions.**
-  `res("data.pets..name")` descends to every `name` in the tree, `[0]` indexes and
-  `[?]` filters or maps with a callback — the syntax Bruno's docs use, and the only
-  way it can reach a declared assertion, since a deep descent is not valid
-  JavaScript on its own and a left-hand side must be one expression. Previously
-  `res(...)` threw `res is not a function`, so every such path had to be written
-  out by hand as loops in a script.
-
-  The implementation is `@usebruno/query`, Bruno's own package, and it is not
-  imported into the sandbox — a host function placed in a V8 context is a route
-  out of it. Its source is compiled inside the context instead, so the function
-  the script calls belongs to the sandbox's realm. A test asserts the published
-  bundle still requires nothing and generates no code from strings, which is the
-  property that makes this safe; another asserts the response kept every accessor
-  and property it had before it became callable.
-
-### Fixed
 
 - **The graphql envelope matches Bruno's bytes.** `variables` is now always on
   the wire: Bruno reads the block as `... || '{}'`, so a request that stores none,
