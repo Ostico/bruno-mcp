@@ -341,6 +341,8 @@ The tools take variables as a flat object (`{"baseUrl": "..."}`) and write that 
 
 Precedence, lowest first: environment file → run `variables` → a request's own `vars` → `bru.setVar` during the run. This matches Bruno's `--env-var` behaviour.
 
+A variable may be built out of others: `base_url: "https://{{host}}/{{stage}}"` resolves the way it does under `bru run`, using Bruno's own `interpolate`. One exception, deliberate: a value **captured from a response** — by `bru.setVar` or a post-response `vars` block — is inserted as text and never scanned again, so a response echoing `key={{api_key}}` cannot make the next request send your key.
+
 **Secrets:** neither Bruno format stores a secret's *value* — only its name. So pass secrets as run `variables`, which stay in memory and are never written to a file.
 
 An environment name is a name, not a path. Anything containing a separator is refused.

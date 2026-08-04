@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A variable built out of other variables resolves, as it does under `bru run`.**
+  An environment variable holding `https://{{host}}/{{stage}}` used to reach the
+  wire with the inner placeholders still in it: substitution was a single pass, so
+  an inserted value was never scanned again. Bruno's own `interpolate` — from
+  `@usebruno/common`, now a dependency — does that pass for authored values, so
+  environment, collection, folder and request variables nest the way upstream's
+  do, to any depth.
+
+  **One divergence, on purpose.** A value *captured from a response* — by
+  `bru.setVar` or a post-response `vars` block — is inserted verbatim, once, and
+  never scanned. A response echoing `key={{api_key}}` therefore sends that text
+  rather than the key. The single pass was a template-injection mitigation to
+  begin with; keeping it for the one tier the collection does not control is what
+  makes recursive expansion safe everywhere else. Provenance, not syntax, decides
+  which rule applies: authored values expand against each other first, and
+  captured values are substituted into them last, so nothing a response
+  contributed is ever re-read.
+
+  A quirk inherited from upstream, pinned by a test rather than papered over: a
+  placeholder naming an `Object.prototype` member (`{{constructor}}`) resolves to
+  that member inside an authored value, because Bruno resolves against a plain
+  object. It reaches nothing outside the variable set — `{{process.env.HOME}}`
+  and `{{global}}` stay literal.
+
 ### Added
 
 - **`res` is callable: Bruno's query language works in scripts and assertions.**
