@@ -7,7 +7,7 @@ An MCP server that lets an AI agent create, read, edit and **run** Bruno API col
 
 **Your agent already knows HTTP. It does not know your API, and it does not know Bruno's file format.** So it guesses. It writes a `.bru` file from memory, the run fails, it rewrites the file, the run fails differently, and twenty minutes later you have a passing request and no idea which of the six edits mattered. You paid for every one of those turns, and none of that work is on disk in a form your CI or your team's Bruno GUI can use.
 
-The usual escape is curl. Agents are not bad at curl — the problem is that a shell command holds no state. A login, a token, a created resource, a follow-up call that needs the ID from the last response: each of those is a new command, and the glue between them lives only in the agent's context, where it dies at the end of the session. Twelve endpoints tested by curl leave you with twelve strings in a transcript. Twelve endpoints in a collection leave you with a suite.
+The usual escape is curl. Agents are not bad at curl — the problem is that a shell command holds no state. A login, a token, a created resource, a follow-up call that needs the ID from the last response: each of those is a new command, and the glue between them lives only in the agent's context, when the session ends, all is lost. Twenty endpoints tested by curl leave you with twenty strings in a transcript and no artifact your CI or your teammates can run. Twenty endpoints in a collection leave you with a suite.
 
 ## I asked my agent about it
 
