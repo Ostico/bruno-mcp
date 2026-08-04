@@ -343,6 +343,8 @@ Precedence, lowest first: environment file → run `variables` → a request's o
 
 A variable may be built out of others: `base_url: "https://{{host}}/{{stage}}"` resolves the way it does under `bru run`, using Bruno's own `interpolate`. One exception, deliberate: a value **captured from a response** — by `bru.setVar` or a post-response `vars` block — is inserted as text and never scanned again, so a response echoing `key={{api_key}}` cannot make the next request send your key.
 
+**Generators.** `{{$guid}}`, `{{$timestamp}}`, `{{$randomEmail}}` and the rest of Bruno's ~120 dynamic variables work in urls, headers, query params, bodies and auth. They are not variables: nothing declares them, each occurrence produces its own value, and none is reported as unresolved. A keyword no generator answers to — `{{$gid}}` — is left as written and named in the warnings, so a typo still surfaces. In a JSON body or a GraphQL variables block the generated value is escaped, so a generator that emits a newline (`{{$randomLoremParagraphs}}`) leaves the document parseable.
+
 **Secrets:** neither Bruno format stores a secret's *value* — only its name. So pass secrets as run `variables`, which stay in memory and are never written to a file.
 
 An environment name is a name, not a path. Anything containing a separator is refused.

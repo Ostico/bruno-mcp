@@ -390,7 +390,10 @@ export async function buildFetchOptions(
     // value happens to contain `//` keeps it. Upstream strips at the same point,
     // in prepare-request, which runs before interpolate-vars.
     const source = body.type === 'json' ? stripJsonComments(body.data) : body.data;
-    options.body = substitute(source, vars);
+    // A JSON body is a document, not free text: a generator that produces a
+    // newline or a quote has to be escaped on the way in, or the body the author
+    // wrote stops parsing. Other modes take the generated value as-is.
+    options.body = substitute(source, vars, { escapeJSONStrings: body.type === 'json' });
     if (body.type === 'json') {
       // Checked after substitution, because that is the text the server sees, and
       // only when every placeholder resolved: an unresolved `{{id}}` is invalid

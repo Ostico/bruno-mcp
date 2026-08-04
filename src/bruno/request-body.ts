@@ -80,7 +80,13 @@ export function buildGraphqlBody(
   // variable value containing `//` is left alone. Falsy stands in as `{}` first,
   // the way upstream's `|| '{}'` does, so an author who left the block empty sends
   // an empty object rather than being told their variables do not parse.
-  const substituted = substitute(stripJsonComments(stored ? stored : '{}'), vars);
+  // Escaped for JSON, because the next line parses this text: a generator that
+  // produces a newline would otherwise fail the parse and refuse the request.
+  // The query above is not escaped — it is a string in an envelope this function
+  // stringifies itself, so escaping there would reach the server doubled.
+  const substituted = substitute(stripJsonComments(stored ? stored : '{}'), vars, {
+    escapeJSONStrings: true,
+  });
   // A `body:graphql:vars` block is stored as text and has to reach the server as
   // real JSON. Upstream parses it and throws `Failed to parse GraphQL variables`
   // when it cannot, and that is the better failure: the request never leaves,
