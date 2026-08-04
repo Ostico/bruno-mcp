@@ -111,6 +111,13 @@ export function bruFileToYamlRequest(bru: BruFile): YamlRequest {
     body = { type: 'form-urlencoded', data: bru.body.formUrlEncoded };
   } else if (bru.body?.graphql) {
     body = { type: 'graphql', data: bru.body.graphql };
+  } else if (bru.body && bru.body.type !== 'none') {
+    // A type the http block declared with no content block behind it — `body:
+    // graphql` and no `body:graphql`. Last in the chain so it can never claim a
+    // body one of the branches above knows how to fill. Carried because upstream
+    // carries it: the mode comes off the http block whatever the content blocks
+    // hold, and a graphql request with nothing stored still sends an envelope.
+    body = { type: bru.body.type };
   }
   // `file` bodies are deliberately not handled. @usebruno/lang 0.36.0 has no
   // `body:file` block, so such a block parses as generic name/value pairs and

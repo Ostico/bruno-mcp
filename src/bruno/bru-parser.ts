@@ -118,6 +118,21 @@ export function parseBruRequest(content: string): BruFile {
   }
 
   let body: BruBody | undefined;
+  // A declared type with no content block still declares a type. Upstream keeps
+  // the two apart — `request.body = get(json, 'body', {})` then
+  // `request.body.mode = get(json, 'http.body', 'none')` (`bruno-cli/src/utils/bru.js:121-122`)
+  // — so a file saying `body: graphql` with no `body:graphql` block runs as a
+  // graphql request with nothing stored, and sends the envelope `{"variables":{}}`.
+  // Reading the type only when a content block exists dropped that: the request
+  // went out with no body and no content type, and a rewrite lost the `body:` line
+  // from the http block along with it.
+  // `http.body` itself is left as the file spelled it. The normalization below
+  // happens only where a content block is present, because that is where the
+  // spelling has to agree with the key the content was found under; a bare
+  // declaration is carried back out in Bruno's own vocabulary.
+  if (http.body !== undefined) {
+    body = { type: normalizeBodyType(http.body) };
+  }
   if (json.body && Object.keys(json.body).length > 0) {
     const multipart = (json.body as Record<string, unknown>).multipartForm;
     if (Array.isArray(multipart)) {

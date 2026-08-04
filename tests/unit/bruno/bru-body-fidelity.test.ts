@@ -191,6 +191,8 @@ describe('the graphql file we write is executable', () => {
     expect(run.summary.failed).toBe(0);
 
     const sent = String(mockFetch.mock.calls[0]?.[1]?.body ?? '');
-    expect(JSON.parse(sent)).toEqual({ query: '{ hero { name } }' });
+    // `variables` with nothing in it, not an absent key: upstream reads the block
+    // as `... || '{}'`, so every graphql envelope carries one.
+    expect(JSON.parse(sent)).toEqual({ query: '{ hero { name } }', variables: {} });
   });
 });

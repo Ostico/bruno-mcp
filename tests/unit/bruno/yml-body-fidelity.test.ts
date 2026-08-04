@@ -156,7 +156,7 @@ describe('graphql is sent as an envelope, whichever shape it was stored in', () 
     const raw = await write({ type: 'graphql', content: '{ me { id } }' });
 
     const sent = await send(parseYamlRequest(raw));
-    expect(JSON.parse(String(sent.body))).toEqual({ query: '{ me { id } }' });
+    expect(JSON.parse(String(sent.body))).toEqual({ query: '{ me { id } }', variables: {} });
     expect(sent.contentType).toBe('application/json');
   });
 
