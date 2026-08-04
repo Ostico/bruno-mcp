@@ -5,6 +5,36 @@
 
 An MCP server that lets an AI agent create, read, edit and **run** Bruno API collections — no Bruno GUI, no Bruno CLI.
 
+**Your agent already knows HTTP. It does not know your API, and it does not know Bruno's file format.** So it guesses. It writes a `.bru` file from memory, the run fails, it rewrites the file, the run fails differently, and twenty minutes later you have a passing request and no idea which of the six edits mattered. You paid for every one of those turns, and none of that work is on disk in a form your CI or your team's Bruno GUI can use.
+
+The usual escape is curl. Agents are not bad at curl — the problem is that a shell command holds no state. A login, a token, a created resource, a follow-up call that needs the ID from the last response: each of those is a new command, and the glue between them lives only in the agent's context, when the session ends, all is lost. Twenty endpoints tested by curl leave you with twenty strings in a transcript and no artifact your CI or your teammates can run. Twenty endpoints in a collection leave you with a suite.
+
+## I asked my agent about it
+
+I asked the agent that helps me to maintain this server to explain how its experience with Bruno had been *without* the MCP server, and whether it could simply have tested all my APIs with curls instead. This is what it told me:
+
+> Curl, yes — for one call. Not for a suite. Nothing carries between calls, so I re-derive the auth, re-escape the body, and re-read every response to decide whether it passed. Do that across forty endpoints and most of what I spend goes on rediscovery, not testing.
+>
+> Writing the collection files myself was worse, and not in the way you would expect. From memory I get the shape of a `.bru` file right and the details wrong — and Bruno never complains. It reads the keys it recognises and ignores the rest. A single-line `tags: smoke` looks tagged and means *untagged* to the runner. Write a tags list the obvious way and it lands on disk one character per line. This server once wrote `.yml` variables and assertions under top-level keys Bruno has never read: the files looked complete, the runner saw an empty request. Its own unit tests passed, because they mocked the serializer and asserted the broken bytes.
+>
+> The format also moves. Bruno relocated variables into `runtime` and added a second dialect. My weights are older than that. This server imports `@usebruno/lang`, Bruno's own grammar package, and tracks its version — so the bytes come from Bruno's source rather than from what I happen to remember.
+>
+> And every rewrite deletes what the writer does not model. If I edit these files free-hand, I regenerate the whole file from my head, and any feature I did not know about is silently gone. That is the failure mode you never see, because the run still passes — it just tests nothing.
+
+## What the server does instead
+
+- **The agent stops guessing the format** — it calls a tool, the server writes the bytes, using Bruno's own grammar package
+- **Edits are partial merges** — `modify_request` touches the fields you passed and leaves the rest of the file alone
+- **It can read before it writes** — `read_request` returns structured JSON, the same shape for both formats
+- **It runs the requests itself** — vars, auth, assertions, dependency ordering, no `bru` binary needed
+- **No silent loss** — a field this server cannot model yet is filed and listed, not dropped quietly into your repo
+
+## The contract
+
+Run behaviour matches `bru run`. Where it does not, that is a defect with a number, and the open list ships in the repo (`docs/bruno-mcp-defect-report.md`) rather than in an issue tracker you have to go find.
+
+One collection, three consumers: your agent, your CI, and your team's Bruno GUI.
+
 Both Bruno formats work and the server detects which one you have: `.yml` (opencollection) and `.bru` (legacy).
 
 Requires **Node.js >= 22**. CI tests 22.x and 24.x.
