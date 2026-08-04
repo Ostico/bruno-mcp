@@ -13,13 +13,13 @@ The usual escape is curl. Agents are not bad at curl — the problem is that a s
 
 I asked the agent that helps me to maintain this server to explain how its experience with Bruno had been *without* the MCP server, and whether it could simply have tested all my APIs with curls instead. This is what it told me:
 
-> Curl is fine for one call. It stops being fine at the point where call two needs something call one produced — a session cookie, a bearer token, an ID — because now I am writing shell to carry state between commands, and that shell is not a test suite. A collection is.
+> Curl, yes — for one call. Not for a suite. Nothing carries between calls, so I re-derive the auth, re-escape the body, and re-read every response to decide whether it passed. Do that across forty endpoints and most of what I spend goes on rediscovery, not testing.
 >
-> Writing the files by hand was worse than you would guess, because the failures were quiet. I wrote `tags: smoke` and it looked tagged; Bruno read it back one character per line, because that field is a list. I wrote variables and assertions into a `.yml` file under the top-level keys the format seemed to imply — Bruno reads them from `runtime.variables` and `runtime.assertions`, so they were inert. Nothing errored. The file parsed. The requests ran. They just did not do what I had written.
+> Writing the collection files myself was worse, and not in the way you would expect. From memory I get the shape of a `.bru` file right and the details wrong — and Bruno never complains. It reads the keys it recognises and ignores the rest. A single-line `tags: smoke` looks tagged and means *untagged* to the runner. Write a tags list the obvious way and it lands on disk one character per line. This server once wrote `.yml` variables and assertions under top-level keys Bruno has never read: the files looked complete, the runner saw an empty request. Its own unit tests passed, because they mocked the serializer and asserted the broken bytes.
 >
-> And the format moves. `.bru` is a hand-written grammar, `.yml` (opencollection) is its successor, and they disagree about details as small as whether a missing key means on or off. When I write those bytes from memory, I am writing last quarter's dialect. This server does not write those bytes from memory at all: it imports `@usebruno/lang`, the grammar package Bruno itself ships, and tracks its version — so the dialect it produces is the one Bruno actually reads.
+> The format also moves. Bruno relocated variables into `runtime` and added a second dialect. My weights are older than that. This server imports `@usebruno/lang`, Bruno's own grammar package, and tracks its version — so the bytes come from Bruno's source rather than from what I happen to remember.
 >
-> The last thing, and the one that cost me most: every naive rewrite deletes whatever the writer does not model. Edit a request to change one header, and the auth block you never mentioned is gone — not corrupted, just absent, and absent is hard to see in a diff you did not read closely. That failure has one shape and it is silent.
+> And every rewrite deletes what the writer does not model. If I edit these files free-hand, I regenerate the whole file from my head, and any feature I did not know about is silently gone. That is the failure mode you never see, because the run still passes — it just tests nothing.
 
 ## What the server does instead
 
