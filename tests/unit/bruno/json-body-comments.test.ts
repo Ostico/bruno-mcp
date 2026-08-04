@@ -165,6 +165,22 @@ describe('a json body that is not json is named in a warning', () => {
     expect(malformedWarning(warnings)).toBeUndefined();
   });
 
+  it('says nothing about an empty body, which is a choice rather than a mistake', async () => {
+    // Empty is not valid JSON, but a request authored with no body text is a
+    // request deliberately sending nothing, and upstream sends it. Warning here
+    // would fire on every one of them.
+    const { body, warnings } = await send(bodyYml('json', ''));
+
+    expect(body).toBe('');
+    expect(malformedWarning(warnings)).toBeUndefined();
+  });
+
+  it('says nothing about a body that is only whitespace', async () => {
+    const { warnings } = await send(bodyYml('json', '  \n  '));
+
+    expect(malformedWarning(warnings)).toBeUndefined();
+  });
+
   it('stays quiet when a variable did not resolve', async () => {
     // An unresolved `{{id}}` makes the text invalid JSON by definition, and the
     // unresolved variable already has a warning of its own. Two warnings for one

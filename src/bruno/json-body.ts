@@ -31,18 +31,14 @@ import {
  * removal produces; keeping the length means a syntax error's offset still points
  * at the same character of the text the author wrote.
  *
- * Returns the input untouched when scanning throws. Upstream wraps its call the
- * same way and for the same reason: a payload this cannot read is a payload to
- * hand over as it was found, so the server states the problem rather than this
- * code guessing at it.
+ * Not wrapped in a try/catch, where upstream's call is. `decomment` runs a
+ * JavaScript parser, which throws on text that is not JavaScript; this is a
+ * scanner, and text it cannot classify comes back as it was — a lone `/`, an
+ * unterminated string, two hundred thousand open braces all return rather than
+ * throw. Catching here would be catching nothing.
  */
 export function stripJsonComments(text: string): string {
-  if (text === '') return text;
-  try {
-    return stripComments(text);
-  } catch {
-    return text;
-  }
+  return stripComments(text);
 }
 
 /**
