@@ -5,6 +5,21 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **A graphql body with no query is refused when authored, and warned about when
+  run.** `create_request` and `modify_request` now reject a graphql body whose
+  query is empty — variables on their own, or nothing at all — in both formats.
+  Such a request wrote successfully before and then could only fail at the
+  server. A run still sends a queryless body rather than refusing, because
+  upstream reads `body.graphql.query` with no check and does the same, so
+  diverging would make a collection behave differently here than under
+  `bru run`; the run result now carries a warning naming the request instead.
+  The check runs after variable substitution, so a `{{query}}` that resolves to
+  nothing is caught too.
+
 ## [2.0.0] - 2026-08-02
 
 > **Major, and it had to be.** The public API lost three exports after `1.2.3`

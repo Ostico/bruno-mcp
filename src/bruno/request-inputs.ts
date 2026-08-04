@@ -173,7 +173,29 @@ export function toFormUrlEncodedEntries(
  * Create and modify both call this. They previously built the body inline and
  * identically, which is how the same defect came to exist twice.
  */
+/**
+ * Refuse a graphql body that carries no query text.
+ *
+ * The opposite of how the run path treats the same state, and deliberately so.
+ * Sending an empty query matches upstream and earns a server rejection that a
+ * caller can read; *writing* one produces a file that reports success and can
+ * only ever fail, with the reason sitting in a block the caller did not think
+ * they were authoring. `variables` without a query is the case that reached
+ * disk: the writer filled the query in as `''` and said nothing.
+ *
+ * Whitespace counts as absent. A query of spaces is not a query, and treating
+ * it as one only moves the failure to the server.
+ */
+export function assertGraphqlBodyHasQuery(source: NonNullable<CreateRequestInput['body']>): void {
+  if (source.type !== 'graphql' || (source.content ?? '').trim() !== '') return;
+  throw new Error(
+    'A graphql body needs a query. Pass the query text as `content`. Variables on their own ' +
+      'write a request that sends `{"query":""}` and can only fail at the server.',
+  );
+}
+
 export function toYamlBody(source: NonNullable<CreateRequestInput['body']>): YamlBody {
+  assertGraphqlBodyHasQuery(source);
   if (isMultipartBodyType(source.type) && source.formData) {
     return { type: 'multipart-form', data: toMultipartData(source.formData) };
   }
@@ -221,6 +243,7 @@ export function toYamlBody(source: NonNullable<CreateRequestInput['body']>): Yam
  * them.
  */
 export function toBruBody(source: NonNullable<CreateRequestInput['body']>): BruBody {
+  assertGraphqlBodyHasQuery(source);
   const body: BruBody = {
     type: source.type,
     content: source.content,
