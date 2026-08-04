@@ -25,15 +25,36 @@ export type TrackUnresolved = (template: string) => void;
  * query text on the wire with no envelope around it, which every graphql server
  * rejects. So the graphql check has to come first, and it has to handle both.
  */
+/**
+ * Said once per request whose graphql body resolves to no query.
+ *
+ * Warned about rather than refused: upstream reads `body.graphql.query` with no
+ * fallback and no check, so it sends a queryless body too, and refusing here
+ * would make a collection behave differently under this tool than under
+ * `bru run`. The server's rejection is the correct outcome — it just does not
+ * say which of the requests was incomplete, which is what this supplies.
+ */
+export const EMPTY_GRAPHQL_QUERY_WARNING =
+  'This graphql body has no query, so `{"query":""}` is what goes on the wire and the server ' +
+  'will reject it. Sent rather than refused because Bruno sends a queryless body too.';
+
 export function buildGraphqlBody(
   data: BruGraphql | string,
   vars: Map<string, string>,
   trackUnresolved: TrackUnresolved,
+  warn?: (message: string) => void,
 ): string {
   const graphql: BruGraphql = typeof data === 'string' ? { query: data } : data;
   trackUnresolved(graphql.query);
+  const query = substitute(graphql.query, vars);
+  // Checked after substitution, not before: a `{{q}}` that resolves to nothing
+  // puts an empty query on the wire exactly like an absent one, and it is the
+  // case most likely to be a surprise rather than a typo.
+  if (query.trim() === '') {
+    warn?.(EMPTY_GRAPHQL_QUERY_WARNING);
+  }
   const envelope: { query: string; variables?: unknown } = {
-    query: substitute(graphql.query, vars),
+    query,
   };
   if (graphql.variables !== undefined) {
     trackUnresolved(graphql.variables);

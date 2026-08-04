@@ -369,7 +369,9 @@ export async function buildFetchOptions(
     // Ahead of the plain-string branch on purpose: a graphql query this tool
     // wrote is stored as bare text, and the string branch would claim it and
     // send it with no JSON envelope around it.
-    options.body = buildGraphqlBody(body.data as BruGraphql | string, vars, trackUnresolved);
+    options.body = buildGraphqlBody(body.data as BruGraphql | string, vars, trackUnresolved, (m) =>
+      bodyWarnings.push(m),
+    );
     setDefaultContentType(headers, 'application/json');
   } else if (typeof body?.data === 'string') {
     trackUnresolved(body.data);

@@ -5,7 +5,7 @@
 before acting**, files move.
 
 Everything filed here between 2026-07-29 and 2026-08-02 — six High, eleven Medium, twenty Low — is closed
-except the three below. The closed entries carried a great deal of investigation detail; that text lives in git
+except the two below. The closed entries carried a great deal of investigation detail; that text lives in git
 history (`git log -p -- docs/bruno-mcp-defect-report.md`; the last full version is at `main@903533d`) rather
 than in this file, so the register stays a queue instead of an archive.
 
@@ -66,11 +66,6 @@ The real fix is to model `tags` on both sides: parse the comma-separated string 
 back. That also removes the exclusion. Small, but it is a model change needing its own round-trip fixtures,
 and `.yml` needs the same field for parity. Worth reporting upstream.
 
-### L9 — a graphql body with no query falls back to `''`. SUSPECTED
-
-The premise was never verified. Decide whether an empty query should be an error rather than an empty string
-sent to the server.
-
 ---
 
 ## Closed since the last revision, for orientation
@@ -83,6 +78,14 @@ it was:
   `script-merge.ts` comment describing the old behaviour.
 - **M6** — `get_collection_stats` withholds every environment value. Resolved by M5: `read_environment`
   returns values, and stats deliberately lists names only. That split is documented in the README.
+- **L9** — a graphql body with no query. The premise held: an empty or absent query reached the wire as
+  `{"query":""}` by four routes, including a `{{placeholder}}` resolving to nothing. Split by layer, because
+  the two ends have opposite obligations. The run path warns and still sends: upstream reads
+  `body.graphql.query` with no check, so refusing would make a collection behave differently here than under
+  `bru run`, and the server's rejection is the honest answer — it just does not say which request was
+  incomplete, which the warning now does. The author path refuses: writing a request that cannot run and
+  reporting success is the shape a caller cannot diagnose, and no parity argument covers it because Bruno's
+  own GUI cannot produce it.
 
 The 2.0.0 release (PR #121) closed the execution-model findings — M2, M10, L13, L14 — and the review of that
 work closed six more found in the implementation itself. See CHANGELOG.md.
