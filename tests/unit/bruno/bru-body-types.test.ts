@@ -173,18 +173,23 @@ describe('graphql bodies reach the wire correctly', () => {
     expect(sent.variables).toEqual({ id: 7 });
   });
 
-  it('passes a malformed vars block through as a string rather than dropping it', async () => {
-    // Better a server-side error the user can see than a variables block that
-    // vanished silently on the way out.
+  it('fails the request by name when the vars block is not json', async () => {
+    // This used to send the raw text, on the reasoning that a server-side error
+    // beats a silently dropped variables block. Both are worse than what upstream
+    // does: it throws `Failed to parse GraphQL variables`
+    // (`run-single-request.js:362-367`), the request never leaves, and the message
+    // names the block. Sending the text produced `"variables": "not-json"` — a
+    // string where an object belongs — and a server complaint about a field the
+    // author never wrote.
     const src = bru(
       'graphql',
       'body:graphql {\n  query { a }\n}\n\nbody:graphql:vars {\n  not-json\n}',
     );
     const yaml = bruFileToYamlRequest(parseBruRequest(src));
-    const { options } = await buildFetchOptions(yaml, new Map());
 
-    const sent = JSON.parse(await bodyText(options)) as { variables?: unknown };
-    expect(sent.variables).toBe('not-json');
+    await expect(buildFetchOptions(yaml, new Map())).rejects.toThrow(
+      /Failed to parse GraphQL variables/,
+    );
   });
 
   it('keeps the JSON envelope valid when a substituted value contains a quote', async () => {

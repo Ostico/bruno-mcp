@@ -10,6 +10,7 @@
  */
 
 import { substitute } from './env-loader.js';
+import { stripJsonComments } from './json-body.js';
 import type { BruGraphql, FormUrlEncodedPart } from './types.js';
 
 /** Records every `{{name}}` in a template that no variable resolves. */
@@ -58,14 +59,21 @@ export function buildGraphqlBody(
   };
   if (graphql.variables !== undefined) {
     trackUnresolved(graphql.variables);
-    const substituted = substitute(graphql.variables, vars);
-    // A `body:graphql:vars` block is stored as text. Send it as real JSON when
-    // it parses, and as the raw string when it does not, so a malformed vars
-    // block surfaces as a server-side error rather than being dropped here.
+    // Comments out before substitution, matching where upstream strips them, so a
+    // variable value containing `//` is left alone.
+    const substituted = substitute(stripJsonComments(graphql.variables), vars);
+    // A `body:graphql:vars` block is stored as text and has to reach the server as
+    // real JSON. Upstream parses it and throws `Failed to parse GraphQL variables`
+    // when it cannot, and that is the better failure: the request never leaves,
+    // and the message names the block. Sending the raw text instead — which this
+    // used to do — produces `"variables": "{ oops }"`, a string where an object
+    // belongs, and a server error about a field the author did not write.
     try {
       envelope.variables = JSON.parse(substituted) as unknown;
-    } catch {
-      envelope.variables = substituted;
+    } catch (error) {
+      throw new Error(
+        `Failed to parse GraphQL variables: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
   return JSON.stringify(envelope);
