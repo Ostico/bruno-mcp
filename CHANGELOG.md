@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Comments in a JSON body are removed before it is sent.** Bruno's editor lets
+  a JSON body carry `//` and `/* */` comments the way `tsconfig.json` does, and
+  Bruno strips them on its way to the wire. This server did not, so an annotated
+  body was rejected by the server on a collection that runs clean under
+  `bru run`. Both payloads Bruno strips are handled: the JSON body and a graphql
+  request's `variables` block. Removal happens before variable substitution, as
+  it does upstream, so a variable whose value contains `//` keeps it — and a
+  `//` inside a string value was never a comment to begin with.
+
+  A graphql `variables` block that does not parse now fails the request by name,
+  with `Failed to parse GraphQL variables`, matching Bruno. It was previously
+  sent as a raw string, which produced a server-side error that named nothing.
+
+  New dependency: `jsonc-parser` (MIT, no dependencies of its own).
+
 - **`tags` survives a rewrite, in both formats.** A request's runner tags are
   modelled now as what Bruno says they are — a list of strings, or absent — and
   written only when the list has something in it. `.bru` dropped every tags list
@@ -34,6 +49,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bru run`; the run result now carries a warning naming the request instead.
   The check runs after variable substitution, so a `{{query}}` that resolves to
   nothing is caught too.
+
+- **A JSON body that is not valid JSON is named in a run warning.** The body is
+  still sent, because Bruno sends an unparseable body too, but the warning says
+  which request and where the syntax breaks instead of leaving a bare `400` to
+  be interpreted. Checked after comment removal and after variable
+  substitution — that is the text the server sees — and suppressed when a
+  variable did not resolve, since an unresolved `{{id}}` is invalid JSON by
+  definition and already has a warning of its own.
 
 ## [2.0.0] - 2026-08-02
 

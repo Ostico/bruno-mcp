@@ -1,11 +1,11 @@
 # bruno-mcp defect register
 
 **Status:** living document. The single list of known **open** defects.
-**Last verified:** 2026-08-03, against `main@903533d` (v2.0.0). Line numbers were read there — **re-verify
+**Last verified:** 2026-08-04, against `main@565655f` (v2.0.0). Line numbers were read there — **re-verify
 before acting**, files move.
 
 Everything filed here between 2026-07-29 and 2026-08-02 — six High, eleven Medium, twenty Low — is closed
-except the two below. The closed entries carried a great deal of investigation detail; that text lives in git
+except the one below. The closed entries carried a great deal of investigation detail; that text lives in git
 history (`git log -p -- docs/bruno-mcp-defect-report.md`; the last full version is at `main@903533d`) rather
 than in this file, so the register stays a queue instead of an archive.
 
@@ -15,38 +15,6 @@ history. `blind-discoverability-test.md` is methodology, not findings.
 ---
 
 ## Open
-
-### L17 — comments in a JSON body or in graphql variables are sent verbatim. CONFIRMED. *(Filed 2026-08-04)*
-
-Upstream strips comments from two payloads before sending them, with `decomment`:
-
-- `prepare-request.js:369` — the whole JSON body, wrapped in a try/catch that falls back to the raw text.
-- `prepare-request.js:447` — the graphql `variables` block, before it is parsed.
-
-Nothing in `src/` does. A JSON body written as `{ "a": 1 // note` + newline + `}` reaches the wire with the
-comment still in it and the server rejects it, where the same collection under `bru run` succeeds. Bruno's
-editor permits those comments, so this is a body a caller can arrive with rather than one they have to
-construct.
-
-The graphql half has a second effect. Upstream decomments `variables` and then *throws*
-`Failed to parse GraphQL variables` when the result does not parse (`run-single-request.js:362-367`); we send
-the unparsed text as a string instead, which a test currently pins as deliberate. Both halves have to move
-together: adding the named failure without decommenting first would start failing a commented-but-valid
-variables block that is sent today.
-
-**Open on one question, which is a maintainer call rather than a coding one.** Exact parity means the
-`decomment` package, which pulls `esprima` — two runtime dependencies added to a tree that currently has six,
-for a function only ever called on JSON. The alternative is a small string-aware scanner of our own, which
-needs no dependency and is testable against the cases that matter (`//` inside a string value, a `http://`
-URL), but is a reimplementation rather than the same code upstream runs.
-
-Not to be confused with what upstream's `escapeJSONStrings` does. That option escapes only the output of mock
-data functions (`{{$randomFullName}}`), not ordinary variable values — `prepareMockObj` in
-`bruno-common/src/interpolate/index.ts:48-62` passes plain values through untouched. We have no mock functions,
-so there is no escaping gap: a variable value holding a quote corrupts a JSON body upstream exactly as it does
-here.
-
----
 
 ### M9 (second half) — a created request carries no `settings`, so it silently follows redirects
 
@@ -99,6 +67,23 @@ it was:
   purpose — upstream's runner reads any non-list as no tags, so promoting it would change which requests a
   `--tags` run selects. That also corrects what this entry used to propose: splitting on commas would have
   invented a format appearing nowhere upstream. `read_request` reports tags; authoring them is not part of it.
+- **L17** — comments in a JSON body or in graphql variables were sent verbatim, so a body Bruno's editor
+  permits reached the wire with the annotations in it and the server rejected a collection that runs clean
+  under `bru run`. Both payloads upstream decomments are stripped now (`prepare-request.js:369` and `:447`),
+  at the same point in the sequence: before variable substitution, so a variable value containing `//` keeps
+  it. The graphql half also gained upstream's named failure — `Failed to parse GraphQL variables`
+  (`run-single-request.js:362-367`) — replacing a raw-string fallback a test had pinned as deliberate; that
+  pin was only safe to remove once comments came out first, or a commented-but-valid block sent today would
+  have started failing. The dependency question this entry was open on was settled in favour of
+  `jsonc-parser`: MIT, no dependencies of its own, and no JavaScript parser, where upstream's `decomment`
+  reaches the same answer through `esprima`. Beyond parity, an unparseable JSON body is now named in a
+  warning instead of being diagnosed from a bare 400 — suppressed when a variable did not resolve, since that
+  already has a warning and is invalid JSON by definition.
+
+  Not to be confused with upstream's `escapeJSONStrings`, which is not a gap here. It escapes only the output
+  of mock data functions (`{{$randomFullName}}`), not ordinary variable values — `prepareMockObj` in
+  `bruno-common/src/interpolate/index.ts:48-62` passes plain values through untouched. We have no mock
+  functions, so a variable value holding a quote corrupts a JSON body upstream exactly as it does here.
 
 The 2.0.0 release (PR #121) closed the execution-model findings — M2, M10, L13, L14 — and the review of that
 work closed six more found in the implementation itself. See CHANGELOG.md.

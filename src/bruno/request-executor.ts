@@ -49,6 +49,7 @@ import {
   setDefaultContentType,
 } from './request-headers.js';
 import { buildGraphqlBody, buildFormUrlEncodedBody } from './request-body.js';
+import { stripJsonComments, describeJsonSyntaxError } from './json-body.js';
 import type {
   YamlRequest,
   MockRequestData,
@@ -375,7 +376,23 @@ export async function buildFetchOptions(
     setDefaultContentType(headers, 'application/json');
   } else if (typeof body?.data === 'string') {
     trackUnresolved(body.data);
-    options.body = substitute(body.data, vars);
+    // Comments come out before substitution, not after, so that a variable whose
+    // value happens to contain `//` keeps it. Upstream strips at the same point,
+    // in prepare-request, which runs before interpolate-vars.
+    const source = body.type === 'json' ? stripJsonComments(body.data) : body.data;
+    options.body = substitute(source, vars);
+    if (body.type === 'json') {
+      // Checked after substitution, because that is the text the server sees, and
+      // only when every placeholder resolved: an unresolved `{{id}}` is invalid
+      // JSON by definition and already has a warning of its own to answer for it.
+      const malformed = unresolvedNames.size === 0 ? describeJsonSyntaxError(options.body) : undefined;
+      if (malformed !== undefined) {
+        bodyWarnings.push(
+          `this json body is not valid json (${malformed}), so the server will reject it. ` +
+            'Sent rather than refused because Bruno sends an unparseable body too.',
+        );
+      }
+    }
     const implied = BODY_TYPE_CONTENT_TYPES[body.type];
     if (implied !== undefined) setDefaultContentType(headers, implied);
   } else if (body?.type === 'form-urlencoded' && Array.isArray(body.data)) {
