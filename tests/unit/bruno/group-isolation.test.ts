@@ -150,7 +150,14 @@ describe('reporting order is deterministic even when execution is not', () => {
     expect(result.groups[0]!.results.map((r) => r.name)).toEqual(['slow', 'writer']);
     // Proves the ordering above was not free: the slow request really did
     // outlast the group reported after it.
-    expect(result.groups[0]!.results[0]!.duration_ms).toBeGreaterThanOrEqual(SLOW_MS);
+    // Compared against the other requests rather than against SLOW_MS itself: a
+    // 40 ms sleep is regularly measured as 39, and that one millisecond of clock
+    // granularity failed this test at random on CI. What the assertion is for is
+    // the gap between this request and the ones reported after it, which is two
+    // orders of magnitude wider than the rounding.
+    const slowDuration = result.groups[0]!.results[0]!.duration_ms;
+    expect(slowDuration).toBeGreaterThan(result.groups[0]!.results[1]!.duration_ms);
+    expect(slowDuration).toBeGreaterThan(result.groups[1]!.results[0]!.duration_ms);
   });
 });
 
