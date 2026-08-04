@@ -14,6 +14,7 @@ import {
 } from './sandbox-assert.js';
 import { SANDBOX_EXPECT_LIB } from './sandbox-expect-lib.js';
 import { SANDBOX_CLOCK_LIB, runScriptWithClock } from './sandbox-clock.js';
+import { sandboxQueryLib } from './sandbox-query.js';
 
 export type { TestResult, ScriptResult, PreRequestScriptResult } from './types.js';
 // Re-exported so importers that reach for these through the sandbox keep their
@@ -79,7 +80,18 @@ function __resultsJson() {
 }
 var __resData = JSON.parse(${JSON.stringify(resJson)});
 
-var res = Object.create(null);
+// Callable, as Bruno's response object is: res('data.pets..name') runs the
+// query language over the body. A path is a string argument because the syntax
+// it uses -- a deep descent, an index, a filter -- is not valid JavaScript on
+// its own, so it cannot appear bare on the left-hand side of an assertion.
+//
+// A function rather than the null-prototype object it replaces, which gives res
+// this realm's Function.prototype. That reaches nothing new: any function
+// literal in a user script already has it, and code generation from strings is
+// off, so its constructor cannot compile anything.
+var res = function (path, ...fns) {
+  return __bruno_query_get(__resData.body, path, ...fns);
+};
 res.getStatus = function() { return __resData.status; };
 res.getStatusText = function() { return __resData.statusText; };
 res.getHeaders = function() { return __resData.headers; };
@@ -666,6 +678,9 @@ export function runTestJob(
           SANDBOX_CLOCK_LIB +
           '\n' +
           SANDBOX_EXPECT_LIB +
+          '\n' +
+          // Before the setup script, whose res closes over it.
+          sandboxQueryLib() +
           '\n' +
           buildSandboxSetupScript(response) +
           '\n' +

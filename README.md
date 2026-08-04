@@ -297,6 +297,7 @@ Scripts run in a V8 context inside a forked process (see [Security](#security)).
 | `res.getSetCookies()` | Cookies the response set |
 | `res.getBody()` | Already parsed when the media type's subtype is `json` or ends `+json` |
 | `res.getResponseTime()` | ms |
+| `res(path, ...fns)` | Bruno's query language over the body: `res("data.pets..name")` descends to every `name`, `[0]` indexes, `[?]` filters or maps with a callback. Also valid as an assertion's left-hand side, where the syntax could not appear bare |
 | `bru.setVar(name, v)` `bru.getVar(name)` | Pass values to later requests as `{{name}}` |
 | `bru.sleep(ms)` | Also `setTimeout`/`setInterval` and their `clear*` |
 
