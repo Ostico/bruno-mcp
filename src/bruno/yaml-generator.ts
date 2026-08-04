@@ -204,6 +204,9 @@ export function generateYamlRequest(request: YamlRequest): string {
     info.type = request.info.type;
   }
   if (request.info.seq !== undefined) info.seq = request.info.seq;
+  // Only when there is something in it: upstream guards the same write with
+  // `item.tags?.length`, so an empty `tags: []` is a key no Bruno file has.
+  if (request.info.tags?.length) info.tags = request.info.tags;
   applyExtraKeys(info, request.info.extra, YAML_INFO_KEYS);
   doc.info = info;
 

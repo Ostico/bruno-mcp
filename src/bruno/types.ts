@@ -136,6 +136,16 @@ export interface BruMeta {
   type: 'http' | 'graphql';
   seq?: number;
   /**
+   * Tags the runner filters on, as a list of strings and never a bare string.
+   *
+   * Upstream normalizes with `Array.isArray(tags) ? tags : []` at both ends —
+   * `bruno-cli/src/utils/bru.js:80` and `bruno-filestore`'s `parseApp.ts:22` —
+   * so a single-line `tags: smoke` means no tags to Bruno, not one tag. Absent
+   * rather than empty when there are none, because upstream writes the key only
+   * for a non-empty list.
+   */
+  tags?: string[];
+  /**
    * Keys of the `meta` block this model does not name, carried so a
    * read-modify-write writes them back instead of deleting them.
    *
@@ -645,6 +655,8 @@ export interface YamlInfo {
   name: string;
   type?: 'http' | 'graphql' | 'folder';
   seq?: number;
+  /** Runner tags. Same list-or-nothing rule as `BruMeta.tags`. */
+  tags?: string[];
   /** Unmodelled `info` keys, carried through a write. See `extra-keys.ts`. */
   extra?: Record<string, unknown>;
 }

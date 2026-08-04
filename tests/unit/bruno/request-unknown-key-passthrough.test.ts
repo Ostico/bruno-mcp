@@ -3,8 +3,9 @@
  *
  * Both generators rebuild the file from the typed model instead of editing the
  * bytes, so a key the model has no field for was not ignored on a write — it was
- * deleted. `examples`, `info.tags`, a `description` on a header: all present in
- * Bruno's grammar, all gone the first time `modify_request` touched the file.
+ * deleted. `examples`, `info.description`, a `description` on a header: all
+ * present in Bruno's grammar, all gone the first time `modify_request` touched
+ * the file.
  * That makes an incomplete model a data-loss bug rather than a fidelity gap,
  * which is why the checks here are about keys nothing in this repo models.
  *
@@ -15,9 +16,10 @@
  * The two dialects are bounded differently, and the last group pins the bounds
  * rather than papering over them. On `.bru`, an unknown key inside a `settings`
  * block cannot be kept because upstream's reader discards it before this code
- * runs, and `tags` must not be kept because upstream's writer would corrupt it.
- * Both are asserted, so a grammar upgrade that fixes either one fails a test
- * here instead of going unnoticed.
+ * runs, and a single-line `tags: smoke` must not be kept because it is not a
+ * tags list — upstream reads any non-list as no tags, and its writer would spell
+ * the string one character per line. Both are asserted, so a grammar upgrade that
+ * fixes either one fails a test here instead of going unnoticed.
  */
 
 import { promises as fs } from 'fs';
@@ -329,11 +331,13 @@ settings {
     expect(out).toContain('reviewedBy: qa');
   });
 
-  it('does not carry tags, because upstream would emit it one character per line', () => {
-    // Upstream's reader hands back the raw string `'smoke'` while its writer
-    // treats the key as a list and iterates whatever it gets. Carrying it would
-    // replace today's silent drop with `tags: [ s m o k e ]` on disk, so the key
-    // is excluded on this dialect only. Modelling it properly is a separate fix.
+  it('does not carry a single-line tags value, which is not a tags list', () => {
+    // `tags` is modelled now, as a list — see meta-tags.ts and its tests. This
+    // fixture uses the single-line form on purpose: the grammar accepts it at the
+    // same key, upstream's own reader hands back the string `'smoke'`, and
+    // upstream's runner reads any non-list as no tags at all. So there is nothing
+    // here to carry, and handing the string to a writer that iterates whatever it
+    // gets would put `tags: [ s m o k e ]` on disk.
     const out = generateBruRequest(parseBruRequest(BRU_AUTHORED_BY_BRUNO));
     expect(out).not.toContain('tags:');
     expect(out).not.toMatch(/^\s+s$/m);

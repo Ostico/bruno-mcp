@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`tags` survives a rewrite, in both formats.** A request's runner tags are
+  modelled now as what Bruno says they are — a list of strings, or absent — and
+  written only when the list has something in it. `.bru` dropped every tags list
+  before, because the key had to be excluded to stop `@usebruno/lang` from
+  spelling a single-line value one character per line; `.yml` kept the bytes but
+  exposed nothing, so tags could not be read or written deliberately; and
+  converting `.bru` to `.yml` lost them outright. `read_request` reports tags now.
+
+  A single-line `tags: smoke` is still dropped rather than repaired. Bruno's own
+  runner reads any non-list value as no tags, so such a request is already
+  untagged to anything that runs it, and turning it into one real tag would
+  change which requests a `--tags` run selects.
+
 ### Changed
 
 - **A graphql body with no query is refused when authored, and warned about when
