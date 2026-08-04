@@ -1715,6 +1715,53 @@ http:
       expect(mockFetch.mock.calls[1][0]).toBe('https://api.example.com/new');
     });
 
+    // Bruno's runner defaults the cap to 5 and replaces a negative value with 5
+    // (`bruno-cli/src/runner/run-single-request.js`). The unset default is pinned
+    // by the endless-loop test further down; these two cover the authored values
+    // either side of it.
+    const REDIRECT_LOOP = (name: string, settings = '') => `
+info:
+  name: ${name}
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/hop"
+${settings}`;
+
+    const setupRedirectLoop = (name: string, settings = ''): void => {
+      setupFsReaddir([`${name}.yml`]);
+      setupFsReadFile({ [`${name}.yml`]: REDIRECT_LOOP(name, settings) });
+      setupFsStat(['/test-collection']);
+
+      mockFetch.mockResolvedValue({
+        status: 302,
+        statusText: 'Found',
+        headers: new Headers({ location: 'https://api.example.com/hop' }),
+        ok: false,
+        text: jest.fn().mockResolvedValue(''),
+      } as unknown as Response);
+      mockedValidateUrl.mockReturnValue({ valid: true });
+    };
+
+    it('treats a negative maxRedirects as 5, the way Bruno does', async () => {
+      setupRedirectLoop('Negative Cap', 'settings:\n  maxRedirects: -1\n');
+
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
+
+      expect(result.groups[0]!.results[0].error).toBe('Too many redirects (max 5)');
+      expect(mockFetch).toHaveBeenCalledTimes(6);
+    });
+
+    it('honors an authored maxRedirects below the default', async () => {
+      setupRedirectLoop('Two Hops', 'settings:\n  maxRedirects: 2\n');
+
+      const result = await RequestExecutor.executeCollection('/test-collection', { scriptRunner: TestRunner });
+
+      expect(result.groups[0]!.results[0].error).toBe('Too many redirects (max 2)');
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+    });
+
     it('strips credential headers when a redirect crosses origin', async () => {
       const AUTHED_REQUEST = `
 info:
@@ -1817,7 +1864,7 @@ http:
       expect(serialized).toContain('REDACTED');
     });
 
-    it('should return error after exceeding max redirects (10 hops)', async () => {
+    it('should return error after exceeding max redirects (5 hops)', async () => {
       const PUBLIC_REQUEST = `
 info:
   name: Loop Request
@@ -1841,7 +1888,7 @@ http:
         text: jest.fn().mockResolvedValue(''),
       } as unknown as Response;
 
-      // 11 calls: 1 original + 10 redirects (loop terminates at MAX_REDIRECTS)
+      // 6 calls: 1 original + 5 redirects (loop terminates at the default cap)
       mockFetch.mockResolvedValue(loopResponse);
 
       mockedValidateUrl.mockReturnValue({ valid: true });
@@ -1852,9 +1899,9 @@ http:
       expect(result.summary.failed).toBe(1);
       expect(result.groups[0]!.results[0].status).toBe(0);
       expect(result.groups[0]!.results[0].error).toContain('Too many redirects');
-      expect(result.groups[0]!.results[0].error).toContain('10');
-      // fetch called 11 times: 1 + 10 redirect follows (loop exits before 11th redirect fetch)
-      expect(mockFetch).toHaveBeenCalledTimes(11);
+      expect(result.groups[0]!.results[0].error).toContain('5');
+      // fetch called 6 times: 1 + 5 redirect follows (loop exits before the 6th)
+      expect(mockFetch).toHaveBeenCalledTimes(6);
     });
 
     it('does not follow redirects when settings.followRedirects is false', async () => {
