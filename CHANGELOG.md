@@ -61,6 +61,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A `file` body is actually sent.** A request whose body mode is `file` — a
+  binary upload, the mode Bruno's app writes when you pick a file — reached the
+  encoder, matched nothing, and went out with **no body at all** plus a warning
+  saying so. It now sends the file, following upstream's rules rather than
+  inventing new ones: only the first selected entry is sent, the entry's own
+  content type replaces `application/octet-stream` (and replaces an authored
+  `Content-Type` header too, which is what Bruno does), an entry naming no type
+  sends no `Content-Type`, and a read that fails costs the body rather than the
+  request. Paths stay confined to the trusted upload locations, as multipart file
+  parts already were, so a collection still cannot name `/etc/passwd`.
+
+- **A file body written to `.yml` is one Bruno will actually send.** The two
+  dialects default the `selected` flag in opposite directions: `@usebruno/lang`
+  reads a `.bru` entry as selected unless it carries `~`, while the `.yml` reader
+  is `selected: file.selected ?? false`. This server modelled both the `.bru` way
+  and wrote no flag for a selected entry, so a file body it wrote to `.yml` parsed
+  cleanly, kept its path, and then went out of Bruno with an empty body. The
+  `.yml` reader now reads an absent flag as not-selected, exactly as upstream
+  does, and the `.yml` writer always states the flag — as upstream's writer also
+  does. A new oracle test reads the result back with Bruno's own reader and
+  asserts it is selected, in both dialects.
+
 - **A variable built out of other variables resolves, as it does under `bru run`.**
   An environment variable holding `https://{{host}}/{{stage}}` used to reach the
   wire with the inner placeholders still in it: substitution was a single pass, so

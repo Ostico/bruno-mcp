@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
-import { basename, relative, resolve, isAbsolute } from 'node:path';
-import { homedir, tmpdir } from 'node:os';
+import { basename } from 'node:path';
 import { loadEnvironment, substitute, findUnresolvedPlaceholders } from './env-loader.js';
+import { confineUploadPath, resetUploadDirsCache } from './upload-path.js';
 import { forkingScriptRunner, type ScriptRunner } from './sandbox-host.js';
 import { wrapFetchResponse } from './response-wrapper.js';
 import { validateUrl, ssrfRemediation } from './url-validator.js';
@@ -48,8 +48,9 @@ import {
   appendHeader,
   BODY_TYPE_CONTENT_TYPES,
   setDefaultContentType,
+  replaceContentType,
 } from './request-headers.js';
-import { buildGraphqlBody, buildFormUrlEncodedBody } from './request-body.js';
+import { buildGraphqlBody, buildFormUrlEncodedBody, buildFileBody } from './request-body.js';
 import { stripJsonComments, describeJsonSyntaxError } from './json-body.js';
 import type {
   YamlRequest,
@@ -61,14 +62,17 @@ import type {
   TestResult,
   MultipartFormPart,
   FormUrlEncodedPart,
+  BruFilePart,
   BruGraphql,
 } from './types.js';
 
-// The .bru -> YamlRequest translation and the credential-redaction helpers moved
-// to their own modules when this file hit the repo-wide max-lines ceiling.
-// Re-exported because tests (and any future caller) import these names from here.
+// The .bru -> YamlRequest translation, the credential-redaction helpers and the
+// upload-path confinement moved to their own modules when this file hit the
+// repo-wide max-lines ceiling. Re-exported because tests (and any future caller)
+// import these names from here.
 export { bruFileToYamlRequest, bruAuthToYamlAuth };
 export { redactUrl, stripCredentialHeaders };
+export { resetUploadDirsCache };
 
 const DEFAULT_MAX_RESPONSE_BODY_BYTES = 10240;
 
@@ -86,81 +90,6 @@ function isMultipartBody(body: YamlRequest['http']['body']): boolean {
   );
 }
 
-let uploadDirsCache: string[] | null = null;
-
-/**
- * Extra upload directories the operator trusts, from BRUNO_UPLOAD_DIRS
- * (comma-separated absolute paths). Read once and cached.
- */
-function operatorUploadDirs(): string[] {
-  if (uploadDirsCache === null) {
-    uploadDirsCache = (process.env.BRUNO_UPLOAD_DIRS ?? '')
-      .split(',')
-      .map(s => s.trim())
-      .filter(Boolean)
-      .map(s => resolve(s));
-  }
-  return uploadDirsCache;
-}
-
-/** Reset the cached BRUNO_UPLOAD_DIRS. Exported for testing. */
-export function resetUploadDirsCache(): void {
-  uploadDirsCache = null;
-}
-
-/** True if `p` is within `root` (lexically; `root` itself does not count). */
-function isWithin(root: string, p: string): boolean {
-  const rel = relative(root, p);
-  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
-}
-
-/**
- * Resolve a multipart file-part path and confine it to a trusted upload
- * location.
- *
- * The path comes from the (untrusted) collection, so without confinement a
- * collection could name `/etc/passwd`, `~/.ssh/id_rsa`, an env file, etc. and
- * have its contents POSTed to any host — arbitrary file read + exfiltration
- *.
- *
- * The read is allowed only when the resolved path sits under one of: the
- * collection root, the user's home directory, the OS temp dir (and `/tmp`), or
- * an operator-configured `BRUNO_UPLOAD_DIRS` entry. On top of that, ANY path
- * component starting with `.` is refused — so even though home is allowed,
- * dotfiles and dot-directories (`~/.ssh`, `.aws`, `.env`, `.git`, …) are not
- * readable. Relative paths resolve against the collection root; a file part
- * with no known collection root is refused (no trusted base).
- */
-function confineUploadPath(filePath: string, collectionRoot: string | undefined): string {
-  if (!collectionRoot) {
-    throw new Error(
-      `Refusing to read multipart file part "${basename(filePath)}": no collection root to confine it to`,
-    );
-  }
-  const root = resolve(collectionRoot);
-  const resolved = resolve(root, filePath);
-
-  const allowedRoots = [root, resolve(homedir()), resolve(tmpdir()), resolve('/tmp'), ...operatorUploadDirs()];
-  // Match against the most specific (longest) allowed root, so the hidden-segment
-  // check runs only below that root — a collection legitimately nested under a
-  // hidden ancestor (e.g. ~/.config/bruno/coll) still works.
-  const matched = allowedRoots
-    .filter(r => isWithin(r, resolved))
-    .sort((a, b) => b.length - a.length)[0];
-  if (!matched) {
-    throw new Error(
-      `Refusing to read multipart file part outside the allowed upload directories: "${filePath}"`,
-    );
-  }
-
-  const belowRoot = relative(matched, resolved).split(/[\\/]+/);
-  if (belowRoot.some(seg => seg.startsWith('.'))) {
-    throw new Error(
-      `Refusing to read a hidden file or directory as a multipart file part: "${filePath}"`,
-    );
-  }
-  return resolved;
-}
 
 export async function buildFetchOptions(
   yaml: YamlRequest,
@@ -408,6 +337,24 @@ export async function buildFetchOptions(
     }
     const implied = BODY_TYPE_CONTENT_TYPES[body.type];
     if (implied !== undefined) setDefaultContentType(headers, implied);
+  } else if (body?.type === 'file' && Array.isArray(body.data)) {
+    // The octet-stream default goes on first and the selected entry's own type
+    // replaces it, because that is upstream's order: `prepare-request.js:399`
+    // defaults it, `:406` assigns over the top.
+    setDefaultContentType(headers, 'application/octet-stream');
+    const file = await buildFileBody(
+      body.data as BruFilePart[],
+      vars,
+      trackUnresolved,
+      collectionRoot,
+      m => bodyWarnings.push(m),
+    );
+    if (file.contentType !== undefined) replaceContentType(headers, file.contentType);
+    // Wrapped in a Blob rather than handed over as bytes: undici accepts either,
+    // but the Blob type is the one this codebase already uses for a multipart
+    // file part, and an untyped Blob adds no Content-Type of its own — so the
+    // header decided above is the header sent.
+    if (file.data !== undefined) options.body = new Blob([file.data]);
   } else if (body?.type === 'form-urlencoded' && Array.isArray(body.data)) {
     options.body = buildFormUrlEncodedBody(
       body.data as FormUrlEncodedPart[],

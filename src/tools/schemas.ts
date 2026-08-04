@@ -118,10 +118,12 @@ export const requestSettingsSchema = z.object({
   ),
 }).optional().describe(
   'Request-level settings: transport behaviour (timeouts, redirects, URL encoding), ' +
-  'not payload. Written only when supplied — a request authored without it carries no ' +
-  'settings block, matching what Bruno itself writes. On modify_request the fields are ' +
-  'merged individually over the existing block, so setting one does not clear the rest. ' +
-  'Note the encodeUrl field: creating a block at all changes the URL-encoding default.'
+  'not payload. What reaches the file depends on the dialect, because Bruno\'s own two ' +
+  'writers differ: a .yml request always carries a fully resolved settings block whether ' +
+  'or not you pass one, while a .bru request carries only what you supply. On ' +
+  'modify_request the fields are merged individually over the existing block, so setting ' +
+  'one does not clear the rest. Note the encodeUrl field: in .bru, creating a block at all ' +
+  'changes the URL-encoding default.'
 );
 
 /**
@@ -162,7 +164,10 @@ export const requestBodySchema = z.object({
   })).optional()
     .describe(
       'File body parts. `content` is the one-file shorthand; use this to set a content ' +
-      'type, deselect an entry, or send more than one.',
+      'type, deselect an entry, or send more than one. Only the first selected entry is ' +
+      'sent, which is what Bruno does; an entry defaults to selected, and the flag is ' +
+      'always written to the file, because a .yml entry without it is one Bruno sends no ' +
+      'body for.',
     ),
 }).optional();
 

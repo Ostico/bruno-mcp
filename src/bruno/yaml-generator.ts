@@ -13,6 +13,7 @@ import {
   type YamlBody,
   type YamlScript,
   type MultipartFormPart,
+  type BruFilePart,
 } from './types.js';
 import {
   assertionsToYaml,
@@ -129,9 +130,28 @@ function assertYamlScriptType(scriptType: string): asserts scriptType is YamlScr
  * The model marks a switched-off multipart part with `enabled: false`, matching
  * the .bru side. A .yml document spells it `disabled: true`, so translate on the
  * way out — otherwise a round-trip would rename the key.
+ *
+ * A `file` body is not a part list and is written the way upstream writes one:
+ * all three keys, every entry, `selected` included. That last one is not
+ * cosmetic. Upstream's `.yml` reader treats an absent `selected` as **false**, so
+ * a file body written without the key is one Bruno silently sends with no body at
+ * all — while the same model written to `.bru` would send the file, because there
+ * the default runs the other way. Writing the flag out keeps both dialects
+ * saying what they mean.
  */
 function serialiseBody(body: YamlBody): YamlBody | Record<string, unknown> {
   if (!Array.isArray(body.data)) return body;
+
+  if (body.type === 'file') {
+    return {
+      ...body,
+      data: (body.data as BruFilePart[]).map((part) => ({
+        filePath: part.filePath,
+        contentType: part.contentType ?? '',
+        selected: part.selected !== false,
+      })),
+    };
+  }
 
   return {
     ...body,

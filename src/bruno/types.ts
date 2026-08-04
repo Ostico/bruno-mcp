@@ -219,8 +219,11 @@ export interface MultipartFormPart {
 
 // A single `body:file` entry. `@usebruno/lang` returns `@file(path)` parts as
 // { filePath, contentType, selected } (name/value/enabled are stripped for file
-// parts), so this mirrors that shape. `selected` is only recorded when the part
-// is explicitly disabled; default stays selected/enabled.
+// parts), so this mirrors that shape. An absent `selected` means the entry is
+// sent — the `.bru` default — and each reader normalises its own dialect to that:
+// the `.bru` reader records the flag only when the `~` prefix disables it, while
+// the `.yml` reader sets it explicitly, since upstream reads an absent key there
+// as not-selected. Only the first selected entry goes on the wire.
 export interface BruFilePart {
   filePath: string;
   contentType?: string;

@@ -198,9 +198,15 @@ function parseBody(raw: unknown): YamlBody | undefined {
       const part = (entry ?? {}) as Record<string, unknown>;
       const item: BruFilePart = { filePath: String(part.filePath ?? '') };
       if (part.contentType !== undefined) item.contentType = String(part.contentType);
-      // Recorded only when false, matching how the .bru side models it: a part
-      // with no flag is one that will be sent.
-      if (part.selected === false) item.selected = false;
+      // `.yml` and `.bru` disagree about what an absent flag means, and each is
+      // read the way its own dialect reads it. Upstream's `.yml` reader is
+      // `selected: file.selected ?? false` (`yml/common/body.ts`), so an entry
+      // that does not say `selected: true` is one Bruno will not send — and its
+      // writer always emits the key, so only a hand-written file lands here
+      // without one. The `.bru` side is the opposite: `@usebruno/lang` sets
+      // `selected` from the `~` disabled prefix, so no prefix means selected,
+      // which is why the `.bru` reader records the flag only when false.
+      item.selected = part.selected === true;
       return item;
     });
   } else if (Array.isArray(obj.data)) {

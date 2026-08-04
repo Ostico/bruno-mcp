@@ -9,9 +9,11 @@
  * write.
  */
 
+import { readFile } from 'node:fs/promises';
 import { substitute } from './env-loader.js';
 import { stripJsonComments } from './json-body.js';
-import type { BruGraphql, FormUrlEncodedPart } from './types.js';
+import { confineUploadPath } from './upload-path.js';
+import type { BruFilePart, BruGraphql, FormUrlEncodedPart } from './types.js';
 
 /** Records every `{{name}}` in a template that no variable resolves. */
 export type TrackUnresolved = (template: string) => void;
@@ -101,6 +103,100 @@ export function buildGraphqlBody(
     );
   }
   return JSON.stringify(envelope);
+}
+
+/** What a `file`-mode body resolved to: the bytes, and what Content-Type to send. */
+export interface FileBodyResult {
+  /** Absent when nothing was sent — no selected entry, or a read that failed. */
+  data?: Uint8Array<ArrayBuffer>;
+  /**
+   * `undefined` leaves the `application/octet-stream` default alone, a string
+   * replaces it, and `null` means send no Content-Type at all.
+   */
+  contentType?: string | null;
+}
+
+/**
+ * Read the file a `file`-mode body names and say what to send it as.
+ *
+ * Upstream is `prepare-request.js:397-427`, and the rules there are less obvious
+ * than they look:
+ *
+ * - Only the **first selected** entry is sent. A file body can hold several, and
+ *   the others are stored history, not payload.
+ * - The selected entry's own `contentType` is assigned over the top of anything
+ *   already set, author-supplied headers included. An entry with no content type
+ *   assigns `undefined`, which is axios's way of sending none at all — so an
+ *   entry that names no type sends no Content-Type rather than falling back to
+ *   `application/octet-stream`.
+ * - A read that fails is logged and the request goes out **without a body**
+ *   rather than failing. Mirrored, with the log turned into a warning the caller
+ *   actually receives: a request that quietly sent nothing and came back 2xx is
+ *   the failure mode that makes an assertion pass for the wrong reason.
+ *
+ * What is deliberately not mirrored is where the file may live. Upstream reads
+ * any path a collection names; `confineUploadPath` restricts that to the trusted
+ * upload locations, and a refusal there is thrown rather than warned — it is a
+ * collection trying to read something it should not, not a missing file.
+ *
+ * Which entries count as selected is decided by the readers, per dialect: a
+ * `.bru` entry is selected unless it carries `~`, a `.yml` entry only when it
+ * says `selected: true`. Both arrive here as the same model, where the flag is
+ * absent or true for a selected entry and false for a skipped one.
+ */
+export async function buildFileBody(
+  parts: readonly BruFilePart[],
+  vars: Map<string, string>,
+  trackUnresolved: TrackUnresolved,
+  collectionRoot: string | undefined,
+  warn: (message: string) => void,
+): Promise<FileBodyResult> {
+  const selected = parts.find(part => part.selected !== false);
+  if (!selected) {
+    // Upstream still sets the octet-stream default in this case and sends no
+    // data, so the header is left to the caller's default and nothing is read.
+    warn(
+      'this file body has no selected file, so it goes on the wire with no body at all. ' +
+        'Sent rather than refused because Bruno sends it empty too.',
+    );
+    return {};
+  }
+  if (selected.contentType !== undefined) trackUnresolved(selected.contentType);
+  // Three states, not two. An entry with no `contentType` key at all is
+  // upstream's `undefined` assignment, which sends no Content-Type — that is
+  // mirrored as null. An entry whose content type is **blank** is not: upstream
+  // would put an empty Content-Type on the wire, but a blank value is what its
+  // own `.yml` writer produces for an entry that simply names no type
+  // (`contentType: file.contentType || ''`), so it is read as "none named" and
+  // the octet-stream default is left standing instead.
+  let contentType: string | null | undefined = null;
+  if (selected.contentType !== undefined) {
+    const named = substitute(selected.contentType, vars);
+    contentType = named.trim() === '' ? undefined : named;
+  }
+  trackUnresolved(selected.filePath);
+  const filePath = substitute(selected.filePath, vars);
+  // Caught before confinement: an empty path resolves to the collection root
+  // itself, and reading a directory raises EISDIR — a confusing way to report a
+  // file body that simply names nothing. Upstream's `if (filePath)` skips it too.
+  if (filePath.trim() === '') {
+    warn('this file body names no file, so it goes on the wire with no body at all.');
+    return { contentType };
+  }
+  const resolvedPath = confineUploadPath(filePath, collectionRoot, 'file body');
+  try {
+    // Copied out of the Buffer node hands back: a Buffer can be backed by a
+    // SharedArrayBuffer as far as the types are concerned, and `Blob` will not
+    // take one of those.
+    return { data: new Uint8Array(await readFile(resolvedPath)), contentType };
+  } catch (error) {
+    warn(
+      `the file body could not be read (${
+        error instanceof Error ? error.message : String(error)
+      }), so the request goes on the wire with no body at all.`,
+    );
+    return { contentType };
+  }
 }
 
 /** Encode form-urlencoded pairs, skipping the ones the author switched off. */
