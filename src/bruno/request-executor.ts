@@ -6,6 +6,7 @@ import { forkingScriptRunner, type ScriptRunner } from './sandbox-host.js';
 import { wrapFetchResponse } from './response-wrapper.js';
 import { validateUrl, ssrfRemediation } from './url-validator.js';
 import { VariableStore } from './variable-store.js';
+import { prepareVariables } from './variable-preparation.js';
 import { collectCapturedVariables } from './captured-variables.js';
 import {
   mergePreRequest,
@@ -536,7 +537,12 @@ async function executeSingleRequest(
   const baseVars = applyPreRequestVars(vars, yaml.vars);
 
   // Merge env + request vars with runtime vars (runtime takes precedence)
-  const effectiveVars = variableStore ? variableStore.merge(baseVars) : baseVars;
+  // Not baseVars as it stands when there is no store: authored values still have
+  // to be expanded against each other, which is what prepareVariables does with
+  // an empty runtime tier.
+  const effectiveVars = variableStore
+    ? variableStore.merge(baseVars)
+    : prepareVariables(baseVars, new Map());
 
   // Before the request is built, because the token becomes one of its headers.
   // Its own fetch, not the pinned dispatcher below: the token endpoint is a
@@ -924,7 +930,9 @@ async function executeSingleRequest(
         // read them via bru.getVar, and so a declared assertion's `{{var}}`
         // operand resolves against the same map the URL was built from.
         variables: Object.fromEntries(
-          variableStore ? variableStore.merge(baseVars) : baseVars,
+          variableStore
+            ? variableStore.merge(baseVars)
+            : prepareVariables(baseVars, new Map()),
         ),
         assertions,
         postResponseVars,

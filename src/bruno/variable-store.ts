@@ -1,3 +1,5 @@
+import { prepareVariables } from './variable-preparation.js';
+
 /**
  * Run-scoped variable store for cross-request variable propagation.
  *
@@ -32,16 +34,15 @@ export class VariableStore {
   }
 
   /**
-   * Merge environment variables with runtime variables.
-   * Runtime variables take precedence over environment variables.
+   * Merge authored variables with the runtime ones, resolving both.
+   * Runtime variables take precedence over authored variables.
    * Returns a new Map suitable for passing to substitute().
+   *
+   * The resolution rules — recursive expansion for authored values, one verbatim
+   * pass for runtime ones — are prepareVariables', which explains why.
    */
   merge(envVars: Map<string, string>): Map<string, string> {
-    const merged = new Map(envVars);
-    for (const [key, value] of this.vars) {
-      merged.set(key, value);
-    }
-    return merged;
+    return prepareVariables(envVars, this.vars);
   }
 
   clear(): void {
