@@ -85,5 +85,18 @@ it was:
   `bruno-common/src/interpolate/index.ts:48-62` passes plain values through untouched. We have no mock
   functions, so a variable value holding a quote corrupts a JSON body upstream exactly as it does here.
 
+- **Graphql envelope bytes** — found while reading `prepare-request.js` for L17, never reported. Upstream
+  builds the envelope as `{ query: get(request,'body.graphql.query'), variables: decomment(get(request,
+  'body.graphql.variables') || '{}') }` (`prepare-request.js:443-447`). Two differences, both fixed. `variables`
+  is always on the wire there, because the `||` substitutes `{}` for anything falsy — we omitted the key, and
+  an authored-but-empty block was reported as unparseable rather than sent as `{}`. And a `.bru` file declaring
+  `body: graphql` with no `body:graphql` block sends `{"variables":{}}` with `application/json`, because
+  `bruno-cli/src/utils/bru.js:121-122` takes the mode off the http block whatever the content blocks hold; we
+  read the type only when a content block existed, so that request went out with no body and no content type,
+  and a rewrite dropped the `body:` line from the http block as well. The `.yml` dialect never reaches that
+  case — its reader flattens an absent query to `''` first (`parseGraphQLRequest.ts:33`), so a `.yml` graphql
+  request always carries a `query` key. That asymmetry is Bruno's, and is now reproduced rather than smoothed
+  over.
+
 The 2.0.0 release (PR #121) closed the execution-model findings — M2, M10, L13, L14 — and the review of that
 work closed six more found in the implementation itself. See CHANGELOG.md.

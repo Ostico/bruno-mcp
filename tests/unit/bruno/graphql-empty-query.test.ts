@@ -38,7 +38,10 @@ describe('the run path sends an empty query and says so', () => {
     // Unchanged on the wire: upstream sends a queryless body rather than
     // refusing, and diverging would make a collection behave differently here
     // than under `bru run`.
-    expect(body).toBe('{"query":""}');
+    // `variables:{}` rides along because upstream's envelope always carries one
+    // (`... || '{}'`), and the empty query stays as it was authored: refusing here
+    // would make a collection behave differently than under `bru run`.
+    expect(body).toBe('{"query":"","variables":{}}');
     expect(emptyQueryWarning(warnings)).toContain('no query');
   });
 
@@ -64,14 +67,14 @@ describe('the run path sends an empty query and says so', () => {
       new Map([['q', '']]),
     );
 
-    expect(body).toBe('{"query":""}');
+    expect(body).toBe('{"query":"","variables":{}}');
     expect(emptyQueryWarning(warnings)).toBeDefined();
   });
 
   it('stays quiet for a request that has a query', async () => {
     const { body, warnings } = await send(graphqlYml('  body:\n    query: "query { a }"\n'));
 
-    expect(body).toBe('{"query":"query { a }"}');
+    expect(body).toBe('{"query":"query { a }","variables":{}}');
     expect(emptyQueryWarning(warnings)).toBeUndefined();
   });
 });

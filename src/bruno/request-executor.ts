@@ -366,12 +366,21 @@ export async function buildFetchOptions(
         delete headers[key];
       }
     }
-  } else if (body?.type === 'graphql' && body.data != null && !Array.isArray(body.data)) {
+  } else if (body?.type === 'graphql' && !Array.isArray(body.data)) {
     // Ahead of the plain-string branch on purpose: a graphql query this tool
     // wrote is stored as bare text, and the string branch would claim it and
     // send it with no JSON envelope around it.
-    options.body = buildGraphqlBody(body.data as BruGraphql | string, vars, trackUnresolved, (m) =>
-      bodyWarnings.push(m),
+    //
+    // Entered even with nothing stored, because upstream sends an envelope
+    // regardless: `prepare-request.js:443` builds one from a `body.graphql` that
+    // may be absent, which is what a `.bru` file declaring `body: graphql` with
+    // no `body:graphql` block parses to. Skipping the branch there would send no
+    // body at all and no `application/json` either.
+    options.body = buildGraphqlBody(
+      body.data as BruGraphql | string | undefined,
+      vars,
+      trackUnresolved,
+      (m) => bodyWarnings.push(m),
     );
     setDefaultContentType(headers, 'application/json');
   } else if (typeof body?.data === 'string') {

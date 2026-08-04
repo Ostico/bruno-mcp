@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The graphql envelope matches Bruno's bytes.** `variables` is now always on
+  the wire: Bruno reads the block as `... || '{}'`, so a request that stores none,
+  or stores an empty one, sends `"variables":{}` rather than omitting the key or
+  reporting that the variables do not parse. And a `.bru` file declaring
+  `body: graphql` with no `body:graphql` block is a graphql request with nothing
+  stored — it now sends `{"variables":{}}` with `application/json`, where before
+  it went out with no body and no content type, and a rewrite dropped the `body:`
+  line from its http block. A `.yml` graphql request still always carries a
+  `query` key and a `.bru` one without a block still has none; that asymmetry is
+  Bruno's own, and is reproduced rather than smoothed over.
+
 - **Comments in a JSON body are removed before it is sent.** Bruno's editor lets
   a JSON body carry `//` and `/* */` comments the way `tsconfig.json` does, and
   Bruno strips them on its way to the wire. This server did not, so an annotated
