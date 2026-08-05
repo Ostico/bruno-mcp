@@ -27,11 +27,11 @@ I asked the agent that helps me to maintain this server to explain how its exper
 - **Edits are partial merges** — `modify_request` touches the fields you passed and leaves the rest of the file alone
 - **It can read before it writes** — `read_request` returns structured JSON, the same shape for both formats
 - **It runs the requests itself** — vars, auth, assertions, dependency ordering, no `bru` binary needed
-- **No silent loss** — a field this server cannot model yet is filed and listed, not dropped quietly into your repo
+- **No silent loss** — a field this server cannot model yet is carried through the round-trip untouched, and anything it cannot put on the wire is named in a run warning rather than dropped quietly into your repo
 
 ## The contract
 
-Run behaviour matches `bru run`. Where it does not, that is a defect with a number, and the open list ships in the repo (`docs/bruno-mcp-defect-report.md`) rather than in an issue tracker you have to go find.
+Run behaviour matches `bru run`. Every divergence found so far is closed, and what keeps them closed is a test rather than a promise: the runtime rules are ported from Bruno's own runner, and everything this server writes is read back with Bruno's own reader — per dialect, since `.bru` and `.yml` legitimately disagree — so our bytes cannot quietly stop being Bruno's bytes. Find one anyway and it is a bug worth an issue.
 
 One collection, three consumers: your agent, your CI, and your team's Bruno GUI.
 
