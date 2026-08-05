@@ -92,10 +92,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Ostico/bruno-mcp.git"
+    "url": "git+https://github.com/Ostico/bruno-mcp-studio.git"
   },
   "bugs": {
-    "url": "https://github.com/Ostico/bruno-mcp/issues"
+    "url": "https://github.com/Ostico/bruno-mcp-studio/issues"
   },
-  "homepage": "https://github.com/Ostico/bruno-mcp#readme"
+  "homepage": "https://github.com/Ostico/bruno-mcp-studio#readme"
 }
