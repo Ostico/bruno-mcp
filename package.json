@@ -1,7 +1,7 @@
 {
   "name": "@ostico/bruno-mcp",
   "version": "2.1.0",
-  "description": "MCP server for generating Bruno API testing files",
+  "description": "MCP server for Bruno: an AI agent can author, read and run .bru and .yml (opencollection) API collections — no bru CLI needed, byte-parity with Bruno's own reader.",
   "main": "dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -33,13 +33,27 @@
   },
   "keywords": [
     "bruno",
-    "api-testing",
+    "bruno-mcp",
     "mcp",
+    "mcp-server",
     "model-context-protocol",
+    "api-testing",
+    "api-client",
+    "bru",
     "bru-files",
-    "testing"
+    "opencollection",
+    "http-client",
+    "rest-client",
+    "test-automation",
+    "integration-testing",
+    "claude",
+    "claude-code",
+    "cursor",
+    "ai-agent",
+    "llm-tools",
+    "postman-alternative"
   ],
-  "author": "Your Name",
+  "author": "Ostico (https://github.com/Ostico)",
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

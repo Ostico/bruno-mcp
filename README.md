@@ -58,23 +58,22 @@ Requires **Node.js >= 22**. CI tests 22.x and 24.x.
 
 ## Which Bruno MCP server should I use?
 
-There are several, they do genuinely different jobs, and the honest answer is not always this one. Checked against each project's own README, August 2026.
+There are several, they do genuinely different jobs, and the honest answer is not always this one. Every row below was read out of that project's own README or source, August 2026.
 
-| | This server | [hungthai1401/bruno-mcp](https://github.com/hungthai1401/bruno-mcp) | [jcr82/bruno-mcp-server](https://github.com/jcr82/bruno-mcp-server) | [djkz/bruno-api-mcp](https://github.com/djkz/bruno-api-mcp) | [macarthy/bruno-mcp](https://github.com/macarthy/bruno-mcp) |
-|---|---|---|---|---|---|
-| **What it is** | Authors, reads and runs collections | Runs a collection | Runs and inspects collections | Turns each request into its own MCP tool | Generates collection files |
-| **Needs the `bru` binary** | No — own request pipeline | Yes | Yes | No | n/a |
-| **Creates / edits requests** | Yes, partial merges | No | No | No | Yes |
-| **Reads requests back** | Yes, structured JSON | No | Yes | Exposes them as tools | No |
-| **Runs them** | Yes | Yes | Yes | Yes, one at a time | No |
-| **`.yml` opencollection** | Yes | `.bru` only | `.bru` only | Not documented | Not documented |
-| **JUnit / HTML reports** | No — JSON results only | No | **Yes** | No | n/a |
-| **Tools** | 18 | Run only | 9 | One per request | Authoring only |
-| **Maintained** | Yes | Yes | Yes | Yes | Inactive since Jul 2025 |
+| Server | What it is | Writes | Reads | Runs | `.bru` / `.yml` | Needs `bru` | Tools |
+|---|---|---|---|---|---|---|---|
+| **this one** | Authors, reads and runs collections | Create + partial-merge edit | Structured JSON | Yes, own pipeline | both | no | 18 |
+| [`@dmpv/bruno-mcp`](https://github.com/TheDMPV/bruno-mcp) | Read-only index and search over a collection | no | Ranked search, sanitised contracts, stored examples | no | both | no | 8 |
+| [hungthai1401/bruno-mcp](https://github.com/hungthai1401/bruno-mcp) | Runs a collection | no | no | Yes, via the CLI | `.bru` | **yes** | run only |
+| [jcr82/bruno-mcp-server](https://github.com/jcr82/bruno-mcp-server) | Runs and inspects collections, with report files | no | Yes | Yes, via the CLI | `.bru` | **yes** | 9 |
+| [djkz/bruno-api-mcp](https://github.com/djkz/bruno-api-mcp) | Turns each request into its own MCP tool | no | Exposes them as tools | One at a time | `.bru` | no | one per request |
+| [macarthy/bruno-mcp](https://github.com/macarthy/bruno-mcp) | Generates collection files — the project this forked from, inactive since Jul 2025 | Create only | no | no | `.bru` | n/a | 8 |
 
-Pick one of the others if: you want **JUnit XML or HTML report files** for a CI dashboard (jcr82), you already have the `bru` CLI in your image and only ever need "run this collection" (hungthai1401), or you want an agent to **call your API through your existing requests** as if each were a native tool, without touching the collection (djkz).
+Pick one of the others if: you want **JUnit XML or HTML report files** for a CI dashboard (jcr82 — this server returns JSON results only); you want an agent to **understand a large existing collection** without any risk of writing to it, and search it by intent (dmpv, first published July 2026 and at 0.x — new, and interesting); you already have the `bru` CLI in your image and only ever need "run this collection" (hungthai1401); or you want the agent to **call your API through your existing requests** as if each were a native tool (djkz).
 
-Pick this one if: you want the agent to **write** the collection and not just consume it, you are on `.yml` opencollection format, you need the run to happen **without installing the Bruno CLI**, or you care that what lands in your repo is byte-comparable to what the Bruno app writes.
+Pick this one if: you want the agent to **write** the collection and not just read or run it, you are on `.yml` opencollection format, you need the run to happen **without installing the Bruno CLI**, or you care that what lands in your repo is byte-comparable to what the Bruno app writes.
+
+On the fork parent specifically, since this project owes it its existence: [macarthy/bruno-mcp](https://github.com/macarthy/bruno-mcp) registers eight tools — `create_collection`, `create_request`, `create_environment`, `create_crud_requests`, `create_test_suite`, `add_test_script`, `list_collections`, `get_collection_stats`. It writes `.bru` files and does not read a request back, run anything, or expose an edit tool; a `updateRequest` helper exists in its `src/bruno/request.ts` but no MCP tool reaches it.
 
 ## Features
 
