@@ -152,6 +152,24 @@ describe.each(DIALECTS)('what we write, read by Bruno ($format)', (dialect) => {
     );
   });
 
+  it('carries a file body upstream will actually send', async () => {
+    const model = await upstreamModel(dialect, 'filebody', {
+      method: 'POST',
+      url: 'https://api.example.com/upload',
+      body: { type: 'file', files: [{ filePath: 'report.pdf', contentType: 'application/pdf' }] },
+    });
+
+    expect(model.request.body.mode).toBe('file');
+    expect(model.request.body.file).toEqual(
+      expect.arrayContaining([expect.objectContaining({ filePath: 'report.pdf' })]),
+    );
+    // The assertion the fix exists for. Upstream's runner sends the first entry
+    // whose `selected` is truthy and nothing otherwise, and its `.yml` reader
+    // treats an absent key as false — so a file body written without the flag
+    // parses cleanly, keeps its path, and goes on the wire with no body at all.
+    expect(model.request.body.file[0].selected).toBe(true);
+  });
+
   it('carries auth as a mode plus the matching config block', async () => {
     const model = await upstreamModel(dialect, 'auth', {
       method: 'GET',

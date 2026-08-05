@@ -130,3 +130,26 @@ export function setDefaultContentType(headers: Record<string, string>, value: st
   if (existing !== undefined) return;
   headers['Content-Type'] = value;
 }
+
+/**
+ * Replace Content-Type outright, overriding whatever the author set, or remove
+ * it when `value` is null.
+ *
+ * The opposite of `setDefaultContentType` and needed for exactly one case: a
+ * `file`-mode body, where upstream assigns the selected entry's own content type
+ * over the top of anything already there (`prepare-request.js:406`). An entry
+ * carrying no content type assigns `undefined` there, which is axios's way of
+ * sending no Content-Type at all, so null is how that arrives here.
+ *
+ * Every existing spelling is dropped first, because adding `content-type` beside
+ * an authored `Content-Type` would send the header twice.
+ */
+export function replaceContentType(
+  headers: Record<string, string>,
+  value: string | null,
+): void {
+  for (const name of Object.keys(headers)) {
+    if (name.toLowerCase() === 'content-type') delete headers[name];
+  }
+  if (value !== null) headers['Content-Type'] = value;
+}

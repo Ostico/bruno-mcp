@@ -290,6 +290,12 @@ export function toBruBody(source: NonNullable<CreateRequestInput['body']>): BruB
  * the shorthand cannot express a content type or a deselected entry. An entry
  * with no path is dropped rather than written, since Bruno reads a file body by
  * its `filePath` and an entry without one names nothing.
+ *
+ * `selected` is left to the writers rather than filled in here. The two dialects
+ * default it in opposite directions — a `.yml` entry with no flag is one Bruno
+ * will not send, a `.bru` entry with no flag is one it will — so each writer
+ * states it in its own terms, and a caller that says nothing gets a selected
+ * entry either way.
  */
 function toFilePartList(source: NonNullable<CreateRequestInput['body']>): BruFilePart[] {
   if (source.files && source.files.length > 0) {

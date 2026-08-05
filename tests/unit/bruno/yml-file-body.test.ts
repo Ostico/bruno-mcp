@@ -58,14 +58,25 @@ describe('a .yml file body', () => {
       ]);
     });
 
-    it('records a deselected entry and leaves a selected one unmarked', () => {
-      // Enabled-only, the way the .bru side models it: absence means it will be
-      // sent, so only `false` is worth carrying.
+    it('records the selected flag on every entry', () => {
+      // Explicit in both directions here, unlike the `.bru` side. Upstream's
+      // `.yml` reader is `selected: file.selected ?? false`, so an absent key
+      // means not-selected — the opposite of the `.bru` default — and a model
+      // that dropped a `true` would be read back as a file Bruno never sends.
       const parsed = parseYamlRequest(BRUNO_AUTHORED);
       const [first, second] = parsed.http.body?.data as BruFilePart[];
 
-      expect(first.selected).toBeUndefined();
+      expect(first.selected).toBe(true);
       expect(second.selected).toBe(false);
+    });
+
+    it('reads an entry with no selected key as not selected, as Bruno does', () => {
+      const noFlag = BRUNO_AUTHORED.replace('        selected: true\n', '');
+
+      const parsed = parseYamlRequest(noFlag);
+      const [first] = parsed.http.body?.data as BruFilePart[];
+
+      expect(first.selected).toBe(false);
     });
 
     it('does not read the entries as multipart parts', () => {
@@ -107,6 +118,24 @@ describe('a .yml file body', () => {
       const written = generateYamlRequest(parseYamlRequest(BRUNO_AUTHORED));
 
       expect(written).toContain('selected: false');
+    });
+
+    it('writes the selected flag even for an entry whose model omits it', () => {
+      // The shape a `.bru` file produces, where an unprefixed entry carries no
+      // flag at all. Written to `.yml` without one, Bruno would read it back as
+      // not-selected and send the request with no body — so the writer says it.
+      const written = generateYamlRequest({
+        info: { name: 'upload', type: 'http', seq: 1 },
+        http: {
+          method: 'POST',
+          url: 'https://example.com/upload',
+          body: { type: 'file', data: [{ filePath: 'report.pdf' }] },
+        },
+      });
+
+      expect(written).toContain('selected: true');
+      // Upstream writes all three keys for every entry, empty string included.
+      expect(written).toContain('contentType: ""');
     });
   });
 
