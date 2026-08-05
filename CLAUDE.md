@@ -54,3 +54,38 @@ Otherwise, use your native memory capabilities (MEMORY.md, auto memory, etc.).
 ---
 <!-- Do not edit above this line -- managed by signet-first plugin -->
 <!-- Add your project-specific rules below -->
+
+## Build
+
+Use **npm**, never yarn. `yarn.lock` is stale, and a yarn-installed tree makes `tsc` run out
+of memory. CI is `npm ci`.
+
+## Cutting a release
+
+The tag is what publishes. `.github/workflows/release.yml` fires on a pushed `v*` tag and
+runs `npm publish` with provenance plus a GitHub release; nothing about merging a PR
+publishes anything. So a release is a normal PR followed by one tag push.
+
+1. **Branch** `chore/release-X.Y.Z` off `origin/main`.
+2. **Roll the changelog.** `## [Unreleased]` becomes `## [X.Y.Z] - YYYY-MM-DD`. Do not
+   reorder or rewrite the entries — they were written when the work landed, by whoever
+   understood it.
+3. **Bump the version in three places**, which must agree: `package.json`,
+   `package-lock.json` (both via `npm version X.Y.Z --no-git-tag-version`), and the literal
+   in `src/server.ts` that the server reports to its client on connect.
+   `tests/unit/meta/version-matches-package.test.ts` fails if the last one is forgotten.
+4. **Verify before pushing**: `npx tsc --noEmit`, `npx eslint src/ --ext .ts`, `npx jest`,
+   `npm run build`. Check the suite *count*, not just "0 failures" — a broken build drops
+   whole suites silently.
+5. **Open the PR** as a draft, with a body that says what ships and that merging publishes
+   nothing. Wait for all five CI gates (test 22.x, test 24.x, build, Test adequacy gate,
+   Test-Guard). The user merges it; never merge or force-push.
+6. **Tag main after the merge**, annotated and pointing at the merge commit — that is where
+   `v2.0.0` and `v2.1.0` point:
+   `git tag -a vX.Y.Z <merge-sha> -F <message-file>` then `git push origin vX.Y.Z`.
+   The message is release notes, not a subject line.
+7. **Watch the run**: `gh run list --workflow=release.yml`. It is only released when that
+   run is green — npm publish and the GitHub release both happen there.
+
+Tagging publishes to a public registry and cannot be undone, so do it only when the user
+asks for that release by name.
