@@ -1,7 +1,7 @@
 # bruno-mcp defect register
 
 **Status:** living document. The single list of known **open** defects.
-**Last verified:** 2026-08-04, against `main@5c69c4e` (v2.0.0). Line numbers were read there — **re-verify
+**Last verified:** 2026-08-05, against `main@511ddfd` (v2.1.0). Line numbers were read there — **re-verify
 before acting**, files move.
 
 Everything filed here between 2026-07-29 and 2026-08-02 — six High, eleven Medium, twenty Low — is now closed.

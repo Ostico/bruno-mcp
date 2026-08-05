@@ -34,8 +34,9 @@ export class BrunoMcpServer {
       {
         name: 'bruno-mcp',
         // Reported to the client on connect. Hand-maintained, and it had drifted
-        // two releases behind package.json before anyone looked.
-        version: '2.0.0'
+        // two releases behind package.json before anyone looked — which is what
+        // `tests/unit/meta/version-matches-package.test.ts` now guards.
+        version: '2.1.0'
       },
       {
         instructions: 'When the user asks to test, call, or run API endpoints, use this server first. ' +
