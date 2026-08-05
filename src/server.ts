@@ -101,7 +101,7 @@ export class BrunoMcpServer {
     await this.server.connect(transport);
 
     console.error('Bruno MCP Server started successfully! 🚀');
-    console.error('Ready to generate Bruno API testing files.');
+    console.error('Ready to author, read and run Bruno collections.');
   }
 
   /**

@@ -5,6 +5,31 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`npx @ostico/bruno-mcp` works.** The package declares a `bin`, so a client
+  config is now `command: "npx"`, `args: ["-y", "@ostico/bruno-mcp"]` with nothing
+  installed and no absolute path to keep in sync. `npm install` puts a `bruno-mcp`
+  executable in `node_modules/.bin/` for a pinned setup.
+
+### Fixed
+
+- **The server never started when it was invoked through a symlink or a path
+  containing a space.** Its main-module check compared `import.meta.url` against
+  `` `file://${process.argv[1]}` ``, and neither case matches: `npm` links a `bin`
+  into `node_modules/.bin`, where `argv[1]` is the link and `import.meta.url` is
+  the target, and a file URL percent-encodes a space where string concatenation
+  does not. Both ended the same way — exit code 0, no output, no JSON-RPC, a
+  client seeing a server that appears to start and then ignore it. A path such as
+  `~/Library/Application Support/…` or any checkout under a directory with a
+  space in its name was enough to hit it. Resolved with `realpathSync` plus
+  `pathToFileURL`, and covered by integration tests that spawn the built server
+  through a symlink and through a spaced path.
+- The startup banner said the server was "ready to generate Bruno API testing
+  files", which stopped being the whole story when the runner landed.
+
 ## [2.1.0] - 2026-08-05
 
 ### Added

@@ -5,6 +5,8 @@
  * Main entry point for the Bruno MCP server application
  */
 
+import { realpathSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import { createBrunoMcpServer } from './server.js';
 import {
   installUnhandledRejectionGuard,
@@ -51,8 +53,34 @@ async function main() {
   }
 }
 
-// Start the server if this file is run directly
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Start the server if this file is run directly.
+//
+// `file://${process.argv[1]}` looks like it does this and does not. Two ways it
+// silently fails, both of which end with the process exiting 0 having started
+// nothing, printed nothing, and answered no JSON-RPC:
+//
+//   - **Through a symlink.** `npm install` links a package's `bin` into
+//     `node_modules/.bin`, so `argv[1]` is the link while `import.meta.url` is
+//     the real file. `realpathSync` resolves the link, which is what makes
+//     `npx @ostico/bruno-mcp` and every `.bin/bruno-mcp` invocation work.
+//   - **A path with a space in it.** A file URL percent-encodes; raw
+//     concatenation does not, so `/Users/me/My Projects/…` never matched. That
+//     is not exotic — `~/Library/Application Support/…` has one, and a client
+//     config pointing there would start a server that quietly wasn't there.
+//
+// `pathToFileURL` does the encoding, and both are wrapped because a missing or
+// deleted `argv[1]` must leave this an import rather than crash it.
+function invokedDirectly(): boolean {
+  const entry = process.argv[1];
+  if (entry === undefined) return false;
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(entry)).href;
+  } catch {
+    return false;
+  }
+}
+
+if (invokedDirectly()) {
   main().catch((error) => {
     console.error('Unhandled error:', error);
     process.exit(1);

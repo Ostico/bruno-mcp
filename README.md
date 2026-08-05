@@ -107,13 +107,21 @@ On the fork parent specifically, since this project owes it its existence: [maca
 
 ## Install
 
-**From npm** (published with provenance, so npm can show you which commit and workflow built the tarball):
+**Nothing to install.** Point your client at `npx` and it fetches the published package on first run:
+
+```bash
+npx -y @ostico/bruno-mcp
+```
+
+That is the whole install, and it is what the client configs below use. The package ships with provenance, so npm can show you which commit and workflow built the tarball you are running.
+
+**Pinned instead**, if you would rather not resolve a version at startup:
 
 ```bash
 npm install @ostico/bruno-mcp
 ```
 
-The server then lives at `./node_modules/@ostico/bruno-mcp/dist/index.js`, which is the path your MCP client needs below.
+which puts a `bruno-mcp` executable in `node_modules/.bin/` and the server itself at `node_modules/@ostico/bruno-mcp/dist/index.js`.
 
 **From source**, for development or to run a branch:
 
@@ -131,11 +139,15 @@ Node.js >= 22 either way.
 **Any MCP client works.** This is a plain stdio MCP server with no client-specific code: whatever your client calls it, point it at
 
 ```
-command: node
-args:    ["/absolute/path/to/dist/index.js"]
+command: npx
+args:    ["-y", "@ostico/bruno-mcp"]
 ```
 
-installed from npm that path is `<project>/node_modules/@ostico/bruno-mcp/dist/index.js`; built from source it is `<clone>/dist/index.js`.
+Claude Code takes it as one line:
+
+```bash
+claude mcp add bruno -- npx -y @ostico/bruno-mcp
+```
 
 Claude Desktop, Claude Code, Cursor, Codex CLI, opencode, Windsurf, Zed, Cline, Continue, LM Studio, Gemini CLI, MCP Inspector, your own SDK client — all the same server. Nothing below is a compatibility list; it is just where each client keeps its config.
 
@@ -145,13 +157,15 @@ Most clients use the same JSON shape:
 {
   "mcpServers": {
     "bruno-mcp": {
-      "command": "node",
-      "args": ["/absolute/path/to/bruno-mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "@ostico/bruno-mcp"],
       "env": {}
     }
   }
 }
 ```
+
+Running a clone, or a pinned install, is the same config with `"command": "node"` and `"args": ["/absolute/path/to/dist/index.js"]`.
 
 | Client | Where it goes |
 |---|---|
