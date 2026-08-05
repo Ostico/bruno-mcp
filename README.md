@@ -1,9 +1,16 @@
 # Bruno MCP Server
 
+[![npm version](https://img.shields.io/npm/v/@ostico/bruno-mcp)](https://www.npmjs.com/package/@ostico/bruno-mcp)
+[![npm downloads](https://img.shields.io/npm/dw/@ostico/bruno-mcp)](https://www.npmjs.com/package/@ostico/bruno-mcp)
+[![node](https://img.shields.io/node/v/@ostico/bruno-mcp)](https://nodejs.org)
+[![license](https://img.shields.io/npm/l/@ostico/bruno-mcp)](./LICENSE)
+
+**An MCP server that runs and authors Bruno API collections — both `.bru` and `.yml` (opencollection) — with no `bru` binary and byte-parity against Bruno's own reader.**
+
+A [Model Context Protocol](https://modelcontextprotocol.io) server for [Bruno](https://www.usebruno.com), the open-source API client. It gives an AI agent in Claude Code, Claude Desktop, Cursor, Windsurf, VS Code or Codex CLI eighteen tools for API testing against a real Bruno collection: create and edit requests, read them back as structured JSON, manage environments and variables, write assertions and test scripts, then **run** the collection — auth, cookies, redirects, dependency ordering and all — and get the results back in the same turn. No Bruno GUI, no Bruno CLI, no shelling out. The collection it leaves on disk is a normal Bruno collection: your CI runs it with `bru run`, your teammates open it in the Bruno app.
+
 > **Active fork** of [macarthy/bruno-mcp](https://github.com/macarthy/bruno-mcp) (original inactive since Jul 2025).
 > Maintained at [Ostico/bruno-mcp](https://github.com/Ostico/bruno-mcp) — see [announcement](https://github.com/macarthy/bruno-mcp/issues/4).
-
-An MCP server that lets an AI agent create, read, edit and **run** Bruno API collections — no Bruno GUI, no Bruno CLI.
 
 **Your agent already knows HTTP. It does not know your API, and it does not know Bruno's file format.** So it guesses. It writes a `.bru` file from memory, the run fails, it rewrites the file, the run fails differently, and twenty minutes later you have a passing request and no idea which of the six edits mattered. You paid for every one of those turns, and none of that work is on disk in a form your CI or your team's Bruno GUI can use.
 
@@ -27,17 +34,47 @@ I asked the agent that helps me to maintain this server to explain how its exper
 - **Edits are partial merges** — `modify_request` touches the fields you passed and leaves the rest of the file alone
 - **It can read before it writes** — `read_request` returns structured JSON, the same shape for both formats
 - **It runs the requests itself** — vars, auth, assertions, dependency ordering, no `bru` binary needed
-- **No silent loss** — a field this server cannot model yet is carried through the round-trip untouched, and anything it cannot put on the wire is named in a run warning rather than dropped quietly into your repo
+- **No silent loss** — a field this server cannot model yet is carried back out wherever the format can hold it, and anything it cannot put on the wire is named in a run warning rather than dropped quietly into your repo
+
+## Byte-parity with Bruno
+
+This is the part that is hard to copy, so it is worth being precise about what it means.
+
+The server does not wrap the `bru` binary — it implements the request pipeline itself, which is what makes in-memory secrets, wire-level tests and mid-run hooks possible. That freedom is also the risk: an independent implementation is free to be subtly, silently different from the tool your team actually uses. Two mechanisms hold it in place.
+
+**The rules are ported, not inferred.** Redirect caps, timeout resolution, body-mode content types, variable interpolation order, `selected` defaults, URL encoding — each is read out of Bruno's own source (`bruno-cli`, `bruno-filestore`, `bruno-lang`, `@usebruno/common`, which this server also depends on directly) and mirrored, including the parts that look like bugs. Where the two dialects disagree with each other, each is mirrored on its own terms rather than unified into something neither Bruno reader would produce.
+
+**A drift gate proves it.** Every file this server writes is parsed back with **Bruno's own reader**, per dialect, in the test suite. Asserting our bytes against our own expectations can only prove we are self-consistent; asserting them against the reader that Bruno itself uses is the only thing that catches the case where our output stops being Bruno's input. It has caught real ones — a file body that parsed cleanly and would have been sent with no body at all, for instance.
+
+The claim, then: run behaviour matches `bru run`, and every divergence found so far is closed. What keeps it closed is a test rather than a promise. Find one anyway and it is a bug worth an issue.
 
 ## The contract
-
-Run behaviour matches `bru run`. Every divergence found so far is closed, and what keeps them closed is a test rather than a promise: the runtime rules are ported from Bruno's own runner, and everything this server writes is read back with Bruno's own reader — per dialect, since `.bru` and `.yml` legitimately disagree — so our bytes cannot quietly stop being Bruno's bytes. Find one anyway and it is a bug worth an issue.
 
 One collection, three consumers: your agent, your CI, and your team's Bruno GUI.
 
 Both Bruno formats work and the server detects which one you have: `.yml` (opencollection) and `.bru` (legacy).
 
 Requires **Node.js >= 22**. CI tests 22.x and 24.x.
+
+## Which Bruno MCP server should I use?
+
+There are several, they do genuinely different jobs, and the honest answer is not always this one. Checked against each project's own README, August 2026.
+
+| | This server | [hungthai1401/bruno-mcp](https://github.com/hungthai1401/bruno-mcp) | [jcr82/bruno-mcp-server](https://github.com/jcr82/bruno-mcp-server) | [djkz/bruno-api-mcp](https://github.com/djkz/bruno-api-mcp) | [macarthy/bruno-mcp](https://github.com/macarthy/bruno-mcp) |
+|---|---|---|---|---|---|
+| **What it is** | Authors, reads and runs collections | Runs a collection | Runs and inspects collections | Turns each request into its own MCP tool | Generates collection files |
+| **Needs the `bru` binary** | No — own request pipeline | Yes | Yes | No | n/a |
+| **Creates / edits requests** | Yes, partial merges | No | No | No | Yes |
+| **Reads requests back** | Yes, structured JSON | No | Yes | Exposes them as tools | No |
+| **Runs them** | Yes | Yes | Yes | Yes, one at a time | No |
+| **`.yml` opencollection** | Yes | `.bru` only | `.bru` only | Not documented | Not documented |
+| **JUnit / HTML reports** | No — JSON results only | No | **Yes** | No | n/a |
+| **Tools** | 18 | Run only | 9 | One per request | Authoring only |
+| **Maintained** | Yes | Yes | Yes | Yes | Inactive since Jul 2025 |
+
+Pick one of the others if: you want **JUnit XML or HTML report files** for a CI dashboard (jcr82), you already have the `bru` CLI in your image and only ever need "run this collection" (hungthai1401), or you want an agent to **call your API through your existing requests** as if each were a native tool, without touching the collection (djkz).
+
+Pick this one if: you want the agent to **write** the collection and not just consume it, you are on `.yml` opencollection format, you need the run to happen **without installing the Bruno CLI**, or you care that what lands in your repo is byte-comparable to what the Bruno app writes.
 
 ## Features
 
@@ -71,12 +108,24 @@ Requires **Node.js >= 22**. CI tests 22.x and 24.x.
 
 ## Install
 
+**From npm** (published with provenance, so npm can show you which commit and workflow built the tarball):
+
+```bash
+npm install @ostico/bruno-mcp
+```
+
+The server then lives at `./node_modules/@ostico/bruno-mcp/dist/index.js`, which is the path your MCP client needs below.
+
+**From source**, for development or to run a branch:
+
 ```bash
 git clone https://github.com/Ostico/bruno-mcp.git
 cd bruno-mcp
-npm install
+npm install     # npm, not yarn — the yarn lockfile is stale
 npm run build
 ```
+
+Node.js >= 22 either way.
 
 ## Connect a client
 
@@ -84,8 +133,10 @@ npm run build
 
 ```
 command: node
-args:    ["/absolute/path/to/bruno-mcp/dist/index.js"]
+args:    ["/absolute/path/to/dist/index.js"]
 ```
+
+installed from npm that path is `<project>/node_modules/@ostico/bruno-mcp/dist/index.js`; built from source it is `<clone>/dist/index.js`.
 
 Claude Desktop, Claude Code, Cursor, Codex CLI, opencode, Windsurf, Zed, Cline, Continue, LM Studio, Gemini CLI, MCP Inspector, your own SDK client — all the same server. Nothing below is a compatibility list; it is just where each client keeps its config.
 
@@ -383,6 +434,40 @@ Operator escape hatches, all off by default:
 | `BRUNO_WORKSPACE_PATH` | Where to find Bruno's `workspace.yml` |
 
 This constrains what `run_collection` will fetch. An agent with shell access can reach the network anyway, so treat it as one layer, not a boundary.
+
+## FAQ
+
+### Does it need the Bruno CLI (`bru`) installed?
+
+No. The request pipeline is implemented here — variables, auth, cookies, redirects, assertions, scripts, dependency ordering — so nothing shells out to `bru` and nothing needs the binary on PATH. That is also why the parity work above exists: an independent implementation has to be held to the original deliberately.
+
+### Does it support `.yml` opencollection files, or only `.bru`?
+
+Both, and it detects which one a collection uses rather than asking you. New collections default to `.yml`; `create_collection` takes `format: "bru"` if you want the legacy dialect. Where the two formats genuinely disagree — and they do — each is written the way Bruno's own writer for that dialect writes it.
+
+### Can I run this in CI?
+
+The collection it produces is a normal Bruno collection, so CI runs it with `bru run` exactly as if a human had authored it in the app. The MCP server itself is for the authoring and debugging loop, where an agent is in the room. If you want JUnit XML or HTML report files out of an MCP server instead, that is [jcr82/bruno-mcp-server](https://github.com/jcr82/bruno-mcp-server) — see the comparison above.
+
+### Will it rewrite files the Bruno app wrote?
+
+Only the fields you asked to change. `modify_request` is a partial merge, a key this server does not model is carried back out where the format can carry it — `.yml` throughout, and `.bru` wherever its grammar has a dictionary block to hold it — and every write is verified against Bruno's own reader in the test suite. Deletes need an explicit `confirm: true`.
+
+### Which MCP clients work?
+
+Any of them — this is a plain stdio server with no client-specific code. Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, Codex CLI, opencode, Zed, Cline, Continue, LM Studio, Gemini CLI, the MCP Inspector, or your own SDK client. See [Connect a client](#connect-a-client) for where each one keeps its config.
+
+### What happens to my secrets?
+
+Secret environment variables stay in memory for the run and are never written to a file — neither dialect stores a secret's value on disk, which is Bruno's design, not a limitation added here. Credentials are redacted out of the results returned to the agent, including one placed in a query parameter. Scripts run in a forked V8 sandbox with a scrubbed environment. See [Security](#security).
+
+### Is this the same as the original `bruno-mcp`?
+
+It started as a fork of [macarthy/bruno-mcp](https://github.com/macarthy/bruno-mcp), which has been inactive since July 2025 and generated collection files without running them. Everything above — the runner, the readers, both dialects, the parity gate, the sandbox — was built after the fork.
+
+### Is it affiliated with Bruno?
+
+No. Bruno is a product of [usebruno](https://www.usebruno.com) and its name and trademarks belong to them. This is a community project that reads Bruno's open-source packages to stay compatible with them; it is not endorsed by or affiliated with usebruno.
 
 ## Upgrading from 1.x
 
