@@ -1,4 +1,4 @@
-# Bruno MCP Server
+# Bruno MCP Studio — an MCP server for Bruno API collections
 
 [![npm version](https://img.shields.io/npm/v/@ostico/bruno-mcp)](https://www.npmjs.com/package/@ostico/bruno-mcp)
 [![npm downloads](https://img.shields.io/npm/dw/@ostico/bruno-mcp)](https://www.npmjs.com/package/@ostico/bruno-mcp)
@@ -10,7 +10,8 @@
 A [Model Context Protocol](https://modelcontextprotocol.io) server for [Bruno](https://www.usebruno.com), the open-source API client. It gives an AI agent in Claude Code, Claude Desktop, Cursor, Windsurf, VS Code or Codex CLI eighteen tools for API testing against a real Bruno collection: create and edit requests, read them back as structured JSON, manage environments and variables, write assertions and test scripts, then **run** the collection — auth, cookies, redirects, dependency ordering and all — and get the results back in the same turn. No Bruno GUI, no Bruno CLI, no shelling out. The collection it leaves on disk is a normal Bruno collection: your CI runs it with `bru run`, your teammates open it in the Bruno app.
 
 > **Active fork** of [macarthy/bruno-mcp](https://github.com/macarthy/bruno-mcp) (original inactive since Jul 2025).
-> Maintained at [Ostico/bruno-mcp](https://github.com/Ostico/bruno-mcp) — see [announcement](https://github.com/macarthy/bruno-mcp/issues/4).
+> Maintained as **Bruno MCP Studio** at [Ostico/bruno-mcp-studio](https://github.com/Ostico/bruno-mcp-studio) — see [announcement](https://github.com/macarthy/bruno-mcp/issues/4).
+> The npm package name is unchanged: `@ostico/bruno-mcp`.
 
 **Your agent already knows HTTP. It does not know your API, and it does not know Bruno's file format.** So it guesses. It writes a `.bru` file from memory, the run fails, it rewrites the file, the run fails differently, and twenty minutes later you have a passing request and no idea which of the six edits mattered. You paid for every one of those turns, and none of that work is on disk in a form your CI or your team's Bruno GUI can use.
 
@@ -126,8 +127,8 @@ which puts a `bruno-mcp` executable in `node_modules/.bin/` and the server itsel
 **From source**, for development or to run a branch:
 
 ```bash
-git clone https://github.com/Ostico/bruno-mcp.git
-cd bruno-mcp
+git clone https://github.com/Ostico/bruno-mcp-studio.git
+cd bruno-mcp-studio
 npm install     # npm, not yarn — the yarn lockfile is stale
 npm run build
 ```
