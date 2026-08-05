@@ -74,19 +74,17 @@ publishes anything. So a release is a normal PR followed by one tag push.
    `package-lock.json` (both via `npm version X.Y.Z --no-git-tag-version`), and the literal
    in `src/server.ts` that the server reports to its client on connect.
    `tests/unit/meta/version-matches-package.test.ts` fails if the last one is forgotten.
-4. **Re-stamp `docs/bruno-mcp-defect-report.md`**: its header names the commit and version
-   its line numbers were read against.
-5. **Verify before pushing**: `npx tsc --noEmit`, `npx eslint src/ --ext .ts`, `npx jest`,
+4. **Verify before pushing**: `npx tsc --noEmit`, `npx eslint src/ --ext .ts`, `npx jest`,
    `npm run build`. Check the suite *count*, not just "0 failures" — a broken build drops
    whole suites silently.
-6. **Open the PR** as a draft, with a body that says what ships and that merging publishes
+5. **Open the PR** as a draft, with a body that says what ships and that merging publishes
    nothing. Wait for all five CI gates (test 22.x, test 24.x, build, Test adequacy gate,
    Test-Guard). The user merges it; never merge or force-push.
-7. **Tag main after the merge**, annotated and pointing at the merge commit — that is where
+6. **Tag main after the merge**, annotated and pointing at the merge commit — that is where
    `v2.0.0` and `v2.1.0` point:
    `git tag -a vX.Y.Z <merge-sha> -F <message-file>` then `git push origin vX.Y.Z`.
    The message is release notes, not a subject line.
-8. **Watch the run**: `gh run list --workflow=release.yml`. It is only released when that
+7. **Watch the run**: `gh run list --workflow=release.yml`. It is only released when that
    run is green — npm publish and the GitHub release both happen there.
 
 Tagging publishes to a public registry and cannot be undone, so do it only when the user
