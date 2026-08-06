@@ -103,6 +103,39 @@ export const YAML_HTTP_KEYS: ReadonlySet<string> = new Set([
   'extra',
 ]);
 
+/**
+ * Fields of `YamlGrpc` the generator writes itself.
+ *
+ * `protoFilePath` is listed because it is the on-disk name of a key the model
+ * carries as `protoPath`. Leaving it out would put the path in `extra` as well
+ * and emit it twice.
+ */
+export const YAML_GRPC_KEYS: ReadonlySet<string> = new Set([
+  'url',
+  'method',
+  'protoFilePath',
+  'methodType',
+  'auth',
+  'metadata',
+  'message',
+  'extra',
+]);
+
+/**
+ * Fields of `YamlWebsocket` the generator writes itself.
+ *
+ * No `method`, `protoFilePath` or `methodType`: a WebSocket request has one
+ * target and no service definition, and credentials arrive as `headers` rather
+ * than gRPC's `metadata`.
+ */
+export const YAML_WEBSOCKET_KEYS: ReadonlySet<string> = new Set([
+  'url',
+  'auth',
+  'headers',
+  'message',
+  'extra',
+]);
+
 /** Keys of a `.yml` `runtime` block that generateYamlRequest writes itself. */
 export const YAML_RUNTIME_KEYS: ReadonlySet<string> = new Set([
   'variables',

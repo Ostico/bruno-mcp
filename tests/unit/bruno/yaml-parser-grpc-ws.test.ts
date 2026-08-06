@@ -1,0 +1,179 @@
+import { parseYamlRequest } from '../../../src/bruno/yaml-parser.js';
+import { generateYamlRequest } from '../../../src/bruno/yaml-generator.js';
+import { BrunoError } from '../../../src/bruno/types.js';
+
+const GRPC = `info:
+  name: Streamer
+  type: grpc
+  seq: 1
+grpc:
+  url: grpc://localhost:50051
+  method: /pkg.Svc/Method
+  protoFilePath: ./svc.proto
+  methodType: unary
+  auth:
+    type: bearer
+    token: live-token
+  metadata:
+    - name: authorization
+      value: Bearer x
+  message:
+    - title: first
+      message: '{"id":1}'
+    - title: second
+      message: '{"id":2}'
+`;
+
+const WEBSOCKET = `info:
+  name: Socket
+  type: websocket
+  seq: 1
+websocket:
+  url: ws://localhost:8080
+  headers:
+    - name: x-tenant-key
+      value: sekret
+      disabled: true
+  message:
+    - title: hello
+      selected: false
+      message:
+        type: text
+        data: '{"op":"subscribe"}'
+`;
+
+describe('parseYamlRequest for the new kinds', () => {
+  it('parses a grpc request and normalises protoFilePath to protoPath', () => {
+    const parsed = parseYamlRequest(GRPC);
+    expect(parsed.info.type).toBe('grpc');
+    expect(parsed.grpc?.url).toBe('grpc://localhost:50051');
+    expect(parsed.grpc?.method).toBe('/pkg.Svc/Method');
+    expect(parsed.grpc?.protoPath).toBe('./svc.proto');
+    expect(parsed.grpc?.methodType).toBe('unary');
+  });
+
+  // `protoFilePath` is the on-disk key and `protoPath` the model's; keeping both
+  // would let a writer emit the same path twice under two names.
+  it('does not keep the on-disk protoFilePath name on the model', () => {
+    expect(parseYamlRequest(GRPC).grpc).not.toHaveProperty('protoFilePath');
+  });
+
+  it('carries grpc metadata with the disabled polarity the dialect uses', () => {
+    const parsed = parseYamlRequest(GRPC);
+    expect(parsed.grpc?.metadata).toEqual([{ name: 'authorization', value: 'Bearer x' }]);
+  });
+
+  // The plan drafted `auth` as a bare mode string, which is right for `.bru` and
+  // lossy for `.yml`: the credential lives in the same object as the mode, so
+  // keeping only the mode would drop the token on the next write.
+  it('keeps the whole .yml auth object, not just the mode', () => {
+    const auth = parseYamlRequest(GRPC).grpc?.auth;
+    expect(auth).toEqual({ type: 'bearer', token: 'live-token' });
+  });
+
+  it('reads grpc messages from the singular `message` key as title/message variants', () => {
+    const messages = parseYamlRequest(GRPC).grpc?.messages;
+    expect(messages).toEqual([
+      { name: 'first', content: '{"id":1}' },
+      { name: 'second', content: '{"id":2}' },
+    ]);
+  });
+
+  // Upstream accepts a bare string in place of the variant list.
+  it('reads a bare-string grpc message as a single unnamed message', () => {
+    const parsed = parseYamlRequest(
+      'info:\n  name: S\n  type: grpc\n  seq: 1\ngrpc:\n  url: grpc://h:1\n  message: \'{"id":9}\'\n',
+    );
+    expect(parsed.grpc?.messages).toEqual([{ name: '', content: '{"id":9}' }]);
+  });
+
+  it('parses a websocket request under the websocket token', () => {
+    const parsed = parseYamlRequest(WEBSOCKET);
+    expect(parsed.info.type).toBe('ws');
+    expect(parsed.websocket?.url).toBe('ws://localhost:8080');
+  });
+
+  // WebSocket carries its credentials in the ordinary headers block; only gRPC
+  // has metadata. Dropping `disabled` would re-arm a disabled credential header.
+  it('carries websocket headers including the disabled flag', () => {
+    expect(parseYamlRequest(WEBSOCKET).websocket?.headers).toEqual([
+      { name: 'x-tenant-key', value: 'sekret', disabled: true },
+    ]);
+  });
+
+  // A websocket variant nests its payload one level deeper than a grpc one:
+  // `message: {type, data}` rather than a bare string.
+  it('reads a websocket message from the nested type/data pair', () => {
+    expect(parseYamlRequest(WEBSOCKET).websocket?.messages).toEqual([
+      { name: 'hello', type: 'text', content: '{"op":"subscribe"}', selected: false },
+    ]);
+  });
+
+  it('preserves selected: false rather than treating it as absent', () => {
+    const [message] = parseYamlRequest(WEBSOCKET).websocket?.messages ?? [];
+    expect(message?.selected).toBe(false);
+  });
+
+  it('reads a flat single websocket message with no variant wrapper', () => {
+    const parsed = parseYamlRequest(
+      'info:\n  name: S\n  type: websocket\n  seq: 1\nwebsocket:\n  url: ws://h:1\n  message:\n    type: binary\n    data: cGF5\n',
+    );
+    expect(parsed.websocket?.messages).toEqual([
+      { name: '', type: 'binary', content: 'cGF5' },
+    ]);
+  });
+
+  it('still throws PARSE_ERROR for a document with no target block at all', () => {
+    expect(() => parseYamlRequest('info:\n  name: Nothing\n  seq: 1\n')).toThrow(BrunoError);
+    try {
+      parseYamlRequest('info:\n  name: Nothing\n  seq: 1\n');
+    } catch (error) {
+      expect((error as BrunoError).code).toBe('PARSE_ERROR');
+    }
+  });
+
+  it('rejects a kind token the dialect does not define', () => {
+    expect(() =>
+      parseYamlRequest('info:\n  name: S\n  type: telnet\n  seq: 1\nhttp:\n  url: http://h\n'),
+    ).toThrow(/telnet/);
+  });
+});
+
+describe('the passthrough bag is still redundant on purpose', () => {
+  // Removing this redundancy belongs to PR1-T5, in the same commit that adds the
+  // writer. Doing it here would leave every commit in between regenerating a
+  // .yml gRPC file with its block deleted — a data-loss window this PR would
+  // have opened itself, in the one dialect that has no loss today.
+  it('still carries grpc in extra until the writer exists', () => {
+    const parsed = parseYamlRequest(GRPC);
+    expect(parsed.grpc?.url).toBe('grpc://localhost:50051');
+    expect(parsed.extra).toHaveProperty('grpc');
+  });
+
+  it('still carries websocket in extra until the writer exists', () => {
+    expect(parseYamlRequest(WEBSOCKET).extra).toHaveProperty('websocket');
+  });
+
+  // Because the block is still written from `extra`, a round trip has to keep it.
+  // This is what makes the redundancy safe rather than merely untidy.
+  it('round-trips a grpc block through the generator via the carried bag', () => {
+    const written = generateYamlRequest(parseYamlRequest(GRPC));
+    expect(written).toContain('grpc://localhost:50051');
+    expect(written).toContain('protoFilePath: ./svc.proto');
+  });
+});
+
+describe('info.type is written back as the wire token', () => {
+  // The model's kind for a WebSocket request is `ws`; the `.yml` token is
+  // `websocket`. Writing the model's name would produce a file Bruno dispatches
+  // to no parser at all.
+  it('writes websocket, not the model kind ws', () => {
+    const written = generateYamlRequest(parseYamlRequest(WEBSOCKET));
+    expect(written).toContain('type: websocket');
+    expect(written).not.toMatch(/type: ws$/m);
+  });
+
+  it('leaves the tokens that spell themselves alone', () => {
+    expect(generateYamlRequest(parseYamlRequest(GRPC))).toContain('type: grpc');
+  });
+});

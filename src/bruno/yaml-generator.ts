@@ -14,6 +14,8 @@ import {
   type YamlScript,
   type MultipartFormPart,
   type BruFilePart,
+  type RequestKind,
+  YAML_TOKEN_FOR_KIND,
 } from './types.js';
 import {
   assertionsToYaml,
@@ -226,7 +228,13 @@ export function generateYamlRequest(request: YamlRequest): string {
   if (isGraphql) {
     info.type = 'graphql';
   } else if (request.info.type) {
-    info.type = request.info.type;
+    // The model's kind and the `.yml` token are not always the same word: a
+    // WebSocket request is kind `ws` and token `websocket`. Writing the kind
+    // would produce a file Bruno dispatches to no parser at all. Every other
+    // kind spells itself, and `folder` is not a request kind, so both fall
+    // through the lookup unchanged.
+    info.type = YAML_TOKEN_FOR_KIND[request.info.type as RequestKind]
+      ?? request.info.type;
   }
   if (request.info.seq !== undefined) info.seq = request.info.seq;
   // Only when there is something in it: upstream guards the same write with

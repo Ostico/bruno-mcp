@@ -24,7 +24,13 @@ import {
   type YamlAssertion,
   type YamlVar,
   type YamlVars,
+  YAML_TYPE_TOKENS,
 } from './types.js';
+import type {
+  YamlGrpc,
+  YamlWebsocket,
+  YamlRequestMessage,
+} from './transport-requests.js';
 import {
   assertionsFromYaml,
   postResponseVarsFromYaml,
@@ -32,6 +38,7 @@ import {
 } from './yaml-runtime-blocks.js';
 import {
   collectExtraKeys,
+  YAML_GRPC_KEYS,
   YAML_HEADER_KEYS,
   YAML_HTTP_KEYS,
   YAML_INFO_KEYS,
@@ -39,6 +46,7 @@ import {
   YAML_REQUEST_KEYS,
   YAML_RUNTIME_KEYS,
   YAML_SETTINGS_KEYS,
+  YAML_WEBSOCKET_KEYS,
 } from './extra-keys.js';
 import { graphqlBodyFromYaml, YAML_GRAPHQL_KEYS } from './yaml-graphql-block.js';
 
@@ -86,10 +94,35 @@ function requireSection(
   return section as Record<string, unknown>;
 }
 
+/**
+ * Resolve the on-disk kind token to the model's kind.
+ *
+ * The `.yml` token for a WebSocket request is `websocket` while the model's kind
+ * is `ws`, so this is a real translation and not a cast. It was a cast before,
+ * which meant an unrecognised token became a `RequestKind` the compiler trusted
+ * and no branch handled — the same defect the `.bru` side had.
+ *
+ * `folder` is not a request kind but reaches here because `parseInfo` serves both
+ * requests and folders, so it passes through unmapped.
+ */
+function toYamlKind(raw: unknown): YamlInfo['type'] {
+  if (raw == null) return undefined;
+  if (raw === 'folder') return 'folder';
+  const kind = typeof raw === 'string' ? YAML_TYPE_TOKENS[raw] : undefined;
+  if (kind === undefined) {
+    throw new BrunoError(
+      `Unknown request type "${String(raw)}" in info block. `
+        + `Expected one of: ${Object.keys(YAML_TYPE_TOKENS).join(', ')}`,
+      'PARSE_ERROR',
+    );
+  }
+  return kind;
+}
+
 function parseInfo(raw: Record<string, unknown>): YamlInfo {
   const info: YamlInfo = {
     name: String(raw.name ?? ''),
-    type: raw.type as YamlInfo['type'],
+    type: toYamlKind(raw.type),
     seq: typeof raw.seq === 'number' ? raw.seq : undefined,
     tags: normalizeTags(raw.tags),
   };
@@ -424,6 +457,113 @@ function parseSettings(raw: unknown): YamlSettings | undefined {
   return settings;
 }
 
+/**
+ * Read the message list of a gRPC or WebSocket block.
+ *
+ * Both dialects spell the key singular and accept two forms: a list of titled
+ * variants, or one bare message with no wrapper. Upstream's readers handle both
+ * and so must this one, or a file Bruno wrote in the second form parses to no
+ * messages at all.
+ *
+ * The forms differ between the two kinds, and that is the whole reason this takes
+ * a `nested` flag rather than being one loop. A gRPC variant holds its payload as
+ * a bare string under `message`; a WebSocket variant nests it as
+ * `message: { type, data }`. Reading a WebSocket payload the gRPC way yields the
+ * string `[object Object]`.
+ */
+function parseTransportMessages(
+  raw: unknown,
+  nested: boolean,
+): YamlRequestMessage[] | undefined {
+  if (raw == null) return undefined;
+
+  if (Array.isArray(raw)) {
+    return raw.map((entry: Record<string, unknown>) => {
+      const message: YamlRequestMessage = { name: String(entry.title ?? '') };
+      if (nested) {
+        const payload = isRecord(entry.message) ? entry.message : {};
+        message.type = String(payload.type ?? 'text');
+        message.content = String(payload.data ?? '');
+        // Kept as an explicit false: for a streaming request the difference
+        // between "not selected" and "not stated" decides what gets sent.
+        message.selected = entry.selected === true;
+      } else {
+        message.content = String(entry.message ?? '');
+      }
+      return message;
+    });
+  }
+
+  if (nested && isRecord(raw)) {
+    return [
+      { name: '', type: String(raw.type ?? 'text'), content: String(raw.data ?? '') },
+    ];
+  }
+
+  // A bare gRPC message. Upstream ignores a blank one rather than recording an
+  // empty message, so an all-whitespace value yields no messages.
+  if (!nested && typeof raw === 'string') {
+    return raw.trim().length > 0 ? [{ name: '', content: raw }] : undefined;
+  }
+
+  return undefined;
+}
+
+/**
+ * Read the `grpc:` block of a `.yml` request.
+ *
+ * `protoFilePath` is renamed to `protoPath`, which is what `.bru` calls it and
+ * what upstream's own reader normalises it to. Both names are never kept at once:
+ * a writer would then emit the same path twice.
+ */
+function parseGrpcSection(raw: Record<string, unknown>): YamlGrpc {
+  const grpc: YamlGrpc = { url: String(raw.url ?? '') };
+
+  if (typeof raw.method === 'string') grpc.method = raw.method;
+  if (typeof raw.protoFilePath === 'string') grpc.protoPath = raw.protoFilePath;
+  if (typeof raw.methodType === 'string') grpc.methodType = raw.methodType;
+
+  const auth = parseAuth(raw.auth);
+  if (auth) grpc.auth = auth;
+
+  const metadata = parseHeaders(raw.metadata);
+  if (metadata) grpc.metadata = metadata;
+
+  const messages = parseTransportMessages(raw.message, false);
+  if (messages) grpc.messages = messages;
+
+  const extra = collectExtraKeys(raw, YAML_GRPC_KEYS);
+  if (extra) grpc.extra = extra;
+
+  return grpc;
+}
+
+/**
+ * Read the `websocket:` block of a `.yml` request.
+ *
+ * Credentials arrive as ordinary `headers`, not `metadata` — only gRPC has that
+ * block. `parseHeaders` is reused rather than reimplemented so the `disabled`
+ * polarity is handled in one place; dropping that flag would re-arm a disabled
+ * credential header on the next write.
+ */
+function parseWebsocketSection(raw: Record<string, unknown>): YamlWebsocket {
+  const websocket: YamlWebsocket = { url: String(raw.url ?? '') };
+
+  const auth = parseAuth(raw.auth);
+  if (auth) websocket.auth = auth;
+
+  const headers = parseHeaders(raw.headers);
+  if (headers) websocket.headers = headers;
+
+  const messages = parseTransportMessages(raw.message, true);
+  if (messages) websocket.messages = messages;
+
+  const extra = collectExtraKeys(raw, YAML_WEBSOCKET_KEYS);
+  if (extra) websocket.extra = extra;
+
+  return websocket;
+}
+
 export function parseYamlRequest(content: string): YamlRequest {
   const doc = safeParse(content, 'request');
   const infoRaw = requireSection(doc, 'info', 'request');
@@ -434,21 +574,33 @@ export function parseYamlRequest(content: string): YamlRequest {
   // request under `http:`, and those files still have to load.
   const graphqlRaw = isRecord(doc.graphql) ? doc.graphql : undefined;
   const httpRaw = isRecord(doc.http) ? doc.http : undefined;
-  if (!graphqlRaw && !httpRaw) {
+  // gRPC and WebSocket requests carry their target in their own block, exactly as
+  // graphql does. Refusing them here is what made a `.yml` gRPC file unreadable.
+  const grpcRaw = isRecord(doc.grpc) ? doc.grpc : undefined;
+  const websocketRaw = isRecord(doc.websocket) ? doc.websocket : undefined;
+  if (!graphqlRaw && !httpRaw && !grpcRaw && !websocketRaw) {
     throw new BrunoError(
-      'Missing required "http" section in request (or "graphql" for a graphql request)',
+      'Missing required "http" section in request '
+        + '(or "graphql", "grpc" or "websocket" for those kinds)',
       'PARSE_ERROR',
     );
   }
 
   const result: YamlRequest = {
     info: parseInfo(infoRaw),
-    // Upstream's block wins when both are present: it is the one Bruno reads, so
-    // it is the one that describes the request as Bruno sees it.
-    http: graphqlRaw
-      ? parseGraphqlSection(graphqlRaw)
-      : parseHttpSection(httpRaw as Record<string, unknown>),
   };
+
+  if (grpcRaw) result.grpc = parseGrpcSection(grpcRaw);
+  if (websocketRaw) result.websocket = parseWebsocketSection(websocketRaw);
+  // Upstream's block wins when both are present: it is the one Bruno reads, so
+  // it is the one that describes the request as Bruno sees it. A gRPC or
+  // WebSocket document has no `http` block, so `http` stays absent — which is
+  // what the executor's kind refusal reads.
+  if (graphqlRaw) {
+    result.http = parseGraphqlSection(graphqlRaw);
+  } else if (httpRaw) {
+    result.http = parseHttpSection(httpRaw);
+  }
 
   const runtime = parseRuntime(doc.runtime);
   if (runtime) result.runtime = runtime;

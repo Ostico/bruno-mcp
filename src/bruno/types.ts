@@ -3,6 +3,8 @@
  * Based on the Bru markup language specification
  */
 
+import type { YamlGrpc, YamlWebsocket } from './transport-requests.js';
+
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS';
 
 /**
@@ -848,6 +850,10 @@ export interface YamlRequest {
   info: YamlInfo;
   /** Absent for a non-http kind. See the same field on `BruFile`. */
   http?: YamlHttp;
+  /** Present only for a gRPC request, in place of `http`. */
+  grpc?: YamlGrpc;
+  /** Present only for a WebSocket request, in place of `http`. */
+  websocket?: YamlWebsocket;
   runtime?: YamlRuntime;
   settings?: YamlSettings;
   docs?: string;

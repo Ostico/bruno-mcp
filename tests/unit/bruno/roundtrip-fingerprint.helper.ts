@@ -169,9 +169,23 @@ export function declaredInterfaceKeys(source: string, interfaceName: string): st
   return keys;
 }
 
-/** `src/bruno/types.ts`, read from disk so the guards can inspect declarations. */
+/**
+ * The request model's declarations, read from disk so the guards can inspect
+ * them.
+ *
+ * Two files, concatenated: `types.ts` holds most of the model, and the gRPC and
+ * WebSocket request shapes live in `transport-requests.ts` because `types.ts` is
+ * within a few dozen lines of its `max-lines` ceiling. `declaredInterfaceKeys`
+ * finds an interface by name anywhere in the string it is given, so joining the
+ * two keeps a single source argument and means moving an interface between the
+ * files cannot quietly drop it out of the coverage guard.
+ */
 export function readTypesSource(): string {
-  return readFileSync(join(__dirname, '..', '..', '..', 'src', 'bruno', 'types.ts'), 'utf8');
+  const dir = join(__dirname, '..', '..', '..', 'src', 'bruno');
+  return [
+    readFileSync(join(dir, 'types.ts'), 'utf8'),
+    readFileSync(join(dir, 'transport-requests.ts'), 'utf8'),
+  ].join('\n');
 }
 
 /**
