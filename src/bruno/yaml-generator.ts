@@ -209,8 +209,13 @@ function stripEmpty(obj: unknown): unknown {
 export function generateYamlRequest(request: YamlRequest): string {
   const doc: Record<string, unknown> = {};
 
+  // A non-http kind — grpc, ws — has no http block at all, and its target lives
+  // in its own top-level block. Narrowed once here so the section below reads the
+  // same as it did when the field was mandatory.
+  const httpBlock = request.http;
+
   // info section
-  const isGraphql = isGraphqlRequest(request.info.type, request.http.body);
+  const isGraphql = isGraphqlRequest(request.info.type, httpBlock?.body);
 
   const info: Record<string, unknown> = { name: request.info.name };
   // `info.type` is what Bruno dispatches on, so it has to agree with the block
@@ -233,8 +238,8 @@ export function generateYamlRequest(request: YamlRequest): string {
   // http, or graphql — the request block. Bruno gives a graphql request its own
   // top-level `graphql:` block and dispatches on `info.type` to choose a parser,
   // so the two are alternatives rather than a body variant.
-  const headers = request.http.headers?.length
-    ? request.http.headers.map((h) => {
+  const headers = httpBlock?.headers?.length
+    ? httpBlock.headers.map((h) => {
       const header: Record<string, unknown> = { name: h.name, value: h.value };
       if (h.disabled) header.disabled = true;
       applyExtraKeys(header, h.extra, YAML_HEADER_KEYS);
@@ -242,8 +247,8 @@ export function generateYamlRequest(request: YamlRequest): string {
     })
     : undefined;
 
-  const params = request.http.params?.length
-    ? request.http.params.map((p) => {
+  const params = httpBlock?.params?.length
+    ? httpBlock.params.map((p) => {
       const param: Record<string, unknown> = { name: p.name, value: p.value };
       if (p.type) param.type = p.type;
       if (p.disabled) param.disabled = p.disabled;
@@ -252,32 +257,35 @@ export function generateYamlRequest(request: YamlRequest): string {
     })
     : undefined;
 
-  if (isGraphql) {
+  // Three-way, not two: a grpc or ws request has no http block to write, and
+  // fabricating an empty one would emit an `http:` key no Bruno file has. Its own
+  // target block is written separately.
+  if (httpBlock && isGraphql) {
     // Upstream's key order for this block, which differs from the http one:
     // params come before body here, and after it there.
     const graphql: Record<string, unknown> = {
-      method: request.http.method,
-      url: request.http.url,
+      method: httpBlock.method,
+      url: httpBlock.url,
     };
     if (headers) graphql.headers = headers;
     if (params) graphql.params = params;
-    const graphqlBody = graphqlBodyToYaml(request.http.body);
+    const graphqlBody = graphqlBodyToYaml(httpBlock.body);
     if (graphqlBody) graphql.body = graphqlBody;
-    if (request.http.auth !== undefined) graphql.auth = request.http.auth;
-    applyExtraKeys(graphql, request.http.extra, YAML_GRAPHQL_KEYS);
+    if (httpBlock.auth !== undefined) graphql.auth = httpBlock.auth;
+    applyExtraKeys(graphql, httpBlock.extra, YAML_GRAPHQL_KEYS);
     doc.graphql = graphql;
-  } else {
+  } else if (httpBlock) {
     const http: Record<string, unknown> = {
-      method: request.http.method,
-      url: request.http.url,
+      method: httpBlock.method,
+      url: httpBlock.url,
     };
     if (headers) http.headers = headers;
-    if (request.http.body) {
-      http.body = stripEmpty(serialiseBody(request.http.body));
+    if (httpBlock.body) {
+      http.body = stripEmpty(serialiseBody(httpBlock.body));
     }
     if (params) http.params = params;
-    if (request.http.auth !== undefined) http.auth = request.http.auth;
-    applyExtraKeys(http, request.http.extra, YAML_HTTP_KEYS);
+    if (httpBlock.auth !== undefined) http.auth = httpBlock.auth;
+    applyExtraKeys(http, httpBlock.extra, YAML_HTTP_KEYS);
     doc.http = http;
   }
 

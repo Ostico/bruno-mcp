@@ -116,33 +116,39 @@ export class RequestBuilder {
 
       if (isYamlRequestFile(filePath)) {
         const yamlReq = parseYamlRequest(content);
+        // A kind with no http block carries its target elsewhere; narrowed once so
+        // the mapping below is not littered with the same optional chain.
+        const yamlHttp = yamlReq.http;
         const bruFile: BruFile = {
           meta: {
             name: yamlReq.info.name,
-            type: (yamlReq.info.type as 'http' | 'graphql') || 'http',
+            // `folder` cannot appear here: this is a request file.
+            type: yamlReq.info.type === 'folder' ? 'http' : (yamlReq.info.type ?? 'http'),
             seq: yamlReq.info.seq,
           },
-          http: {
-            method: yamlReq.http.method as HttpMethod,
-            url: yamlReq.http.url,
-            body: (yamlReq.http.body?.type as BodyType) || 'none',
-            auth: this.resolveAuthType(yamlReq.http.auth),
-          },
+          http: yamlHttp
+            ? {
+              method: yamlHttp.method as HttpMethod,
+              url: yamlHttp.url,
+              body: (yamlHttp.body?.type as BodyType) || 'none',
+              auth: this.resolveAuthType(yamlHttp.auth),
+            }
+            : undefined,
         };
 
-        if (yamlReq.http.headers && yamlReq.http.headers.length > 0) {
+        if (yamlHttp?.headers && yamlHttp.headers.length > 0) {
           bruFile.headers = {};
-          for (const h of yamlReq.http.headers) {
+          for (const h of yamlHttp.headers) {
             bruFile.headers[h.name] = h.value;
           }
         }
 
-        if (yamlReq.http.body && yamlReq.http.body.type !== 'none') {
-          bruFile.body = yamlBodyToBruBody(yamlReq.http.body);
+        if (yamlHttp?.body && yamlHttp.body.type !== 'none') {
+          bruFile.body = yamlBodyToBruBody(yamlHttp.body);
         }
 
-        if (yamlReq.http.auth && typeof yamlReq.http.auth !== 'string') {
-          bruFile.auth = yamlReq.http.auth as BruAuth;
+        if (yamlHttp?.auth && typeof yamlHttp.auth !== 'string') {
+          bruFile.auth = yamlHttp.auth as BruAuth;
         }
 
         if (yamlReq.runtime?.scripts && yamlReq.runtime.scripts.length > 0) {
@@ -190,35 +196,59 @@ export class RequestBuilder {
         const content = await fs.readFile(filePath, 'utf-8');
         const yamlReq = parseYamlRequest(content);
 
+        // Kind-agnostic updates apply to every kind: refusing them would make a
+        // grpc or ws request uneditable, which is the same data problem from the
+        // other side.
         if (updates.name) yamlReq.info.name = updates.name;
         if (updates.sequence !== undefined) yamlReq.info.seq = updates.sequence;
-        if (updates.method) yamlReq.http.method = updates.method;
-        if (updates.url) yamlReq.http.url = updates.url;
-        if (updates.headers) {
-          yamlReq.http.headers = mergeYamlHeaderList(yamlReq.http.headers, updates.headers);
+
+        // Everything below reshapes the http block. A kind that has none cannot
+        // accept these, and writing them would either crash or silently graft an
+        // http block onto a grpc request. Refused by name instead.
+        const yamlHttp = yamlReq.http;
+        if (!yamlHttp) {
+          const httpOnly = (
+            ['method', 'url', 'headers', 'body', 'auth', 'query', 'pathParams'] as const
+          ).filter((field) => updates[field] !== undefined);
+          if (httpOnly.length > 0) {
+            return {
+              success: false,
+              path: filePath,
+              error: `Cannot set ${httpOnly.join(', ')} on a "${yamlReq.info.type ?? 'unknown'}" `
+                + 'request: it has no http block. Only name and sequence can be changed.',
+            };
+          }
         }
-        if (updates.body && updates.body.type !== 'none') {
-          yamlReq.http.body = toYamlBody(updates.body);
-        }
-        if (updates.auth?.type === 'inherit') {
-          // The bare token, not a mapping: see the same branch on the create path.
-          yamlReq.http.auth = 'inherit';
-        } else if (updates.auth && updates.auth.type !== 'none') {
-          const authObj: Record<string, unknown> = { type: updates.auth.type };
-          if (updates.auth.config) Object.assign(authObj, updates.auth.config);
-          yamlReq.http.auth = authObj as YamlAuth;
-        }
-        if (updates.query) {
-          yamlReq.http.params = replaceQueryParams(
-            yamlReq.http.params,
-            queryToYamlParams(updates.query),
-          );
-        }
-        if (updates.pathParams) {
-          yamlReq.http.params = replacePathParams(
-            yamlReq.http.params,
-            pathParamsToYamlParams(updates.pathParams),
-          );
+
+        if (yamlHttp) {
+          if (updates.method) yamlHttp.method = updates.method;
+          if (updates.url) yamlHttp.url = updates.url;
+          if (updates.headers) {
+            yamlHttp.headers = mergeYamlHeaderList(yamlHttp.headers, updates.headers);
+          }
+          if (updates.body && updates.body.type !== 'none') {
+            yamlHttp.body = toYamlBody(updates.body);
+          }
+          if (updates.auth?.type === 'inherit') {
+            // The bare token, not a mapping: see the same branch on the create path.
+            yamlHttp.auth = 'inherit';
+          } else if (updates.auth && updates.auth.type !== 'none') {
+            const authObj: Record<string, unknown> = { type: updates.auth.type };
+            if (updates.auth.config) Object.assign(authObj, updates.auth.config);
+            yamlHttp.auth = authObj as YamlAuth;
+          }
+          if (updates.query) {
+            yamlHttp.params = replaceQueryParams(
+              yamlHttp.params,
+              queryToYamlParams(updates.query),
+            );
+          }
+          if (updates.pathParams) {
+            yamlHttp.params = replacePathParams(
+              yamlHttp.params,
+              pathParamsToYamlParams(updates.pathParams),
+            );
+          }
         }
         if (updates.assert) {
           yamlReq.assert = assertionsToYaml(updates.assert);
@@ -562,28 +592,32 @@ export class RequestBuilder {
         url: input.url,
       },
     };
+    // Always present on this path: this builder only authors http requests, and
+    // the block is constructed directly above. Bound to a local so the field's
+    // optionality does not have to be re-checked at every assignment below.
+    const http = yamlRequest.http as NonNullable<YamlRequest['http']>;
 
     // Add headers
     if (input.headers && Object.keys(input.headers).length > 0) {
-      yamlRequest.http.headers = Object.entries(input.headers).map(
+      http.headers = Object.entries(input.headers).map(
         ([name, value]): YamlHeader => ({ name, value }),
       );
     }
 
     // Add body
     if (input.body && input.body.type !== 'none') {
-      yamlRequest.http.body = toYamlBody(input.body);
+      http.body = toYamlBody(input.body);
     }
 
     // Add query params
     if (input.query && Object.keys(input.query).length > 0) {
-      yamlRequest.http.params = queryToYamlParams(input.query);
+      http.params = queryToYamlParams(input.query);
     }
 
     // Path parameters share the `params` field, distinguished by `type`.
     if (input.pathParams && Object.keys(input.pathParams).length > 0) {
-      yamlRequest.http.params = [
-        ...(yamlRequest.http.params ?? []),
+      http.params = [
+        ...(http.params ?? []),
         ...pathParamsToYamlParams(input.pathParams),
       ];
     }
@@ -606,7 +640,7 @@ export class RequestBuilder {
       // Bruno writes inherit as the bare token, not as a mapping with a type key:
       // there is no local credential to carry, only the instruction to look up the
       // tree. A `{ type: inherit }` mapping is not what its reader matches.
-      yamlRequest.http.auth = 'inherit';
+      http.auth = 'inherit';
     } else if (input.auth && input.auth.type !== 'none') {
       const authObj: Record<string, unknown> = { type: toBrunoAuthMode(input.auth.type) };
       if (input.auth.type === 'bearer' && input.auth.config.token) {
@@ -623,7 +657,7 @@ export class RequestBuilder {
           authObj.placement = toYamlApiKeyPlacement(input.auth.config);
         }
       }
-      yamlRequest.http.auth = authObj as YamlAuth;
+      http.auth = authObj as YamlAuth;
     }
 
     return yamlRequest;
@@ -709,6 +743,7 @@ export class RequestBuilder {
   private applyUpdates(existingBru: BruFile, updates: Partial<CreateRequestInput>): BruFile {
     const updated = { ...existingBru };
 
+    // Name and sequence are kind-agnostic and apply to every kind.
     if (updates.name) {
       updated.meta.name = updates.name;
     }
@@ -717,12 +752,30 @@ export class RequestBuilder {
       updated.meta.seq = updates.sequence;
     }
 
+    // The rest reshape the http block. A kind that has none — grpc, ws — cannot
+    // accept them, and grafting an http block onto such a request would make it
+    // unopenable in Bruno and change which host it contacts.
+    const httpBlock = updated.http;
+    if (!httpBlock) {
+      const httpOnly = (
+        ['method', 'url', 'headers', 'body', 'auth', 'query', 'pathParams'] as const
+      ).filter((field) => updates[field] !== undefined);
+      if (httpOnly.length > 0) {
+        throw new BrunoError(
+          `Cannot set ${httpOnly.join(', ')} on a "${updated.meta.type}" request: `
+            + 'it has no http block. Only name and sequence can be changed.',
+          'VALIDATION_ERROR',
+        );
+      }
+      return updated;
+    }
+
     if (updates.method) {
-      updated.http.method = updates.method;
+      httpBlock.method = updates.method;
     }
 
     if (updates.url) {
-      updated.http.url = updates.url;
+      httpBlock.url = updates.url;
     }
 
     if (updates.headers) {
@@ -754,7 +807,7 @@ export class RequestBuilder {
     }
 
     if (updates.body) {
-      updated.http.body = updates.body.type;
+      httpBlock.body = updates.body.type;
       updated.body = toBruBody(updates.body);
     }
 
@@ -762,10 +815,10 @@ export class RequestBuilder {
       // Switching to inherit leaves no local credential, so the block goes with
       // the mode instead of being replaced by a typed-but-empty one. A file that
       // says inherit in the http block must not carry a credential underneath it.
-      updated.http.auth = 'inherit';
+      httpBlock.auth = 'inherit';
       delete updated.auth;
     } else if (updates.auth) {
-      updated.http.auth = toBrunoAuthMode(updates.auth.type);
+      httpBlock.auth = toBrunoAuthMode(updates.auth.type);
       updated.auth = {
         type: updates.auth.type
       };

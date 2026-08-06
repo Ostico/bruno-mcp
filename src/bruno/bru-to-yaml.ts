@@ -84,7 +84,7 @@ export function bruFileToYamlRequest(bru: BruFile): YamlRequest {
   // way a failed assertion does. `local` is carried through unchanged.
   const vars = bruVarSetsToYamlVars(bru.varSets);
 
-  let body: YamlRequest['http']['body'];
+  let body: NonNullable<YamlRequest['http']>['body'];
   if (bru.body?.formData && bru.body.formData.length > 0) {
     body = {
       type: 'multipart-form',
@@ -127,14 +127,20 @@ export function bruFileToYamlRequest(bru: BruFile): YamlRequest {
 
   return {
     info: { name: bru.meta.name, type: bru.meta.type, seq: bru.meta.seq, tags: bru.meta.tags },
-    http: {
-      method: bru.http.method,
-      url: bru.http.url,
-      headers,
-      params,
-      body,
-      auth: bruAuthToYamlAuth(bru.auth, bru.http.auth),
-    },
+    // Omitted for a non-http kind, whose target lives in its own block. Every
+    // executor path reads the request through this function, so a fabricated
+    // empty http block here would be indistinguishable downstream from a real
+    // one — which is how a grpc request came to run as a GET to an empty URL.
+    http: bru.http
+      ? {
+        method: bru.http.method,
+        url: bru.http.url,
+        headers,
+        params,
+        body,
+        auth: bruAuthToYamlAuth(bru.auth, bru.http.auth),
+      }
+      : undefined,
     runtime: scripts.scripts.length > 0 ? scripts : undefined,
     // buildFetchOptions reads the timeout, redirect policy, TLS options and proxy
     // off `settings`. Without forwarding it, every one of those was unreachable
@@ -161,7 +167,7 @@ export function bruFileToYamlRequest(bru: BruFile): YamlRequest {
  */
 export function bruAuthToYamlAuth(
   auth: BruFile['auth'],
-  mode?: BruFile['http']['auth']
+  mode?: NonNullable<BruFile['http']>['auth']
 ): YamlAuth | undefined {
   // `inherit` is declared in the http block and has no auth block of its own —
   // there is no local credential to carry, only the instruction to look up the

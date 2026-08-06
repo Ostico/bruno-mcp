@@ -74,8 +74,12 @@ export interface RequestView {
   seq?: number;
   /** Runner tags, omitted when the request has none. */
   tags?: string[];
-  method: string;
-  url: string;
+  /**
+   * Absent for a kind that has no http block — grpc, ws. `type` identifies the
+   * kind, and the kind's own target is surfaced in its own field.
+   */
+  method?: string;
+  url?: string;
   headers: RequestViewEntry[];
   params: { query: RequestViewEntry[]; path: RequestViewEntry[] };
   body?: RequestViewBody;
@@ -184,14 +188,14 @@ function fromBru(bru: BruFile, filePath: string): RequestView {
   if (postResponse?.length) scripts['post-response'] = postResponse.join('\n');
   if (tests?.length) scripts.tests = tests.join('\n');
 
-  const body: RequestViewBody = { type: bru.body?.type ?? bru.http.body ?? 'none' };
+  const body: RequestViewBody = { type: bru.body?.type ?? bru.http?.body ?? 'none' };
   if (bru.body?.content !== undefined) body.content = bru.body.content;
   if (bru.body?.formData) body.formData = bru.body.formData.map(multipartPart);
   if (bru.body?.formUrlEncoded) body.formUrlEncoded = bru.body.formUrlEncoded.map(pairPart);
   if (bru.body?.graphql) body.graphql = bru.body.graphql;
   if (bru.body?.file) body.file = bru.body.file;
 
-  const mode = bru.auth?.type ?? bru.http.auth;
+  const mode = bru.auth?.type ?? bru.http?.auth;
 
   return compact({
     filePath,
@@ -200,8 +204,10 @@ function fromBru(bru: BruFile, filePath: string): RequestView {
     type: bru.meta.type,
     seq: bru.meta.seq,
     tags: bru.meta.tags,
-    method: bru.http.method,
-    url: bru.http.url,
+    // Absent for a grpc or ws request; `type` above is what identifies it, and
+    // its own target is surfaced separately.
+    method: bru.http?.method,
+    url: bru.http?.url,
     headers,
     params: {
       query: bruParams(bru.params, 'query'),
@@ -252,7 +258,7 @@ function fromYaml(yaml: YamlRequest, filePath: string): RequestView {
   }
 
   let body: RequestViewBody | undefined;
-  const raw = yaml.http.body;
+  const raw = yaml.http?.body;
   if (raw) {
     body = { type: raw.type };
     const data = raw.data;
@@ -269,7 +275,7 @@ function fromYaml(yaml: YamlRequest, filePath: string): RequestView {
     }
   }
 
-  const auth = yaml.http.auth;
+  const auth = yaml.http?.auth;
   const mode = typeof auth === 'string' ? auth : auth?.type;
   let config: Record<string, unknown> | undefined;
   if (auth && typeof auth !== 'string') {
@@ -284,12 +290,13 @@ function fromYaml(yaml: YamlRequest, filePath: string): RequestView {
     type: yaml.info.type,
     seq: yaml.info.seq,
     tags: yaml.info.tags,
-    method: yaml.http.method,
-    url: yaml.http.url,
-    headers: (yaml.http.headers ?? []).map((h) => entry(h.name, h.value, h.disabled === true)),
+    // Absent for a grpc or ws request; `type` above identifies the kind.
+    method: yaml.http?.method,
+    url: yaml.http?.url,
+    headers: (yaml.http?.headers ?? []).map((h) => entry(h.name, h.value, h.disabled === true)),
     params: {
-      query: yamlParams(yaml.http.params, 'query'),
-      path: yamlParams(yaml.http.params, 'path'),
+      query: yamlParams(yaml.http?.params, 'query'),
+      path: yamlParams(yaml.http?.params, 'path'),
     },
     body,
     auth: mode && mode !== 'none' ? { mode, config } : undefined,

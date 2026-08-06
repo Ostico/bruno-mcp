@@ -1,6 +1,7 @@
 import { bruToJsonV2, jsonToBruV2, bruToEnvJsonV2, envJsonToBruV2 } from '@usebruno/lang';
 import {
   BrunoError,
+  BRU_TYPE_TOKENS,
   type BruFile,
   type BruMeta,
   type BruHttpRequest,
@@ -68,9 +69,22 @@ export function parseBruRequest(content: string): BruFile {
     );
   }
 
+  // An unrecognised token is malformed, not an http request. Degrading it here
+  // would let a typo'd `type` dispatch as http while `read_request` reported
+  // something else — the kind and the payload must agree.
+  const rawType = json.meta?.type;
+  const kind = rawType == null ? 'http' : BRU_TYPE_TOKENS[rawType];
+  if (kind === undefined) {
+    throw new BrunoError(
+      `Unknown request type "${String(rawType)}" in meta block. `
+        + `Expected one of: ${Object.keys(BRU_TYPE_TOKENS).join(', ')}`,
+      'PARSE_ERROR',
+    );
+  }
+
   const meta: BruMeta = {
     name: json.meta?.name ?? 'Untitled',
-    type: (json.meta?.type as 'http' | 'graphql') ?? 'http',
+    type: kind,
   };
   if (json.meta?.seq != null) {
     const seq = typeof json.meta.seq === 'string' ? parseInt(json.meta.seq, 10) : json.meta.seq;
@@ -81,9 +95,14 @@ export function parseBruRequest(content: string): BruFile {
   const metaExtra = collectExtraKeys(json.meta, BRU_META_KEYS);
   if (metaExtra) meta.extra = metaExtra;
 
+  // A grpc or ws request has no http block, and synthesizing one used to make it
+  // look like a GET to an empty URL — which then ran, and failed SSRF validation,
+  // instead of reporting the kind. `undefined` is the honest answer.
+  const hasHttpBlock = meta.type === 'http' || meta.type === 'graphql';
+
   // Checked, not asserted: the block name is whatever the file contained.
   const method = toHttpMethod(json.http?.method);
-  const http: BruHttpRequest = {
+  const http: BruHttpRequest | undefined = !hasHttpBlock ? undefined : {
     method,
     url: json.http?.url ?? '',
     // NOT validated against BodyType/AuthType, deliberately: a .bru file uses
@@ -114,7 +133,7 @@ export function parseBruRequest(content: string): BruFile {
 
   let auth: BruAuth | undefined;
   if (json.auth && Object.keys(json.auth).length > 0) {
-    auth = { type: http.auth, ...json.auth } as BruAuth;
+    auth = { type: http?.auth, ...json.auth } as BruAuth;
   }
 
   let body: BruBody | undefined;
@@ -130,10 +149,14 @@ export function parseBruRequest(content: string): BruFile {
   // happens only where a content block is present, because that is where the
   // spelling has to agree with the key the content was found under; a bare
   // declaration is carried back out in Bruno's own vocabulary.
-  if (http.body !== undefined) {
+  if (http?.body !== undefined) {
     body = { type: normalizeBodyType(http.body) };
   }
-  if (json.body && Object.keys(json.body).length > 0) {
+  // Guarded on `http`, not only on the body block being present: a grpc or ws
+  // request HAS a body block — `{mode:'grpc', grpc:[…]}` — and running it through
+  // the http body dispatch below would look up `rawBody[undefined]` and quietly
+  // discard every message. Those messages are read from their own block instead.
+  if (http && json.body && Object.keys(json.body).length > 0) {
     const multipart = (json.body as Record<string, unknown>).multipartForm;
     if (Array.isArray(multipart)) {
       // Normalize the non-standard 'multipartForm' body type to 'form-data'.
@@ -483,12 +506,17 @@ export function generateBruRequest(bruFile: BruFile): string {
       // carried `name` win over the one the caller just set.
       ...carriedMetaKeys(bruFile.meta.extra),
     },
-    http: {
-      method: bruFile.http.method.toLowerCase(),
-      url: bruFile.http.url,
-      body: bruFile.http.body ?? 'none',
-      auth: bruFile.http.auth ?? 'none',
-    },
+    // Omitted entirely for a non-http kind. `jsonToBruV2` writes the block only
+    // `if (http?.method)`, so an absent one produces no block rather than an
+    // empty `get {}` — which is the fabrication this replaces.
+    http: bruFile.http
+      ? {
+        method: bruFile.http.method.toLowerCase(),
+        url: bruFile.http.url,
+        body: bruFile.http.body ?? 'none',
+        auth: bruFile.http.auth ?? 'none',
+      }
+      : undefined,
   };
 
   if (bruFile.headersList && bruFile.headersList.length > 0) {
@@ -516,7 +544,7 @@ export function generateBruRequest(bruFile: BruFile): string {
 
   if (
     bruFile.body?.formData &&
-    (bruFile.http.body === 'form-data' || bruFile.http.body === 'multipart-form')
+    (bruFile.http?.body === 'form-data' || bruFile.http?.body === 'multipart-form')
   ) {
     // @usebruno/lang expects http.body === 'multipartForm' and a
     // body.multipartForm array of { name, value, enabled, type, contentType }.
@@ -580,7 +608,7 @@ export function generateBruRequest(bruFile: BruFile): string {
       })),
     };
   } else if (bruFile.body?.content) {
-    const converted = bodyFromContent(bruFile.http.body, bruFile.body.content);
+    const converted = bodyFromContent(bruFile.http?.body ?? 'none', bruFile.body.content);
     if (converted.mode) (json.http as Record<string, unknown>).body = converted.mode;
     if (converted.body) json.body = converted.body;
   }

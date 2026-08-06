@@ -49,7 +49,10 @@ export function digestRetryHeader(
     return null;
   }
 
-  const declared = yaml.http.auth;
+  // Digest is answered by re-sending an http request, so a kind with no http
+  // block cannot participate — and it never reaches here, because only the http
+  // path produces a 401 to answer.
+  const declared = yaml.http?.auth;
   const mode = typeof declared === 'string' ? declared : declared?.type;
   const effective: YamlAuth | undefined =
     mode === 'inherit' ? rootChain?.auth : (declared as YamlAuth | undefined);
