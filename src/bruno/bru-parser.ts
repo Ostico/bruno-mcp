@@ -7,6 +7,7 @@ import type {
 import {
   BrunoError,
   BRU_TYPE_TOKENS,
+  type RequestKind,
   type BruFile,
   type BruMeta,
   type BruHttpRequest,
@@ -240,6 +241,56 @@ function readGrpcBlock(raw: unknown, messages: unknown): BruGrpc | undefined {
   return grpc;
 }
 
+/**
+ * Which block each kind may carry its target in, `.bru` spellings.
+ *
+ * `http` covers the method blocks — `get`, `post` and the rest — which the grammar
+ * normalises to a single `http` object. A graphql request carries its target in one
+ * of those too, so the two kinds share an entry, and the payload block behind them
+ * (`body:graphql`) is not a target.
+ */
+const BRU_BLOCKS_FOR_KIND: Readonly<Record<string, readonly string[]>> = {
+  http: ['http'],
+  graphql: ['http'],
+  grpc: ['grpc'],
+  ws: ['ws'],
+};
+
+/**
+ * Refuse a `.bru` file whose declared kind and target block disagree.
+ *
+ * The same rule as the `.yml` side, and it has to be here too: a `grpc` file with
+ * a `get` block currently has that block discarded on read — silently — and then
+ * deleted on the next write. Refusing says which of the two the file cannot be,
+ * rather than picking one and destroying the evidence.
+ */
+function assertBruKindMatchesBlocks(kind: RequestKind, json: BruLangJson): void {
+  const allowed = BRU_BLOCKS_FOR_KIND[kind];
+  if (!allowed) return;
+
+  // A method block always arrives with a method; an `http` object holding neither
+  // a method nor a url is not a target the author wrote, so it is not evidence of
+  // a mismatch.
+  const httpTarget = json.http !== undefined
+    && (json.http.method !== undefined || json.http.url !== undefined);
+  const present: Record<string, boolean> = {
+    http: httpTarget,
+    grpc: json.grpc !== undefined,
+    ws: json.ws !== undefined,
+  };
+
+  for (const block of ['http', 'grpc', 'ws'] as const) {
+    if (!present[block] || allowed.includes(block)) continue;
+    const token = json.meta?.type ?? kind;
+    throw new BrunoError(
+      `Request kind and payload disagree: meta.type declared ${token} `
+        + `but the file carries a "${block}" block. A request of type "${token}" `
+        + `carries its target in "${allowed.join('" or "')}".`,
+      'PARSE_ERROR',
+    );
+  }
+}
+
 function readWsBlock(raw: unknown, messages: unknown): BruWs | undefined {
   const obj = asBlock(raw);
   if (!obj) return undefined;
@@ -293,6 +344,8 @@ export function parseBruRequest(content: string): BruFile {
   if (tags) meta.tags = tags;
   const metaExtra = collectExtraKeys(json.meta, BRU_META_KEYS);
   if (metaExtra) meta.extra = metaExtra;
+
+  assertBruKindMatchesBlocks(meta.type, json);
 
   // A grpc or ws request has no http block, and synthesizing one used to make it
   // look like a GET to an empty URL — which then ran, and failed SSRF validation,

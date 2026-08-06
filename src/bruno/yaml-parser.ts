@@ -24,7 +24,9 @@ import {
   type YamlAssertion,
   type YamlVar,
   type YamlVars,
+  type RequestKind,
   YAML_TYPE_TOKENS,
+  YAML_TOKEN_FOR_KIND,
 } from './types.js';
 import type {
   YamlGrpc,
@@ -564,6 +566,58 @@ function parseWebsocketSection(raw: Record<string, unknown>): YamlWebsocket {
   return websocket;
 }
 
+/**
+ * Which top-level blocks each kind may carry its target in.
+ *
+ * `graphql` has two entries and the reason is historical rather than aesthetic:
+ * upstream gives a graphql request its own block, and every graphql `.yml` this
+ * server wrote before the writer was corrected put the request under `http:`. A
+ * literal "the block must be named after the kind" rule would refuse all of those
+ * files. Every other kind has exactly one.
+ */
+const YAML_BLOCKS_FOR_KIND: Record<string, readonly string[]> = {
+  http: ['http'],
+  graphql: ['graphql', 'http'],
+  grpc: ['grpc'],
+  ws: ['websocket'],
+};
+
+/**
+ * Refuse a document whose declared kind and target block disagree.
+ *
+ * `info.type: grpc` with an `http:` block is the shape that matters: `read_request`
+ * would describe the request from the type while the executor dispatched on the
+ * block, so a request that presents as a confined internal gRPC call could reach
+ * an arbitrary host over HTTP. Neither signal is preferred silently, and this is
+ * not a warning — a warning on a run is easy to miss, and this one decides which
+ * host is contacted.
+ *
+ * A document with no `info.type` is left alone: there is nothing declared for a
+ * block to contradict, and upstream reads such a file as http.
+ */
+function assertKindMatchesBlocks(
+  kind: YamlInfo['type'],
+  present: Record<'http' | 'graphql' | 'grpc' | 'websocket', boolean>,
+): void {
+  if (!kind) return;
+  const allowed = YAML_BLOCKS_FOR_KIND[kind];
+  // A kind with no entry — `folder` reaching the request parser — has no target
+  // block of its own, so there is nothing to compare. The missing-block check
+  // above has already spoken for that case.
+  if (!allowed) return;
+
+  const token = YAML_TOKEN_FOR_KIND[kind as RequestKind] ?? kind;
+  for (const block of ['http', 'graphql', 'grpc', 'websocket'] as const) {
+    if (!present[block] || allowed.includes(block)) continue;
+    throw new BrunoError(
+      `Request kind and payload disagree: info.type declared ${token} `
+        + `but the document carries a "${block}" block. A request of type "${token}" `
+        + `carries its target in "${allowed.join('" or "')}".`,
+      'PARSE_ERROR',
+    );
+  }
+}
+
 export function parseYamlRequest(content: string): YamlRequest {
   const doc = safeParse(content, 'request');
   const infoRaw = requireSection(doc, 'info', 'request');
@@ -589,6 +643,13 @@ export function parseYamlRequest(content: string): YamlRequest {
   const result: YamlRequest = {
     info: parseInfo(infoRaw),
   };
+
+  assertKindMatchesBlocks(result.info.type, {
+    http: httpRaw !== undefined,
+    graphql: graphqlRaw !== undefined,
+    grpc: grpcRaw !== undefined,
+    websocket: websocketRaw !== undefined,
+  });
 
   if (grpcRaw) result.grpc = parseGrpcSection(grpcRaw);
   if (websocketRaw) result.websocket = parseWebsocketSection(websocketRaw);
