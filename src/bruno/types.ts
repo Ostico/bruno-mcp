@@ -9,6 +9,10 @@ import type {
   YamlGrpc,
   YamlWebsocket,
 } from './transport-requests.js';
+import type {
+  GrpcResultDetail,
+  WebsocketResultDetail,
+} from './transport-results.js';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS';
 
@@ -1113,6 +1117,16 @@ export interface RequestExecutionResult {
   name: string;
   method: string;
   url: string;
+  /**
+   * HTTP status, or 0 for a request that never got an answer.
+   *
+   * 0 is the refusal sentinel across every kind — SSRF blocked, unsupported kind,
+   * a crash before the wire. It is NOT overloaded with a protocol status, which
+   * matters most for gRPC: gRPC's OK code is also 0, so mapping it here would make
+   * a successful call and a security refusal indistinguishable in the field an
+   * agent reads first. gRPC's code lives in `grpc.code`, and the presence of the
+   * `grpc` object is what separates "executed" from "refused".
+   */
   status: number;
   duration_ms: number;
   tests: TestResult[];
@@ -1125,6 +1139,10 @@ export interface RequestExecutionResult {
   response_body?: string;
   response_body_truncated?: boolean;
   response_content_type?: string;
+  /** Present only for a gRPC request that actually reached a server. */
+  grpc?: GrpcResultDetail;
+  /** Present only for a WebSocket session that actually opened. */
+  websocket?: WebsocketResultDetail;
 }
 
 /**
