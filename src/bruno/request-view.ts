@@ -87,6 +87,15 @@ export interface RequestView {
   scripts: Record<string, string>;
   assert: RequestViewEntry[];
   vars: { preRequest: RequestViewVar[]; postResponse: RequestViewVar[] };
+  /**
+   * Present only for the kind that has it. Without these two a gRPC or WebSocket
+   * request read back as a name, a kind and nothing else: the http fields are
+   * absent because it has no http block, so the target itself was invisible — a
+   * silently incomplete answer, which for an agent is worse than the error these
+   * files used to produce.
+   */
+  grpc?: RequestViewGrpc;
+  websocket?: RequestViewWebsocket;
   settings?: Record<string, unknown>;
   docs?: string;
   /**
@@ -96,6 +105,35 @@ export interface RequestView {
    * from a run that quietly goes out unauthenticated.
    */
   notes: string[];
+}
+
+/**
+ * What a gRPC request holds, as read back.
+ *
+ * `messages` is a count rather than the payloads themselves: a stored message can
+ * be an arbitrarily large body, and a read tool that inlined every one of them
+ * would make listing a collection expensive in exactly the case — a streaming
+ * request with many saved messages — where the caller asked only what is there.
+ */
+export interface RequestViewGrpc {
+  url: string;
+  method?: string;
+  protoPath?: string;
+  methodType?: string;
+  /** How many messages are stored, not the messages themselves. */
+  messages: number;
+  /** gRPC's own credential block. Only this kind has one. */
+  metadata?: RequestViewEntry[];
+}
+
+/**
+ * What a WebSocket request holds. No method, proto path or metadata: it has one
+ * target, no service definition, and its credentials are ordinary headers, which
+ * the view already reports under `headers`.
+ */
+export interface RequestViewWebsocket {
+  url: string;
+  messages: number;
 }
 
 /** Auth modes stored faithfully but never turned into a credential on the wire. */
@@ -132,7 +170,40 @@ function compact(view: RequestView): RequestView {
   // Absent rather than empty, so a request with no tags does not read as one
   // whose tags were removed.
   if (view.tags === undefined) delete view.tags;
+  // Absent for the kinds that have no such block, so an http request's view is
+  // exactly what it was before these two fields existed.
+  if (view.grpc === undefined) delete view.grpc;
+  if (view.websocket === undefined) delete view.websocket;
   return view;
+}
+
+/**
+ * The gRPC summary, built from either dialect's model.
+ *
+ * The two callers differ only in how they spell the switched-off flag on a
+ * metadata entry — `.bru` records `enabled: false`, the run model `disabled: true`
+ * — so each passes an already-normalised list rather than this function learning
+ * both polarities.
+ */
+function grpcSummary(
+  block: { url: string; method?: string; protoPath?: string; methodType?: string; messages?: unknown[] },
+  metadata: RequestViewEntry[] | undefined,
+): RequestViewGrpc {
+  const summary: RequestViewGrpc = {
+    url: block.url,
+    messages: block.messages?.length ?? 0,
+  };
+  if (block.method !== undefined) summary.method = block.method;
+  if (block.protoPath !== undefined) summary.protoPath = block.protoPath;
+  if (block.methodType !== undefined) summary.methodType = block.methodType;
+  if (metadata?.length) summary.metadata = metadata;
+  return summary;
+}
+
+function websocketSummary(
+  block: { url: string; messages?: unknown[] },
+): RequestViewWebsocket {
+  return { url: block.url, messages: block.messages?.length ?? 0 };
 }
 
 function bruAuthConfig(bru: BruFile): Record<string, unknown> | undefined {
@@ -208,6 +279,16 @@ function fromBru(bru: BruFile, filePath: string): RequestView {
     // its own target is surfaced separately.
     method: bru.http?.method,
     url: bru.http?.url,
+    // `.bru` records `enabled: false` and omits the key when enabled; the view
+    // reports `disabled: true` and omits it when enabled. Forwarding the flag
+    // unchanged would show a switched-off credential as live.
+    grpc: bru.grpc
+      ? grpcSummary(
+        bru.grpc,
+        bru.metadata?.map((m) => entry(m.name, m.value, m.enabled === false)),
+      )
+      : undefined,
+    websocket: bru.ws ? websocketSummary(bru.ws) : undefined,
     headers,
     params: {
       query: bruParams(bru.params, 'query'),
@@ -290,9 +371,17 @@ function fromYaml(yaml: YamlRequest, filePath: string): RequestView {
     type: yaml.info.type,
     seq: yaml.info.seq,
     tags: yaml.info.tags,
-    // Absent for a grpc or ws request; `type` above identifies the kind.
+    // Absent for a grpc or ws request; `type` above identifies the kind, and the
+    // block below carries the target.
     method: yaml.http?.method,
     url: yaml.http?.url,
+    grpc: yaml.grpc
+      ? grpcSummary(
+        yaml.grpc,
+        yaml.grpc.metadata?.map((m) => entry(m.name, m.value, m.disabled === true)),
+      )
+      : undefined,
+    websocket: yaml.websocket ? websocketSummary(yaml.websocket) : undefined,
     headers: (yaml.http?.headers ?? []).map((h) => entry(h.name, h.value, h.disabled === true)),
     params: {
       query: yamlParams(yaml.http?.params, 'query'),
