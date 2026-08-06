@@ -94,10 +94,14 @@ describe('a kind this server cannot run is refused, not crashed on', () => {
     await expect(runAll()).resolves.toBeDefined();
   });
 
+  // gRPC has a transport now, so the kind is no longer the reason. It is still
+  // refused here — the fixture's target is not allowlisted for SSRF — and the
+  // claim this file makes is unchanged: a refusal, by name, as a result rather
+  // than a throw, with the rest of the group still running.
   it('refuses a .bru gRPC request by name, with the refusal sentinel', async () => {
     const result = await byName('streamer');
     expect(result?.status).toBe(0);
-    expect(result?.error).toMatch(/cannot execute a "grpc" request/i);
+    expect(result?.error).toMatch(/^Blocked:/);
   });
 
   it('refuses a .bru WebSocket request by name', async () => {
@@ -109,7 +113,7 @@ describe('a kind this server cannot run is refused, not crashed on', () => {
   it('refuses a .yml gRPC request the same way — one rule, both dialects', async () => {
     const result = await byName('ymlstreamer');
     expect(result?.status).toBe(0);
-    expect(result?.error).toMatch(/cannot execute a "grpc" request/i);
+    expect(result?.error).toMatch(/^Blocked:/);
   });
 
   it('does not send a request for a refused kind', async () => {
@@ -140,8 +144,12 @@ describe('a kind this server cannot run is refused, not crashed on', () => {
     expect((await byName('socket'))?.method).toBe('WS');
   });
 
-  it('leaves the url empty rather than guessing a target', async () => {
-    expect((await byName('streamer'))?.url).toBe('');
+  // The kind refusal reports no url because it has no transport to read one from.
+  // gRPC now does, and reports the target it was refused for — which is what an
+  // agent needs to fix the refusal. WebSocket still has none.
+  it('reports the target it refused, or none when it never read one', async () => {
+    expect((await byName('streamer'))?.url).toBe('grpc://localhost:50051');
+    expect((await byName('socket'))?.url).toBe('');
   });
 });
 

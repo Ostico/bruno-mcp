@@ -36,6 +36,7 @@ import { redactUrl, stripCredentialHeaders } from './request-redaction.js';
 import { encodeRequestUrl, shouldEncodeUrl, hasExplicitScheme } from './url-encoder.js';
 import { scriptTimeoutMs } from './script-timeout.js';
 import { buildFetchOptions } from './fetch-options.js';
+import { executeGrpcRequest } from './grpc-transport.js';
 
 // Re-exported from its new home so existing importers keep working. The move was
 // made to free `max-lines` headroom in this file, not to change its surface.
@@ -144,10 +145,39 @@ async function executeSingleRequest(
   tokenCache: TokenCache = createTokenCache(),
 ): Promise<RequestExecutionResult> {
   // A kind with no http block cannot go down this pipeline: every step from the
-  // URL onwards is HTTP-shaped. Refused here as a result rather than a throw, so
-  // one such request in a collection fails by name and the rest of the group
-  // still runs. `status: 0` is this codebase's refusal sentinel.
+  // URL onwards is HTTP-shaped. Each such kind either has a transport of its own
+  // below, or is refused as a result rather than a throw — so one unsupported
+  // request in a collection fails by name and the rest of the group still runs.
+  // `status: 0` is this codebase's refusal sentinel.
   if (!yaml.http) {
+    if (yaml.grpc) {
+      // The same variable and oauth2 preparation the HTTP path does, in the same
+      // order, because the transport substitutes into a target and a message the
+      // same way a URL and a body are substituted into.
+      const grpcVars = variableStore
+        ? variableStore.merge(applyPreRequestVars(vars, yaml.vars))
+        : prepareVariables(applyPreRequestVars(vars, yaml.vars), new Map());
+      const grpcOauth = await resolveOAuth2(yaml, rootChain, grpcVars, tokenCache);
+      const { timeoutMs, warning } = resolveTimeout(yaml.settings?.timeout);
+      const result = await executeGrpcRequest({
+        request: yaml,
+        vars: grpcVars,
+        collectionRoot,
+        rootChain,
+        timeoutMs,
+        oauth2Token: grpcOauth.token,
+      });
+      // The token fetch reports its failure as one error string, the same way the
+      // http path folds it into that request's warnings — a failed exchange is a
+      // request sent without the credential, not a run that stops.
+      const warnings = [
+        ...(result.warnings ?? []),
+        ...(grpcOauth.error ? [grpcOauth.error] : []),
+        ...(warning ? [warning] : []),
+      ];
+      return warnings.length > 0 ? { ...result, warnings } : result;
+    }
+
     const kind = yaml.info.type ?? 'unknown';
     return {
       name: yaml.info.name,
@@ -156,7 +186,7 @@ async function executeSingleRequest(
       status: 0,
       duration_ms: 0,
       tests: [],
-      error: `Cannot execute a "${kind}" request: this server runs http and graphql requests only`,
+      error: `Cannot execute a "${kind}" request: this server runs http, graphql and grpc requests only`,
     };
   }
 
