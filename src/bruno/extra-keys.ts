@@ -78,6 +78,13 @@ export const YAML_REQUEST_KEYS: ReadonlySet<string> = new Set([
   // Modelled as the request block for a graphql request. Omitting it here would
   // carry the block in `extra` as well, emitting it twice.
   'graphql',
+  // Same reason, and they were deliberately absent for exactly as long as the
+  // generator could not write them: while the blocks were parsed but unwritable,
+  // the carried bag was the only thing keeping a `.yml` gRPC or WebSocket request
+  // intact through a read-modify-write. They join the list in the same commit
+  // that teaches the generator to emit them.
+  'grpc',
+  'websocket',
   'runtime',
   'settings',
   'docs',

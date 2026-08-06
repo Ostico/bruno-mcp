@@ -61,16 +61,21 @@ describe('a non-http kind carries no http block', () => {
   // an `as never` cast would never be type-checked and the assertion would be
   // about a shape no parser can produce.
   //
-  // Routed through the .bru parser rather than the .yml one because the .yml
-  // parser still refuses these files — it learns them separately. This is enough
-  // to prove the generator no longer fabricates a block, which is the claim here.
+  // Routed through the .bru parser rather than the .yml one because that is where
+  // the model in this file comes from. This is enough to prove the generator no
+  // longer fabricates a block, which is the claim here.
   it('does not emit an http key when generating a kind that has none', () => {
     const model = bruFileToYamlRequest(parseBruRequest(GRPC_BRU));
     expect(model.http).toBeUndefined();
 
     const generated = generateYamlRequest(model);
     expect(generated).not.toContain('http:');
-    expect(generated).not.toContain('method:');
+    // A `method:` key is no longer a proxy for a fabricated http block. When this
+    // test was written nothing could write a grpc block, so any `method:` in the
+    // output had to be an http one; now the gRPC method name is written where it
+    // belongs, and the claim has to be made against the block itself.
+    expect(generated).toContain('grpc:');
+    expect(generated).toMatch(/grpc:\n(?: +.*\n)* +method: \/pkg\.Svc\/Method\n/);
     expect(generated).toContain('name: Streamer');
   });
 });

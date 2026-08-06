@@ -139,27 +139,30 @@ describe('parseYamlRequest for the new kinds', () => {
   });
 });
 
-describe('the passthrough bag is still redundant on purpose', () => {
-  // Removing this redundancy belongs to PR1-T5, in the same commit that adds the
-  // writer. Doing it here would leave every commit in between regenerating a
-  // .yml gRPC file with its block deleted — a data-loss window this PR would
-  // have opened itself, in the one dialect that has no loss today.
-  it('still carries grpc in extra until the writer exists', () => {
+describe('the block is modelled, so the passthrough bag no longer carries it', () => {
+  // The redundancy these two tests used to assert was deliberate and temporary: it
+  // was what kept a .yml gRPC or WebSocket request intact while the blocks were
+  // parsed but unwritable. The generator emits them now, so a bag still holding
+  // them would write each block twice.
+  it('keeps grpc out of extra now that the generator writes it', () => {
     const parsed = parseYamlRequest(GRPC);
     expect(parsed.grpc?.url).toBe('grpc://localhost:50051');
-    expect(parsed.extra).toHaveProperty('grpc');
+    expect(parsed.extra ?? {}).not.toHaveProperty('grpc');
   });
 
-  it('still carries websocket in extra until the writer exists', () => {
-    expect(parseYamlRequest(WEBSOCKET).extra).toHaveProperty('websocket');
+  it('keeps websocket out of extra now that the generator writes it', () => {
+    expect(parseYamlRequest(WEBSOCKET).extra ?? {}).not.toHaveProperty('websocket');
   });
 
-  // Because the block is still written from `extra`, a round trip has to keep it.
-  // This is what makes the redundancy safe rather than merely untidy.
-  it('round-trips a grpc block through the generator via the carried bag', () => {
+  // The block is written from the model rather than from the bag, so the round
+  // trip has to keep it — and the file spelling has to be restored on the way out.
+  it('round-trips a grpc block through the generator from the model', () => {
     const written = generateYamlRequest(parseYamlRequest(GRPC));
     expect(written).toContain('grpc://localhost:50051');
     expect(written).toContain('protoFilePath: ./svc.proto');
+    // Once, not twice: the bag emitting the same block again would be invisible to
+    // a `toContain` assertion.
+    expect(written.match(/^grpc:$/gm)).toHaveLength(1);
   });
 });
 
