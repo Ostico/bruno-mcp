@@ -191,7 +191,10 @@ export async function buildFetchOptions(
     rootChain?.auth,
     oauth2Token,
   );
-  if (queryAuth) {
+  // `refused` is unreachable from here: nothing refuses on the http transport,
+  // which is this call's default. The non-HTTP transports name themselves when
+  // they call applyAuth, and it is their business to fail the request by name.
+  if (queryAuth.outcome === 'query') {
     url = appendQueryCredential(url, queryAuth.key, queryAuth.value);
     // Registered so the redactor can mask this value on the way back out. The
     // header path registers its names for the same reason; a query-placed
