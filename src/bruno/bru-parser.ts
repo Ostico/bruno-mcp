@@ -42,6 +42,12 @@ interface BruLangJson {
   // list when the file used the list form. normalizeTags is what decides.
   meta?: { name?: string; type?: string; seq?: string | number; tags?: unknown };
   http?: { method?: string; url?: string; body?: string; auth?: string };
+  // The target block of a non-http kind. Untyped beyond `auth` because the
+  // grammar is untyped and every value arrives as a string; the readers below
+  // narrow each field they name and carry the rest.
+  grpc?: Record<string, unknown> & { auth?: unknown };
+  ws?: Record<string, unknown> & { auth?: unknown };
+  metadata?: Array<{ name: string; value: string; enabled?: boolean }>;
   headers?: Array<{ name: string; value: string; enabled?: boolean }>;
   auth?: Record<string, unknown>;
   body?: Record<string, unknown>;
@@ -326,7 +332,14 @@ export function parseBruRequest(content: string): BruFile {
 
   let auth: BruAuth | undefined;
   if (json.auth && Object.keys(json.auth).length > 0) {
-    auth = { type: http?.auth, ...json.auth } as BruAuth;
+    // The mode is declared in whichever block is the request's target — a gRPC or
+    // WebSocket request has no `http` block, and reading the mode only from there
+    // gave those kinds a credential with `type: undefined`: an auth block the
+    // executor could not dispatch on despite the file naming its scheme.
+    const declaredMode = http?.auth
+      ?? (typeof json.grpc?.auth === 'string' ? json.grpc.auth : undefined)
+      ?? (typeof json.ws?.auth === 'string' ? json.ws.auth : undefined);
+    auth = { type: declaredMode, ...json.auth } as BruAuth;
   }
 
   let body: BruBody | undefined;
