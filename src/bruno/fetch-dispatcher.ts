@@ -1,4 +1,11 @@
 import type { TlsSettings, YamlSettings } from './types.js';
+import {
+  gateTls,
+  hostAllowed,
+  parseHostAllowlist,
+  pinnedLookup,
+  resetTransportTrustCache,
+} from './transport-trust.js';
 
 /**
  * Operator trust boundary for collection-supplied TLS/proxy overrides.
@@ -18,33 +25,14 @@ import type { TlsSettings, YamlSettings } from './types.js';
  * Both are comma-separated, exact-match, case-insensitive host lists. A `*`
  * wildcard entry is silently ignored — the boundary must be explicit. A plain
  * `rejectUnauthorized: true` is not a downgrade and is always honoured.
+ *
+ * The TLS half of that boundary lives in `transport-trust.ts`, because gRPC and
+ * WebSocket negotiate TLS too and a gate reachable from only this module would
+ * leave `grpcs://` and `wss://` ungated. Only the proxy half is still local:
+ * neither of those transports supports a proxy here.
  */
 
-let tlsHostsCache: Set<string> | null = null;
 let proxyHostsCache: Set<string> | null = null;
-
-function parseHostAllowlist(raw: string | undefined): Set<string> {
-  const set = new Set<string>();
-  if (!raw) return set;
-  for (const part of raw.split(',')) {
-    const entry = part.trim().toLowerCase();
-    if (!entry) continue;
-    if (entry.includes('*')) {
-      // A wildcard would defeat the point of an explicit allowlist.
-      console.warn(`[bruno-mcp TLS/proxy] Ignoring wildcard host entry "${entry}"`);
-      continue;
-    }
-    set.add(entry);
-  }
-  return set;
-}
-
-function tlsHosts(): Set<string> {
-  if (tlsHostsCache === null) {
-    tlsHostsCache = parseHostAllowlist(process.env.BRUNO_INSECURE_TLS_HOSTS);
-  }
-  return tlsHostsCache;
-}
 
 function proxyHosts(): Set<string> {
   if (proxyHostsCache === null) {
@@ -53,44 +41,16 @@ function proxyHosts(): Set<string> {
   return proxyHostsCache;
 }
 
-/** Reset the cached env allowlists. Exported for testing. */
-export function resetDispatcherTrustCache(): void {
-  tlsHostsCache = null;
-  proxyHostsCache = null;
-}
-
-function hostAllowed(host: string | undefined, set: Set<string>): boolean {
-  return host !== undefined && set.has(host.toLowerCase());
-}
-
-/** A TLS block is privileged if it downgrades verification or supplies its own trust material. */
-function tlsIsPrivileged(tls: TlsSettings): boolean {
-  return tls.rejectUnauthorized === false || !!tls.ca || !!tls.cert || !!tls.key;
-}
-
 /**
- * Return the TLS settings actually applied for `host`. If the block is
- * privileged and the host is not operator-allowlisted, the dangerous fields are
- * dropped (a warning naming the host and the field NAMES — never their values —
- * is emitted) and only an explicit `rejectUnauthorized: true` floor is kept.
- * Returns undefined when nothing safe remains.
+ * Reset the cached env allowlists. Exported for testing.
+ *
+ * The TLS half of that state now lives in `transport-trust.ts`, shared with the
+ * gRPC and WebSocket transports, so both have to be cleared together — resetting
+ * only the local one would leave a test looking at a stale TLS allowlist.
  */
-function gateTls(tls: TlsSettings | undefined, host: string | undefined): TlsSettings | undefined {
-  if (!tls) return undefined;
-  if (!tlsIsPrivileged(tls) || hostAllowed(host, tlsHosts())) return tls;
-
-  const dropped: string[] = [];
-  if (tls.rejectUnauthorized === false) dropped.push('rejectUnauthorized');
-  if (tls.ca) dropped.push('ca');
-  if (tls.cert) dropped.push('cert');
-  if (tls.key) dropped.push('key');
-  console.warn(
-    `[bruno-mcp TLS/proxy] Ignoring collection TLS override (${dropped.join(', ')}) for host ` +
-      `"${host ?? '(unknown)'}": not in BRUNO_INSECURE_TLS_HOSTS`,
-  );
-
-  if (tls.rejectUnauthorized === true) return { rejectUnauthorized: true };
-  return undefined;
+export function resetDispatcherTrustCache(): void {
+  proxyHostsCache = null;
+  resetTransportTrustCache();
 }
 
 export interface DispatcherResult {
@@ -181,57 +141,6 @@ export async function buildDispatcher(
     dispatcher: agent,
     fetch: undici.fetch as unknown as typeof globalThis.fetch,
     close: () => closeQuietly(agent),
-  };
-}
-
-interface LookupAddress {
-  address: string;
-  family: number;
-}
-
-type LookupCallback = (
-  err: NodeJS.ErrnoException | null,
-  address?: string | LookupAddress[],
-  family?: number,
-) => void;
-
-/**
- * A `net.connect` lookup that ignores DNS and answers with the already-validated
- * addresses. Node calls it either in "all" mode (an array, used by
- * autoSelectFamily/Happy Eyeballs) or single mode (address + family), and may
- * constrain the family; all three shapes are honoured so multi-record failover
- * still works.
- */
-function pinnedLookup(addresses: string[]) {
-  const entries: LookupAddress[] = addresses.map((address) => ({
-    address,
-    family: address.includes(':') ? 6 : 4,
-  }));
-
-  return (
-    hostname: string,
-    options: { family?: number; all?: boolean } | undefined,
-    callback: LookupCallback,
-  ): void => {
-    const wanted = options?.family;
-    const matching =
-      wanted === 4 || wanted === 6 ? entries.filter((e) => e.family === wanted) : entries;
-
-    if (matching.length === 0) {
-      // Fail closed: never let a family mismatch fall back to a real lookup.
-      const err: NodeJS.ErrnoException = new Error(
-        `No validated address for ${hostname} in the requested address family`,
-      );
-      err.code = 'ENOTFOUND';
-      callback(err);
-      return;
-    }
-
-    if (options?.all) {
-      callback(null, matching);
-      return;
-    }
-    callback(null, matching[0].address, matching[0].family);
   };
 }
 
