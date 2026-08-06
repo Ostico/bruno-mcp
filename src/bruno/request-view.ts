@@ -382,7 +382,15 @@ function fromYaml(yaml: YamlRequest, filePath: string): RequestView {
       )
       : undefined,
     websocket: yaml.websocket ? websocketSummary(yaml.websocket) : undefined,
-    headers: (yaml.http?.headers ?? []).map((h) => entry(h.name, h.value, h.disabled === true)),
+    // A WebSocket request's credentials are ordinary headers, but `.yml` nests
+    // them inside the `websocket` block while `.bru` puts them in the top-level
+    // `headers` block the http path already reads. Without this fallback the same
+    // request read back with its headers from one dialect and without them from
+    // the other — which is exactly the format difference this layer exists to
+    // hide. gRPC is not here: its credentials are a `metadata` block of its own,
+    // reported under `grpc` in both dialects.
+    headers: (yaml.http?.headers ?? yaml.websocket?.headers ?? [])
+      .map((h) => entry(h.name, h.value, h.disabled === true)),
     params: {
       query: yamlParams(yaml.http?.params, 'query'),
       path: yamlParams(yaml.http?.params, 'path'),

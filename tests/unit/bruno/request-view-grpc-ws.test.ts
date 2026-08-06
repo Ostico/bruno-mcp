@@ -203,6 +203,16 @@ describe('both dialects produce the same view', () => {
     expect(toRequestView(parseBruRequest(BRU_WS), 'bru', 'a').websocket)
       .toEqual(toRequestView(parseYamlRequest(YML_WS), 'yaml', 'b').websocket);
   });
+
+  // The dialects store a WebSocket request's headers in different places — `.bru`
+  // in the top-level headers block, `.yml` nested inside the websocket block — so
+  // this agreement is the one that had actually been broken: the `.yml` side read
+  // back with no headers at all while the `.bru` side showed them.
+  it('agrees on a WebSocket request’s headers, which the two dialects nest differently', () => {
+    const expected = [{ name: 'authorization', value: 'Bearer live' }];
+    expect(toRequestView(parseBruRequest(BRU_WS), 'bru', 'a').headers).toEqual(expected);
+    expect(toRequestView(parseYamlRequest(YML_WS), 'yaml', 'b').headers).toEqual(expected);
+  });
 });
 
 describe('an http request is untouched by this', () => {
