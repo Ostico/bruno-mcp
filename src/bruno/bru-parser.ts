@@ -1,4 +1,9 @@
 import { bruToJsonV2, jsonToBruV2, bruToEnvJsonV2, envJsonToBruV2 } from '@usebruno/lang';
+import type {
+  BruGrpc,
+  BruWs,
+  BruTransportMessage,
+} from './transport-requests.js';
 import {
   BrunoError,
   BRU_TYPE_TOKENS,
@@ -56,6 +61,194 @@ interface BruLangEnvJson {
   variables?: Array<{ name: string; value?: string; enabled?: boolean; secret?: boolean; type?: string }>;
   // The reader also returns a top-level `color` key when the file carries one.
   [key: string]: unknown;
+}
+
+/**
+ * The top-level keys `jsonToBruV2` destructures, and therefore the only ones it
+ * can write back.
+ *
+ * Copied from `@usebruno/lang/v2/src/jsonToBru.js:17` rather than guessed. A key
+ * outside this set is dropped by the writer, so carrying it in `extra` would
+ * promise preservation that does not survive the next save.
+ */
+const BRU_REEMITTABLE_KEYS: ReadonlySet<string> = new Set([
+  'meta',
+  'http',
+  'grpc',
+  'ws',
+  'params',
+  'headers',
+  'metadata',
+  'auth',
+  'body',
+  'script',
+  'tests',
+  'vars',
+  'assertions',
+  'settings',
+  'docs',
+  'examples',
+]);
+
+/** Top-level keys this model reads into typed fields of its own. */
+const BRU_MODELLED_KEYS: ReadonlySet<string> = new Set([
+  'meta',
+  'http',
+  'grpc',
+  'ws',
+  'params',
+  'headers',
+  'metadata',
+  'auth',
+  'body',
+  'script',
+  'tests',
+  'vars',
+  'assertions',
+  'settings',
+  'docs',
+]);
+
+/**
+ * Collect the top-level keys the model does not name, keeping only the ones the
+ * writer can emit again.
+ *
+ * A key the writer would drop is reported rather than carried: silently keeping
+ * it would make the model look lossless while the next save deleted it.
+ *
+ * Exported because the grammar refuses an unrecognised top-level block on read,
+ * so no `.bru` file can reach the warning branch. That makes this a guard against
+ * a future model or grammar change, and the function boundary the only place it
+ * can be exercised.
+ */
+export function collectBruExtra(
+  json: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const extra: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(json)) {
+    if (BRU_MODELLED_KEYS.has(key)) continue;
+    if (!BRU_REEMITTABLE_KEYS.has(key)) {
+      // Warnings must go to stderr; stdout carries the MCP JSON-RPC stream.
+      console.warn(
+        `[bruno-mcp .bru passthrough] Dropping top-level key "${key}": `
+          + 'the .bru writer cannot emit it, so carrying it would not survive a save',
+      );
+      continue;
+    }
+    extra[key] = value;
+  }
+
+  return Object.keys(extra).length > 0 ? extra : undefined;
+}
+
+/**
+ * Read a `metadata` or `headers` block into the ordered list form.
+ *
+ * `enabled` is recorded only when false, matching how headers are already read:
+ * absence means enabled, and writing the flag both ways would give the generator
+ * two spellings of one state to disagree about.
+ */
+function readCredentialBlock(raw: unknown): BruHeader[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+
+  const entries = raw.map((item) => {
+    const h = (item ?? {}) as Record<string, unknown>;
+    const entry: BruHeader = { name: String(h.name ?? ''), value: String(h.value ?? '') };
+    if (h.enabled === false) entry.enabled = false;
+    return entry;
+  });
+
+  return entries.length > 0 ? entries : undefined;
+}
+
+/**
+ * Read the message list of a `.bru` gRPC or WebSocket request.
+ *
+ * The payload is nested at `body.grpc` / `body.ws` as an **array** of
+ * `name`/`content` pairs, concatenated across repeated blocks. It is read here
+ * rather than in the http body dispatch because that dispatch looks the content
+ * up by the `http` block's mode string, which a request with no `http` block does
+ * not have — every message fell through it and was discarded.
+ */
+function readTransportMessages(
+  raw: unknown,
+  withType: boolean,
+): BruTransportMessage[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+
+  const messages = raw.map((item) => {
+    const entry = (item ?? {}) as Record<string, unknown>;
+    const message: BruTransportMessage = {
+      name: String(entry.name ?? ''),
+      content: String(entry.content ?? ''),
+    };
+    // Only WebSocket messages have one. Defaulting a gRPC message to `text`
+    // would write a key into the file that Bruno drops on the next read.
+    if (withType && entry.type != null) message.type = String(entry.type);
+    return message;
+  });
+
+  return messages.length > 0 ? messages : undefined;
+}
+
+/**
+ * Fields of the `.bru` `grpc` block this model names. Everything else in the
+ * block is carried in `extra`, which works because `grpc` is a dictionary block
+ * and `jsonToBruV2` walks such a block key by key.
+ */
+const BRU_GRPC_BLOCK_KEYS: ReadonlySet<string> = new Set([
+  'url',
+  'method',
+  'body',
+  'protoPath',
+  'auth',
+  'methodType',
+]);
+
+/** Fields of the `.bru` `ws` block this model names. See `BRU_GRPC_BLOCK_KEYS`. */
+const BRU_WS_BLOCK_KEYS: ReadonlySet<string> = new Set(['url', 'body', 'auth']);
+
+function asBlock(raw: unknown): Record<string, unknown> | undefined {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  return raw as Record<string, unknown>;
+}
+
+function readGrpcBlock(raw: unknown, messages: unknown): BruGrpc | undefined {
+  const obj = asBlock(raw);
+  if (!obj) return undefined;
+
+  const grpc: BruGrpc = { url: String(obj.url ?? '') };
+  if (typeof obj.method === 'string') grpc.method = obj.method;
+  if (typeof obj.body === 'string') grpc.body = obj.body;
+  if (typeof obj.protoPath === 'string') grpc.protoPath = obj.protoPath;
+  if (typeof obj.auth === 'string') grpc.auth = obj.auth;
+  if (typeof obj.methodType === 'string') grpc.methodType = obj.methodType;
+
+  const parsed = readTransportMessages(messages, false);
+  if (parsed) grpc.messages = parsed;
+
+  const extra = collectExtraKeys(obj, BRU_GRPC_BLOCK_KEYS);
+  if (extra) grpc.extra = extra;
+
+  return grpc;
+}
+
+function readWsBlock(raw: unknown, messages: unknown): BruWs | undefined {
+  const obj = asBlock(raw);
+  if (!obj) return undefined;
+
+  const ws: BruWs = { url: String(obj.url ?? '') };
+  if (typeof obj.body === 'string') ws.body = obj.body;
+  if (typeof obj.auth === 'string') ws.auth = obj.auth;
+
+  const parsed = readTransportMessages(messages, true);
+  if (parsed) ws.messages = parsed;
+
+  const extra = collectExtraKeys(obj, BRU_WS_BLOCK_KEYS);
+  if (extra) ws.extra = extra;
+
+  return ws;
 }
 
 export function parseBruRequest(content: string): BruFile {
@@ -225,6 +418,23 @@ export function parseBruRequest(content: string): BruFile {
   }
 
   const bruFile: BruFile = { meta, http };
+
+  // The target block of a non-http kind, plus the messages nested under
+  // `body.grpc` / `body.ws`. Read here rather than in the body dispatch above,
+  // which keys on the `http` block's mode string and so discarded them.
+  const rawBody = (json.body ?? {}) as Record<string, unknown>;
+  const grpc = readGrpcBlock(json.grpc, rawBody.grpc);
+  if (grpc) bruFile.grpc = grpc;
+  const ws = readWsBlock(json.ws, rawBody.ws);
+  if (ws) bruFile.ws = ws;
+
+  // gRPC's own credential block. WebSocket uses the ordinary `headers` block,
+  // already read into `headersList`, so there is no second path for it.
+  const metadata = readCredentialBlock(json.metadata);
+  if (metadata) bruFile.metadata = metadata;
+
+  const extra = collectBruExtra(json as unknown as Record<string, unknown>);
+  if (extra) bruFile.extra = extra;
   if (Object.keys(headers).length > 0) bruFile.headers = headers;
   if (headersList.length > 0) bruFile.headersList = headersList;
   if (auth) bruFile.auth = auth;
@@ -480,6 +690,71 @@ function bodyFromContent(
   }
 }
 
+/**
+ * Write the gRPC and WebSocket blocks, their messages and gRPC's metadata.
+ *
+ * `jsonToBruV2` gates each block on a truthy `url` (`jsonToBru.js:62`, `:97`)
+ * while writing the sibling `metadata` block unconditionally. A request whose
+ * target is empty would therefore be saved with its credential and no target at
+ * all, which is worse than refusing: the file would look authored and go nowhere.
+ * So an empty target is refused rather than written.
+ *
+ * Messages go back where they came from, nested under `body.grpc` / `body.ws`.
+ * `content` is written even when empty because the grammar substitutes `'{}'` for
+ * a falsy one, so omitting it would turn a blank message into a literal `{}`.
+ */
+function writeTransportBlocks(json: Record<string, unknown>, bruFile: BruFile): void {
+  const kind = bruFile.meta.type;
+  const block = kind === 'grpc' ? bruFile.grpc : kind === 'ws' ? bruFile.ws : undefined;
+  if (!block) return;
+
+  if (block.url.trim().length === 0) {
+    throw new BrunoError(
+      `Cannot write a ${kind} request with an empty url: the block would be dropped `
+        + 'and its credentials kept, leaving a file that looks authored and goes nowhere',
+      'VALIDATION_ERROR',
+    );
+  }
+
+  const messages = (block.messages ?? []).map((message) => {
+    const entry: Record<string, unknown> = { name: message.name };
+    if (message.type !== undefined) entry.type = message.type;
+    entry.content = message.content;
+    return entry;
+  });
+
+  if (kind === 'grpc') {
+    const grpc = block as BruGrpc;
+    const out: Record<string, unknown> = { url: grpc.url };
+    if (grpc.method !== undefined) out.method = grpc.method;
+    if (grpc.body !== undefined) out.body = grpc.body;
+    if (grpc.protoPath !== undefined) out.protoPath = grpc.protoPath;
+    if (grpc.auth !== undefined) out.auth = grpc.auth;
+    if (grpc.methodType !== undefined) out.methodType = grpc.methodType;
+    // Through applyExtraKeys rather than a spread so a stale carried key cannot
+    // win over one this writer just set.
+    applyExtraKeys(out, grpc.extra, BRU_GRPC_BLOCK_KEYS);
+    json.grpc = out;
+    if (messages.length > 0) json.body = { grpc: messages };
+  } else {
+    const ws = block as BruWs;
+    const out: Record<string, unknown> = { url: ws.url };
+    if (ws.body !== undefined) out.body = ws.body;
+    if (ws.auth !== undefined) out.auth = ws.auth;
+    applyExtraKeys(out, ws.extra, BRU_WS_BLOCK_KEYS);
+    json.ws = out;
+    if (messages.length > 0) json.body = { ws: messages };
+  }
+
+  if (bruFile.metadata && bruFile.metadata.length > 0) {
+    json.metadata = bruFile.metadata.map((entry) => ({
+      name: entry.name,
+      value: entry.value,
+      enabled: entry.enabled !== false,
+    }));
+  }
+}
+
 export function generateBruRequest(bruFile: BruFile): string {
   const json: Record<string, unknown> = {
     meta: {
@@ -518,6 +793,8 @@ export function generateBruRequest(bruFile: BruFile): string {
       }
       : undefined,
   };
+
+  writeTransportBlocks(json, bruFile);
 
   if (bruFile.headersList && bruFile.headersList.length > 0) {
     // Source of truth when present: preserves each header's disabled (`~`) state
@@ -675,6 +952,11 @@ export function generateBruRequest(bruFile: BruFile): string {
       auth.oauth2.additionalParameters = additionalParameters;
     }
   }
+
+  // Top-level keys the model does not name, restricted at parse time to the ones
+  // this writer can actually emit. Written last and through applyExtraKeys so a
+  // stale carried value cannot overwrite a field set above.
+  applyExtraKeys(json, bruFile.extra, BRU_MODELLED_KEYS);
 
   try {
     return jsonToBruV2(json);

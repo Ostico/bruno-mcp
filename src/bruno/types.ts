@@ -3,7 +3,12 @@
  * Based on the Bru markup language specification
  */
 
-import type { YamlGrpc, YamlWebsocket } from './transport-requests.js';
+import type {
+  BruGrpc,
+  BruWs,
+  YamlGrpc,
+  YamlWebsocket,
+} from './transport-requests.js';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS';
 
@@ -412,6 +417,22 @@ export interface BruFile {
    * failed, instead of reporting the kind.
    */
   http?: BruHttpRequest;
+  /** Present for kind `grpc`, in place of `http`. */
+  grpc?: BruGrpc;
+  /** Present for kind `ws`. WebSocket headers live in `headersList`, not here. */
+  ws?: BruWs;
+  /** gRPC only. WebSocket uses the ordinary `headers` block instead. */
+  metadata?: BruHeader[];
+  /**
+   * Top-level keys this model does not name, restricted to the ones the `.bru`
+   * writer can emit again.
+   *
+   * The restriction is the point. `jsonToBruV2` destructures a fixed set of
+   * top-level keys and drops anything else, so a bag that collected everything
+   * would advertise preservation it cannot deliver. Everything else in that set
+   * is modelled, which leaves `examples` as the only member.
+   */
+  extra?: Record<string, unknown>;
   auth?: BruAuth;
   headers?: BruHeaders;
   /**

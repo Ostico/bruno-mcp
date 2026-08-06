@@ -28,6 +28,66 @@
 import type { YamlAuth, YamlHeader } from './types.js';
 
 /**
+ * One message of a `.bru` gRPC or WebSocket request.
+ *
+ * `type` is WebSocket-only and absent on a gRPC message, because this dialect
+ * has no type for one. There is no `selected` in `.bru` at all — neither block
+ * carries it, and inventing one would put a field in the file Bruno drops.
+ *
+ * Both fields are required rather than optional because the grammar always
+ * produces them: a `body:grpc` block written in the bare-text form parses to
+ * `{name: '', content: ''}` with the content destroyed and no error raised, so
+ * the keys are present even when the data is gone.
+ */
+export interface BruTransportMessage {
+  name: string;
+  /** WebSocket only: `text` or `binary`. */
+  type?: string;
+  content: string;
+}
+
+/**
+ * A `.bru` gRPC request's own block, in place of `http`.
+ *
+ * Every value is a string: the `.bru` grammar is untyped, so `methodType` and
+ * `body` arrive as they were written.
+ */
+export interface BruGrpc {
+  url: string;
+  method?: string;
+  /**
+   * The body-mode string the block declares. A real field in this dialect, not
+   * something derived from the content blocks — dropping it would rewrite the
+   * file without its `body:` line and orphan the messages.
+   */
+  body?: string;
+  protoPath?: string;
+  /** A bare mode string here, unlike `.yml` where auth is an object. */
+  auth?: string;
+  methodType?: string;
+  messages?: BruTransportMessage[];
+  /** Unmodelled keys of this block, which is a dictionary block and carries them. */
+  extra?: Record<string, unknown>;
+}
+
+/**
+ * A `.bru` WebSocket request's own block, in place of `http`.
+ *
+ * No `headers`: WebSocket credentials arrive in the ordinary top-level `headers`
+ * block and land on `BruFile.headersList`. A field here would be a second path to
+ * the same data and would write it twice.
+ */
+export interface BruWs {
+  url: string;
+  /** See `BruGrpc.body`. */
+  body?: string;
+  auth?: string;
+  messages?: BruTransportMessage[];
+  /** Unmodelled keys of this block, which is a dictionary block and carries them. */
+  extra?: Record<string, unknown>;
+}
+
+/**
  * One message in a gRPC or WebSocket request.
  *
  * `type` and `selected` are WebSocket-only; a gRPC message never carries them,
