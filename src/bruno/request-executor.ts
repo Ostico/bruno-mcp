@@ -43,6 +43,7 @@ import {
 } from './request-redaction.js';
 import { encodeRequestUrl, shouldEncodeUrl, hasExplicitScheme } from './url-encoder.js';
 import { scriptTimeoutMs } from './script-timeout.js';
+import { BrunoError } from './types.js';
 import {
   SINGLE_VALUE_HEADERS,
   appendHeader,
@@ -82,7 +83,7 @@ interface BodyCaptureOptions {
 }
 
 
-function isMultipartBody(body: YamlRequest['http']['body']): boolean {
+function isMultipartBody(body: NonNullable<YamlRequest['http']>['body']): boolean {
   return (
     !!body &&
     (body.type === 'multipart-form' || body.type === 'form-data') &&
@@ -125,12 +126,24 @@ export async function buildFetchOptions(
     }
   };
 
-  trackUnresolved(yaml.http.url);
-  let url = substitute(yaml.http.url, vars);
+  // HTTP-only by contract. A grpc or ws request has no http block and is refused
+  // by the caller before it reaches here; narrowing once keeps the rest of this
+  // function reading as it did when the field was mandatory, and turns a would-be
+  // TypeError deep in the pipeline into a named error at the boundary.
+  const http = yaml.http;
+  if (!http) {
+    throw new BrunoError(
+      `Cannot build an HTTP request from a "${yaml.info.type ?? 'http'}" request: it has no http block`,
+      'VALIDATION_ERROR',
+    );
+  }
+
+  trackUnresolved(http.url);
+  let url = substitute(http.url, vars);
 
   // Applied here, before validateUrl below, so the URL that is checked is the
   // one actually sent — a parameter must never be able to slip past the check.
-  url = applyParams(url, yaml.http.params, (raw) => {
+  url = applyParams(url, http.params, (raw) => {
     trackUnresolved(raw);
     return substitute(raw, vars);
   });
@@ -156,7 +169,7 @@ export async function buildFetchOptions(
   // that pairing is exactly the doubled-credential case worth avoiding.
   if (rootChain && rootChain.headers.length > 0) {
     const ownNames = new Set(
-      (yaml.http.headers ?? [])
+      (http.headers ?? [])
         .filter(h => h.disabled !== true)
         .map(h => substitute(h.name, vars).toLowerCase()),
     );
@@ -177,8 +190,8 @@ export async function buildFetchOptions(
     }
   }
 
-  if (yaml.http.headers) {
-    for (const h of yaml.http.headers) {
+  if (http.headers) {
+    for (const h of http.headers) {
       // A header explicitly disabled in the collection must not be sent.
       // Skip before substituting, so a disabled header's placeholders are not
       // reported as unresolved either.
@@ -216,7 +229,7 @@ export async function buildFetchOptions(
   const authHeaderNames: string[] = [];
   const authQueryNames: string[] = [];
   const queryAuth = applyAuth(
-    yaml.http.auth,
+    http.auth,
     headers,
     s => {
       trackUnresolved(s);
@@ -237,12 +250,12 @@ export async function buildFetchOptions(
   }
 
   const options: RequestInit = {
-    method: yaml.http.method,
+    method: http.method,
     headers,
   };
 
   const bodyWarnings: string[] = [];
-  const body = yaml.http.body;
+  const body = http.body;
   if (isMultipartBody(body)) {
     const form = new FormData();
     const parts = body!.data as MultipartFormPart[];
@@ -480,6 +493,23 @@ async function executeSingleRequest(
   rootChain?: RootChain,
   tokenCache: TokenCache = createTokenCache(),
 ): Promise<RequestExecutionResult> {
+  // A kind with no http block cannot go down this pipeline: every step from the
+  // URL onwards is HTTP-shaped. Refused here as a result rather than a throw, so
+  // one such request in a collection fails by name and the rest of the group
+  // still runs. `status: 0` is this codebase's refusal sentinel.
+  if (!yaml.http) {
+    const kind = yaml.info.type ?? 'unknown';
+    return {
+      name: yaml.info.name,
+      method: kind.toUpperCase(),
+      url: '',
+      status: 0,
+      duration_ms: 0,
+      tests: [],
+      error: `Cannot execute a "${kind}" request: this server runs http and graphql requests only`,
+    };
+  }
+
   // `vars:pre-request` sits between the environment and the runtime store, which
   // is where upstream puts it: collection < env < folder < REQUEST < oauth2 <
   // runtime < process.env. So a request var overrides the environment, and
@@ -1190,8 +1220,10 @@ async function runGroupsInOrder(
 function crashedRequestResult(req: ParsedRequest, reason: unknown): RequestExecutionResult {
   return {
     name: req.yaml.info.name,
-    method: req.yaml.http.method,
-    url: req.yaml.http.url,
+    // A kind with no http block reports its kind where the method would go, and
+    // no target: it never reached a URL, so claiming one would be a fiction.
+    method: req.yaml.http?.method ?? (req.yaml.info.type ?? 'unknown').toUpperCase(),
+    url: req.yaml.http?.url ?? '',
     status: 0,
     duration_ms: 0,
     tests: [],

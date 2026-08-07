@@ -168,13 +168,16 @@ export async function getCollectionStats(collectionPath: string): Promise<Collec
       if (isBruRequestFile(filePath)) {
         const parsed = parseBruRequest(content);
         name = parsed.meta.name;
-        method = parsed.http.method.toUpperCase();
+        // A grpc or ws request has no method. Bucketed under its kind rather than
+        // skipped: this loop swallows errors with `catch { continue; }`, so
+        // anything not handled here disappears from the stats silently.
+        method = parsed.http?.method.toUpperCase() ?? parsed.meta.type.toUpperCase();
         seq = parsed.meta.seq ?? 0;
         testsFound = (parsed.tests?.exec?.length ?? 0) > 0;
       } else {
         const parsed = parseYamlRequest(content);
         name = parsed.info.name;
-        method = parsed.http.method.toUpperCase();
+        method = parsed.http?.method.toUpperCase() ?? (parsed.info.type ?? 'http').toUpperCase();
         seq = parsed.info.seq ?? 0;
         testsFound = hasTestScripts(content);
       }

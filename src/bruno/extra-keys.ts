@@ -78,6 +78,13 @@ export const YAML_REQUEST_KEYS: ReadonlySet<string> = new Set([
   // Modelled as the request block for a graphql request. Omitting it here would
   // carry the block in `extra` as well, emitting it twice.
   'graphql',
+  // Same reason, and they were deliberately absent for exactly as long as the
+  // generator could not write them: while the blocks were parsed but unwritable,
+  // the carried bag was the only thing keeping a `.yml` gRPC or WebSocket request
+  // intact through a read-modify-write. They join the list in the same commit
+  // that teaches the generator to emit them.
+  'grpc',
+  'websocket',
   'runtime',
   'settings',
   'docs',
@@ -100,6 +107,39 @@ export const YAML_HTTP_KEYS: ReadonlySet<string> = new Set([
   'body',
   'params',
   'auth',
+  'extra',
+]);
+
+/**
+ * Fields of `YamlGrpc` the generator writes itself.
+ *
+ * `protoFilePath` is listed because it is the on-disk name of a key the model
+ * carries as `protoPath`. Leaving it out would put the path in `extra` as well
+ * and emit it twice.
+ */
+export const YAML_GRPC_KEYS: ReadonlySet<string> = new Set([
+  'url',
+  'method',
+  'protoFilePath',
+  'methodType',
+  'auth',
+  'metadata',
+  'message',
+  'extra',
+]);
+
+/**
+ * Fields of `YamlWebsocket` the generator writes itself.
+ *
+ * No `method`, `protoFilePath` or `methodType`: a WebSocket request has one
+ * target and no service definition, and credentials arrive as `headers` rather
+ * than gRPC's `metadata`.
+ */
+export const YAML_WEBSOCKET_KEYS: ReadonlySet<string> = new Set([
+  'url',
+  'auth',
+  'headers',
+  'message',
   'extra',
 ]);
 

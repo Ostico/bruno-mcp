@@ -58,6 +58,14 @@ export function bruFileToYamlRequest(bru: BruFile): YamlRequest {
       ? Object.entries(bru.headers).map(([name, value]) => ({ name, value }))
       : undefined;
 
+  // gRPC's own credential block, flipped the same way as the headers above. Only
+  // gRPC has one; a WebSocket request's credentials are ordinary headers.
+  const metadata = bru.metadata?.map((entry) => ({
+    name: entry.name,
+    value: entry.value,
+    ...(entry.enabled === false ? { disabled: true } : {}),
+  }));
+
   // The two formats spell the switched-off flag with opposite polarity: a
   // BruParam carries `enabled`, a YamlParam carries `disabled`. Forwarding these
   // without inverting would send exactly the parameters the author turned off.
@@ -84,7 +92,7 @@ export function bruFileToYamlRequest(bru: BruFile): YamlRequest {
   // way a failed assertion does. `local` is carried through unchanged.
   const vars = bruVarSetsToYamlVars(bru.varSets);
 
-  let body: YamlRequest['http']['body'];
+  let body: NonNullable<YamlRequest['http']>['body'];
   if (bru.body?.formData && bru.body.formData.length > 0) {
     body = {
       type: 'multipart-form',
@@ -127,14 +135,53 @@ export function bruFileToYamlRequest(bru: BruFile): YamlRequest {
 
   return {
     info: { name: bru.meta.name, type: bru.meta.type, seq: bru.meta.seq, tags: bru.meta.tags },
-    http: {
-      method: bru.http.method,
-      url: bru.http.url,
-      headers,
-      params,
-      body,
-      auth: bruAuthToYamlAuth(bru.auth, bru.http.auth),
-    },
+    // Omitted for a non-http kind, whose target lives in its own block. Every
+    // executor path reads the request through this function, so a fabricated
+    // empty http block here would be indistinguishable downstream from a real
+    // one — which is how a grpc request came to run as a GET to an empty URL.
+    http: bru.http
+      ? {
+        method: bru.http.method,
+        url: bru.http.url,
+        headers,
+        params,
+        body,
+        auth: bruAuthToYamlAuth(bru.auth, bru.http.auth),
+      }
+      : undefined,
+    // A gRPC or WebSocket request carries its target in its own block, so it has
+    // no `http` above and nothing to run it as. Without these two the funnel
+    // dropped the whole request: both dialects parsed it, and the run model — the
+    // only thing the executor and the read tools see — knew nothing about it.
+    grpc: bru.grpc
+      ? {
+        url: bru.grpc.url,
+        ...(bru.grpc.method !== undefined ? { method: bru.grpc.method } : {}),
+        ...(bru.grpc.protoPath !== undefined ? { protoPath: bru.grpc.protoPath } : {}),
+        ...(bru.grpc.methodType !== undefined ? { methodType: bru.grpc.methodType } : {}),
+        // The mode is declared in the grpc block and the credential in a separate
+        // top-level auth block, exactly as for http — so the same joiner applies.
+        // Carrying only the mode would hand applyAuth a scheme with no secret.
+        auth: bruAuthToYamlAuth(bru.auth, bru.grpc.auth),
+        // The credential block is top-level in `.bru` and nested under the target
+        // block in `.yml`. The move is deliberate: a reader looking at only one
+        // dialect cannot otherwise tell whether the rename was a mistake.
+        ...(metadata ? { metadata } : {}),
+        ...(bru.grpc.messages ? { messages: bru.grpc.messages } : {}),
+        ...(bru.grpc.extra ? { extra: bru.grpc.extra } : {}),
+      }
+      : undefined,
+    websocket: bru.ws
+      ? {
+        url: bru.ws.url,
+        auth: bruAuthToYamlAuth(bru.auth, bru.ws.auth),
+        // Ordinary headers, not a transport-specific block: this is the same list
+        // the http path uses, already polarity-flipped above.
+        ...(headers ? { headers } : {}),
+        ...(bru.ws.messages ? { messages: bru.ws.messages } : {}),
+        ...(bru.ws.extra ? { extra: bru.ws.extra } : {}),
+      }
+      : undefined,
     runtime: scripts.scripts.length > 0 ? scripts : undefined,
     // buildFetchOptions reads the timeout, redirect policy, TLS options and proxy
     // off `settings`. Without forwarding it, every one of those was unreachable
@@ -161,7 +208,11 @@ export function bruFileToYamlRequest(bru: BruFile): YamlRequest {
  */
 export function bruAuthToYamlAuth(
   auth: BruFile['auth'],
-  mode?: BruFile['http']['auth']
+  // A plain string rather than the http block's mode union, because the grpc and
+  // ws blocks declare their mode as the file spelled it and only the `inherit`
+  // comparison below reads it. Narrowing it here would mean casting at every
+  // caller, which is how the kind field acquired the cast that hid a real defect.
+  mode?: string,
 ): YamlAuth | undefined {
   // `inherit` is declared in the http block and has no auth block of its own —
   // there is no local credential to carry, only the instruction to look up the

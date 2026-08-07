@@ -3,6 +3,13 @@
  * Based on the Bru markup language specification
  */
 
+import type {
+  BruGrpc,
+  BruWs,
+  YamlGrpc,
+  YamlWebsocket,
+} from './transport-requests.js';
+
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS';
 
 /**
@@ -130,10 +137,45 @@ export interface BrunoEnvironment {
   variables: Record<string, string | number | boolean>;
 }
 
+/**
+ * The request kinds this server understands, in one internal vocabulary.
+ *
+ * The two on-disk dialects disagree on the token for the same kind — `.bru`
+ * writes `ws`, `.yml` writes `websocket` — so the token stays at the parse and
+ * generate boundaries and everything in between speaks this union. `folder` is
+ * deliberately absent: a folder is not a request, and `YamlInfo` carries it
+ * separately because that interface is shared with `YamlFolder`.
+ */
+export type RequestKind = 'http' | 'graphql' | 'grpc' | 'ws';
+
+/** `.bru` `meta.type` tokens, which happen to be the kind names themselves. */
+export const BRU_TYPE_TOKENS: Readonly<Record<string, RequestKind>> = {
+  http: 'http',
+  graphql: 'graphql',
+  grpc: 'grpc',
+  ws: 'ws',
+};
+
+/** `.yml` `info.type` tokens, which spell WebSocket out in full. */
+export const YAML_TYPE_TOKENS: Readonly<Record<string, RequestKind>> = {
+  http: 'http',
+  graphql: 'graphql',
+  grpc: 'grpc',
+  websocket: 'ws',
+};
+
+/** The `.yml` token for a kind, for the writer. */
+export const YAML_TOKEN_FOR_KIND: Readonly<Record<RequestKind, string>> = {
+  http: 'http',
+  graphql: 'graphql',
+  grpc: 'grpc',
+  ws: 'websocket',
+};
+
 // Meta block in .bru files
 export interface BruMeta {
   name: string;
-  type: 'http' | 'graphql';
+  type: RequestKind;
   seq?: number;
   /**
    * Tags the runner filters on, as a list of strings and never a bare string.
@@ -367,7 +409,30 @@ export interface BruOAuth2AdditionalParameters {
 
 export interface BruFile {
   meta: BruMeta;
-  http: BruHttpRequest;
+  /**
+   * Absent for a non-http kind, which carries its target in its own block.
+   *
+   * Not synthesized: an empty stand-in would make the request look like a GET to
+   * an empty URL, which is what this model used to do and what silently ran, and
+   * failed, instead of reporting the kind.
+   */
+  http?: BruHttpRequest;
+  /** Present for kind `grpc`, in place of `http`. */
+  grpc?: BruGrpc;
+  /** Present for kind `ws`. WebSocket headers live in `headersList`, not here. */
+  ws?: BruWs;
+  /** gRPC only. WebSocket uses the ordinary `headers` block instead. */
+  metadata?: BruHeader[];
+  /**
+   * Top-level keys this model does not name, restricted to the ones the `.bru`
+   * writer can emit again.
+   *
+   * The restriction is the point. `jsonToBruV2` destructures a fixed set of
+   * top-level keys and drops anything else, so a bag that collected everything
+   * would advertise preservation it cannot deliver. Everything else in that set
+   * is modelled, which leaves `examples` as the only member.
+   */
+  extra?: Record<string, unknown>;
   auth?: BruAuth;
   headers?: BruHeaders;
   /**
@@ -656,7 +721,11 @@ export class BruFileError extends BrunoError {
 
 export interface YamlInfo {
   name: string;
-  type?: 'http' | 'graphql' | 'folder';
+  /**
+   * A request kind, or `folder` — this interface is shared by `YamlRequest` and
+   * `YamlFolder`, so the set is deliberately wider than `RequestKind`.
+   */
+  type?: RequestKind | 'folder';
   seq?: number;
   /** Runner tags. Same list-or-nothing rule as `BruMeta.tags`. */
   tags?: string[];
@@ -800,7 +869,12 @@ export interface YamlVars {
 
 export interface YamlRequest {
   info: YamlInfo;
-  http: YamlHttp;
+  /** Absent for a non-http kind. See the same field on `BruFile`. */
+  http?: YamlHttp;
+  /** Present only for a gRPC request, in place of `http`. */
+  grpc?: YamlGrpc;
+  /** Present only for a WebSocket request, in place of `http`. */
+  websocket?: YamlWebsocket;
   runtime?: YamlRuntime;
   settings?: YamlSettings;
   docs?: string;

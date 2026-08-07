@@ -399,6 +399,65 @@ docs: Everything, in one document.
         disabled: true
 `,
   },
+  {
+    // A gRPC request carries its target in its own block and has no `http`
+    // section at all. Every key of the block is present so the coverage guard
+    // has something to measure for each one, `protoFilePath` included — that key
+    // is renamed to `protoPath` on the model and has to come back under its
+    // on-disk name or Bruno stops finding the service definition.
+    name: 'grpc request with every block key',
+    src: `info:
+  name: Fixture
+  type: grpc
+  seq: 7
+grpc:
+  url: grpc://localhost:50051
+  method: /pkg.Svc/Method
+  protoFilePath: ./svc.proto
+  methodType: unary
+  auth:
+    type: bearer
+    token: live-token
+  metadata:
+    - name: authorization
+      value: Bearer x
+      disabled: true
+  message:
+    - title: first
+      message: '{"id":1}'
+  reflection: true
+`,
+  },
+  {
+    // WebSocket is deliberately not gRPC with renamed fields: credentials are
+    // ordinary `headers`, and only its messages carry `type` and `selected`. A
+    // variant nests its payload as `message: {type, data}` where gRPC uses a
+    // bare string, so this fixture is what proves the two are read differently.
+    name: 'websocket request with a selected typed message',
+    src: `info:
+  name: Fixture
+  type: websocket
+  seq: 7
+websocket:
+  url: ws://localhost:8080
+  auth:
+    type: basic
+    username: u
+    password: p
+  headers:
+    - name: x-tenant-key
+      value: sekret
+      disabled: true
+  message:
+    - title: hello
+      selected: false
+      message:
+        type: binary
+        data: cGF5
+  subprotocols:
+    - graphql-ws
+`,
+  },
 ];
 
 const roundTrip = (src: string): string => generateYamlRequest(parseYamlRequest(src));
@@ -489,8 +548,13 @@ describe('.yml fixture table covers the whole model', () => {
     ['YamlSettings', (r) => r.settings],
     ['TlsSettings', (r) => r.settings?.tls],
     ['YamlVars', (r) => r.vars],
-    ['YamlBody', (r) => r.http.body],
+    // Optional now: a gRPC or WebSocket request has no `http` block, so this
+    // would throw on those fixtures rather than reporting a coverage gap.
+    ['YamlBody', (r) => r.http?.body],
     ['YamlScript', (r) => r.runtime?.scripts?.[0]],
+    ['YamlGrpc', (r) => r.grpc],
+    ['YamlWebsocket', (r) => r.websocket],
+    ['YamlRequestMessage', (r) => r.websocket?.messages?.[0]],
   ];
 
   // A newly-modelled field with no fixture lands here by name. Add a fixture

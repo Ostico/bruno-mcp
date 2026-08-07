@@ -518,6 +518,99 @@ vars:pre-request {
 }
 `,
   },
+  {
+    // A gRPC request has no `http` block at all: `grpc` is its target block, and
+    // the messages live in dictionary `body:grpc` blocks whose `name:`/`content:`
+    // pairs are load-bearing — written as a bare text block the content is
+    // destroyed silently.
+    name: 'grpc request with metadata and two messages',
+    src: `meta {
+  name: Streamer
+  type: grpc
+  seq: 1
+}
+
+grpc {
+  url: grpc://localhost:50051
+  method: /pkg.Svc/Method
+  body: grpc
+  protoPath: ./svc.proto
+  auth: bearer
+  methodType: unary
+}
+
+metadata {
+  authorization: Bearer live
+  ~x-disabled: nope
+}
+
+body:grpc {
+  name: message 1
+  content: '''
+    {"id":1}
+  '''
+}
+
+body:grpc {
+  name: message 2
+  content: '''
+    {"id":2}
+  '''
+}
+`,
+  },
+  {
+    // WebSocket credentials are ordinary headers, not gRPC's `metadata`, and only
+    // its messages carry a `type`. Dropping that type would send a binary message
+    // as text.
+    name: 'websocket request with a typed message',
+    src: `meta {
+  name: Socket
+  type: ws
+  seq: 1
+}
+
+ws {
+  url: ws://localhost:8080
+  body: ws
+  auth: none
+}
+
+headers {
+  authorization: Bearer live
+}
+
+body:ws {
+  name: hello
+  type: binary
+  content: '''
+    cGF5
+  '''
+}
+`,
+  },
+  {
+    // `examples` is the only top-level key the writer can re-emit that this model
+    // does not name, so it is the sole member of BruFile.extra. Before it was
+    // carried, a saved example was read and then deleted on the next write.
+    name: 'request with a saved example',
+    src: `${META}
+get {
+  url: https://api.example.test/orders
+  body: none
+  auth: none
+}
+
+example {
+  name: e1
+
+  request: {
+    url: https://api.example.test/orders/1
+    method: get
+  }
+}
+`,
+  },
 ];
 
 const roundTrip = (src: string): string => generateBruRequest(parseBruRequest(src));

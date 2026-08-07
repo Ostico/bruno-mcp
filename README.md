@@ -426,6 +426,16 @@ New collections are YAML unless you pass `format: "bru"`.
 
 `.yaml` request files are **read** as YAML, exactly like `.yml`, because other Bruno-adjacent tooling writes them. But Bruno's own app and `bru run` do not recognise the extension, so every `.yaml` file read is named in the run's warnings — a silent pass would be a green run of a request Bruno cannot see. Rename to `.yml` to clear it. Nothing this server writes uses `.yaml`.
 
+## gRPC and WebSocket requests
+
+A collection may hold gRPC and WebSocket requests alongside HTTP ones. This server **reads, preserves and reports** them: `read_request` returns the kind, the target, the method and proto path for gRPC, its metadata block, and how many messages are stored; `list_requests` lists them; and editing any request in the collection no longer destroys them. Before this, both formats dropped the target block, the credentials and every stored message, so one `modify_request` on an unrelated request rewrote the file without them.
+
+**Running them is not supported yet.** `run_collection` reports such a request as a failure with status `0` and a reason naming the kind, and the rest of the collection still runs. `modify_request` refuses an edit naming an HTTP-shaped field — method, url, headers, body, auth, query, path params — on a kind that has no HTTP block, and leaves the file byte-unchanged; `name` and `sequence` still apply. `create_request` does not author these kinds: copy a file Bruno wrote.
+
+Two things are refused rather than guessed at. A file whose declared type and target block disagree (`type: grpc` with an `http:` block) is a parse error naming both, because the type decides what a reader reports while the block decides what a runner contacts. And a `.bru` request whose target url is empty is refused on write, because the format drops such a block while keeping the credentials beside it — the result would look authored and go nowhere.
+
+What is deliberately not built, and why — streaming, reflection, proxy support for these transports, held-open sessions, and a socket.io or MQTT block — is written up in [`docs/superpowers/specs/2026-08-06-grpc-websocket-design.md`](docs/superpowers/specs/2026-08-06-grpc-websocket-design.md), together with a recipe for reaching a socket.io server as a plain `ws` request.
+
 ## Security
 
 **SSRF.** Every outbound URL, including each redirect hop, is resolved and checked. Private, loopback, link-local and otherwise reserved addresses are refused, and the approved addresses are pinned for the request so the name cannot resolve to something else in between. A refusal is reported per request as an `SSRF blocked` error with status `0`.

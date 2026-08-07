@@ -14,7 +14,15 @@ import {
   type YamlScript,
   type MultipartFormPart,
   type BruFilePart,
+  type RequestKind,
+  type YamlHeader,
+  YAML_TOKEN_FOR_KIND,
 } from './types.js';
+import type {
+  YamlGrpc,
+  YamlRequestMessage,
+  YamlWebsocket,
+} from './transport-requests.js';
 import {
   assertionsToYaml,
   postResponseVarsToYaml,
@@ -22,6 +30,7 @@ import {
 } from './yaml-runtime-blocks.js';
 import {
   applyExtraKeys,
+  YAML_GRPC_KEYS,
   YAML_HEADER_KEYS,
   YAML_HTTP_KEYS,
   YAML_INFO_KEYS,
@@ -29,6 +38,7 @@ import {
   YAML_REQUEST_KEYS,
   YAML_RUNTIME_KEYS,
   YAML_SETTINGS_KEYS,
+  YAML_WEBSOCKET_KEYS,
 } from './extra-keys.js';
 import {
   graphqlBodyToYaml,
@@ -204,13 +214,107 @@ function stripEmpty(obj: unknown): unknown {
 }
 
 /**
+ * Serialise a header list, flipping nothing: both the model and the `.yml` file
+ * spell the switched-off flag `disabled`, and both leave it absent when the entry
+ * is enabled. Shared by the http, websocket and gRPC-metadata blocks so that
+ * polarity lives in one place — writing `disabled: false` instead of omitting the
+ * key would be a difference from every file Bruno writes.
+ */
+function serialiseHeaderList(list: YamlHeader[] | undefined): Record<string, unknown>[] | undefined {
+  if (!list?.length) return undefined;
+  return list.map((h) => {
+    const header: Record<string, unknown> = { name: h.name, value: h.value };
+    if (h.disabled) header.disabled = true;
+    applyExtraKeys(header, h.extra, YAML_HEADER_KEYS);
+    return header;
+  });
+}
+
+/**
+ * Serialise the message list of a gRPC or WebSocket request back to the singular
+ * `message:` key the format uses.
+ *
+ * The two kinds store a payload differently and the difference is upstream's: a
+ * gRPC entry holds it as a bare string under `message`, a WebSocket entry nests
+ * it as `message: {type, data}`. Writing a WebSocket payload the gRPC way puts
+ * the string `[object Object]` on disk; writing a gRPC payload the WebSocket way
+ * gives Bruno's gRPC parser an object where it expects the request body. Only
+ * WebSocket messages carry `type` and `selected`, so `nested` selects both the
+ * shape and the field set.
+ */
+function serialiseTransportMessages(
+  messages: YamlRequestMessage[] | undefined,
+  nested: boolean,
+): Record<string, unknown>[] | undefined {
+  if (!messages?.length) return undefined;
+  return messages.map((message) => {
+    const entry: Record<string, unknown> = { title: message.name ?? '' };
+    if (nested) {
+      // Written even when false. For a streaming request the difference between
+      // "not selected" and "not stated" decides what gets sent, so the parser
+      // records it explicitly and the writer has to preserve that distinction.
+      if (message.selected !== undefined) entry.selected = message.selected;
+      entry.message = {
+        type: message.type ?? 'text',
+        data: message.content ?? '',
+      };
+    } else {
+      entry.message = message.content ?? '';
+    }
+    return entry;
+  });
+}
+
+/**
+ * Serialise the `grpc:` block.
+ *
+ * `protoPath` goes back out as `protoFilePath`: the model carries the name `.bru`
+ * uses, and this is the only place the `.yml` spelling is restored. Emitting the
+ * model's name would write a key Bruno's gRPC parser does not read, so the proto
+ * file would be silently forgotten on the next open.
+ */
+function serialiseGrpcBlock(grpc: YamlGrpc): Record<string, unknown> {
+  const block: Record<string, unknown> = { url: grpc.url };
+  if (grpc.method !== undefined) block.method = grpc.method;
+  if (grpc.protoPath !== undefined) block.protoFilePath = grpc.protoPath;
+  if (grpc.methodType !== undefined) block.methodType = grpc.methodType;
+  if (grpc.auth !== undefined) block.auth = grpc.auth;
+  const metadata = serialiseHeaderList(grpc.metadata);
+  if (metadata) block.metadata = metadata;
+  const messages = serialiseTransportMessages(grpc.messages, false);
+  if (messages) block.message = messages;
+  applyExtraKeys(block, grpc.extra, YAML_GRPC_KEYS);
+  return block;
+}
+
+/**
+ * Serialise the `websocket:` block. No service definition and no `metadata`: a
+ * WebSocket request has one target and its credentials are ordinary headers.
+ */
+function serialiseWebsocketBlock(websocket: YamlWebsocket): Record<string, unknown> {
+  const block: Record<string, unknown> = { url: websocket.url };
+  if (websocket.auth !== undefined) block.auth = websocket.auth;
+  const headers = serialiseHeaderList(websocket.headers);
+  if (headers) block.headers = headers;
+  const messages = serialiseTransportMessages(websocket.messages, true);
+  if (messages) block.message = messages;
+  applyExtraKeys(block, websocket.extra, YAML_WEBSOCKET_KEYS);
+  return block;
+}
+
+/**
  * Generate YAML request file content from a YamlRequest object.
  */
 export function generateYamlRequest(request: YamlRequest): string {
   const doc: Record<string, unknown> = {};
 
+  // A non-http kind — grpc, ws — has no http block at all, and its target lives
+  // in its own top-level block. Narrowed once here so the section below reads the
+  // same as it did when the field was mandatory.
+  const httpBlock = request.http;
+
   // info section
-  const isGraphql = isGraphqlRequest(request.info.type, request.http.body);
+  const isGraphql = isGraphqlRequest(request.info.type, httpBlock?.body);
 
   const info: Record<string, unknown> = { name: request.info.name };
   // `info.type` is what Bruno dispatches on, so it has to agree with the block
@@ -221,7 +325,13 @@ export function generateYamlRequest(request: YamlRequest): string {
   if (isGraphql) {
     info.type = 'graphql';
   } else if (request.info.type) {
-    info.type = request.info.type;
+    // The model's kind and the `.yml` token are not always the same word: a
+    // WebSocket request is kind `ws` and token `websocket`. Writing the kind
+    // would produce a file Bruno dispatches to no parser at all. Every other
+    // kind spells itself, and `folder` is not a request kind, so both fall
+    // through the lookup unchanged.
+    info.type = YAML_TOKEN_FOR_KIND[request.info.type as RequestKind]
+      ?? request.info.type;
   }
   if (request.info.seq !== undefined) info.seq = request.info.seq;
   // Only when there is something in it: upstream guards the same write with
@@ -233,17 +343,10 @@ export function generateYamlRequest(request: YamlRequest): string {
   // http, or graphql — the request block. Bruno gives a graphql request its own
   // top-level `graphql:` block and dispatches on `info.type` to choose a parser,
   // so the two are alternatives rather than a body variant.
-  const headers = request.http.headers?.length
-    ? request.http.headers.map((h) => {
-      const header: Record<string, unknown> = { name: h.name, value: h.value };
-      if (h.disabled) header.disabled = true;
-      applyExtraKeys(header, h.extra, YAML_HEADER_KEYS);
-      return header;
-    })
-    : undefined;
+  const headers = serialiseHeaderList(httpBlock?.headers);
 
-  const params = request.http.params?.length
-    ? request.http.params.map((p) => {
+  const params = httpBlock?.params?.length
+    ? httpBlock.params.map((p) => {
       const param: Record<string, unknown> = { name: p.name, value: p.value };
       if (p.type) param.type = p.type;
       if (p.disabled) param.disabled = p.disabled;
@@ -252,33 +355,55 @@ export function generateYamlRequest(request: YamlRequest): string {
     })
     : undefined;
 
-  if (isGraphql) {
+  // Three-way, not two: a grpc or ws request has no http block to write, and
+  // fabricating an empty one would emit an `http:` key no Bruno file has. Its own
+  // target block is written separately.
+  if (httpBlock && isGraphql) {
     // Upstream's key order for this block, which differs from the http one:
     // params come before body here, and after it there.
     const graphql: Record<string, unknown> = {
-      method: request.http.method,
-      url: request.http.url,
+      method: httpBlock.method,
+      url: httpBlock.url,
     };
     if (headers) graphql.headers = headers;
     if (params) graphql.params = params;
-    const graphqlBody = graphqlBodyToYaml(request.http.body);
+    const graphqlBody = graphqlBodyToYaml(httpBlock.body);
     if (graphqlBody) graphql.body = graphqlBody;
-    if (request.http.auth !== undefined) graphql.auth = request.http.auth;
-    applyExtraKeys(graphql, request.http.extra, YAML_GRAPHQL_KEYS);
+    if (httpBlock.auth !== undefined) graphql.auth = httpBlock.auth;
+    applyExtraKeys(graphql, httpBlock.extra, YAML_GRAPHQL_KEYS);
     doc.graphql = graphql;
-  } else {
+  } else if (httpBlock) {
     const http: Record<string, unknown> = {
-      method: request.http.method,
-      url: request.http.url,
+      method: httpBlock.method,
+      url: httpBlock.url,
     };
     if (headers) http.headers = headers;
-    if (request.http.body) {
-      http.body = stripEmpty(serialiseBody(request.http.body));
+    if (httpBlock.body) {
+      http.body = stripEmpty(serialiseBody(httpBlock.body));
     }
     if (params) http.params = params;
-    if (request.http.auth !== undefined) http.auth = request.http.auth;
-    applyExtraKeys(http, request.http.extra, YAML_HTTP_KEYS);
+    if (httpBlock.auth !== undefined) http.auth = httpBlock.auth;
+    applyExtraKeys(http, httpBlock.extra, YAML_HTTP_KEYS);
     doc.http = http;
+  }
+
+  // The two non-http kinds carry their target in a block of their own, written
+  // here rather than through the carried-blocks bag. Until now they were only
+  // preserved because nothing modelled them: the parser swept them into `extra`
+  // and this generator wrote that bag back out verbatim. That kept the bytes but
+  // meant an edit through the model could not reach them, and the moment the
+  // blocks became modelled the bag stopped carrying them — so read and write had
+  // to change together, in one commit, or a `.yml` request would have been
+  // regenerated with its whole block deleted.
+  //
+  // Placed after the http/graphql block and before `runtime`, which is where
+  // upstream's own stringifier puts it. A request has one target, so only one of
+  // these three ever appears.
+  if (request.grpc) {
+    doc.grpc = serialiseGrpcBlock(request.grpc);
+  }
+  if (request.websocket) {
+    doc.websocket = serialiseWebsocketBlock(request.websocket);
   }
 
   // runtime section — variables, scripts, assertions and actions, in upstream's
