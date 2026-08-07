@@ -63,6 +63,14 @@ ws {
 }
 `;
 
+/** Types itself a WebSocket request and carries no target block of any kind. */
+const BRU_NO_BLOCK = `meta {
+  name: blockless
+  type: ws
+  seq: 5
+}
+`;
+
 const YML_GRPC = `info:
   name: ymlstreamer
   type: grpc
@@ -80,6 +88,7 @@ beforeEach(async () => {
   await writeFile(join(root, 'streamer.bru'), BRU_GRPC);
   await writeFile(join(root, 'socket.bru'), BRU_WS);
   await writeFile(join(root, 'ymlstreamer.yml'), YML_GRPC);
+  await writeFile(join(root, 'blockless.bru'), BRU_NO_BLOCK);
   global.fetch = jest.fn().mockResolvedValue(
     new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } }),
   ) as never;
@@ -89,14 +98,14 @@ const runAll = () => RequestExecutor.executeCollection(root, { scriptRunner: Tes
 const resultsOf = async () => (await runAll()).groups.flatMap((g) => g.results);
 const byName = async (name: string) => (await resultsOf()).find((r) => r.name === name);
 
-describe('a kind this server cannot run is refused, not crashed on', () => {
+describe('a request this server cannot complete is refused, not crashed on', () => {
   it('does not reject the run', async () => {
     await expect(runAll()).resolves.toBeDefined();
   });
 
-  // gRPC has a transport now, so the kind is no longer the reason. It is still
-  // refused here — the fixture's target is not allowlisted for SSRF — and the
-  // claim this file makes is unchanged: a refusal, by name, as a result rather
+  // Both kinds have a transport now, so the kind is no longer the reason: these
+  // fixtures are refused because their targets are not allowlisted for SSRF. The
+  // claim this file makes is unchanged — a refusal, by name, as a result rather
   // than a throw, with the rest of the group still running.
   it('refuses a .bru gRPC request by name, with the refusal sentinel', async () => {
     const result = await byName('streamer');
@@ -107,7 +116,17 @@ describe('a kind this server cannot run is refused, not crashed on', () => {
   it('refuses a .bru WebSocket request by name', async () => {
     const result = await byName('socket');
     expect(result?.status).toBe(0);
+    expect(result?.error).toMatch(/^Blocked:/);
+  });
+
+  // The kind refusal is still reachable, and still has to be: a file whose type
+  // names a transport but which carries no target block at all has nothing for
+  // any transport to execute.
+  it('still refuses by kind when the request has no target block', async () => {
+    const result = await byName('blockless');
+    expect(result?.status).toBe(0);
     expect(result?.error).toMatch(/cannot execute a "ws" request/i);
+    expect(result?.url).toBe('');
   });
 
   it('refuses a .yml gRPC request the same way — one rule, both dialects', async () => {
@@ -131,8 +150,8 @@ describe('a kind this server cannot run is refused, not crashed on', () => {
 
   it('counts each refusal exactly once and adds no tests', async () => {
     const run = await runAll();
-    expect(run.summary.total).toBe(4);
-    expect(run.summary.failed).toBe(3);
+    expect(run.summary.total).toBe(5);
+    expect(run.summary.failed).toBe(4);
     expect(run.summary.passed).toBe(1);
     expect(run.summary.tests.total).toBe(0);
   });
@@ -144,12 +163,12 @@ describe('a kind this server cannot run is refused, not crashed on', () => {
     expect((await byName('socket'))?.method).toBe('WS');
   });
 
-  // The kind refusal reports no url because it has no transport to read one from.
-  // gRPC now does, and reports the target it was refused for — which is what an
-  // agent needs to fix the refusal. WebSocket still has none.
-  it('reports the target it refused, or none when it never read one', async () => {
+  // A transport reports the target it refused, which is what an agent needs to
+  // fix the refusal. The kind refusal has no transport to read one from, so it
+  // reports none rather than inventing one — asserted above.
+  it('reports the target it refused', async () => {
     expect((await byName('streamer'))?.url).toBe('grpc://localhost:50051');
-    expect((await byName('socket'))?.url).toBe('');
+    expect((await byName('socket'))?.url).toBe('ws://localhost:8080');
   });
 });
 
@@ -174,6 +193,6 @@ describe('the read path does not throw for these kinds either', () => {
     const discovered = await discoverRequests(root);
     expect(discovered.parseFailures).toEqual([]);
     expect(discovered.requests.map((r) => r.yaml.info.name).sort())
-      .toEqual(['one', 'socket', 'streamer', 'ymlstreamer']);
+      .toEqual(['blockless', 'one', 'socket', 'streamer', 'ymlstreamer']);
   });
 });

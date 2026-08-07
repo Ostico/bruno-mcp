@@ -289,18 +289,16 @@ describe('no entry point throws on any of the four', () => {
     expect(results).toHaveLength(4);
     for (const result of results) {
       expect(result.status).toBe(0);
-      // Every one of the four is refused by name, but no longer all for the same
-      // reason: WebSocket is still refused for its kind, while gRPC now reaches
-      // its transport and is refused on its own terms — the fixtures carry two
-      // messages and a target that SSRF validation blocks. What this test is
-      // about is that a refusal is named and nothing throws, not which reason
-      // applies.
+      // Every one of the four is refused by name, and no longer for its kind:
+      // both transports exist now, so each request reaches one and is refused on
+      // its own terms — two messages where a unary call takes one, and targets
+      // SSRF validation blocks. What this test is about is that a refusal is
+      // named and nothing throws, not which reason applies.
       expect(result.error).toBeDefined();
       expect(result.error).not.toMatch(/undefined|\[object/i);
     }
     const reasons = results.map((r) => r.error ?? '');
-    expect(reasons.filter((r) => /cannot execute a "ws" request/i.test(r))).toHaveLength(2);
-    expect(reasons.filter((r) => /more than one message|^Blocked:/i.test(r))).toHaveLength(2);
+    expect(reasons.filter((r) => /more than one message|^Blocked:/i.test(r))).toHaveLength(4);
     // Nothing was sent over HTTP: no transport here is an http one.
     expect((global.fetch as jest.Mock).mock.calls).toHaveLength(0);
   });

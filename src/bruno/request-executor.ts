@@ -37,6 +37,7 @@ import { encodeRequestUrl, shouldEncodeUrl, hasExplicitScheme } from './url-enco
 import { scriptTimeoutMs } from './script-timeout.js';
 import { buildFetchOptions } from './fetch-options.js';
 import { executeGrpcRequest } from './grpc-transport.js';
+import { executeWebsocketRequest, type WebsocketRunOptions } from './ws-transport.js';
 
 // Re-exported from its new home so existing importers keep working. The move was
 // made to free `max-lines` headroom in this file, not to change its surface.
@@ -143,6 +144,7 @@ async function executeSingleRequest(
   cookieJar?: RunCookieJar,
   rootChain?: RootChain,
   tokenCache: TokenCache = createTokenCache(),
+  websocketOptions?: WebsocketRunOptions,
 ): Promise<RequestExecutionResult> {
   // A kind with no http block cannot go down this pipeline: every step from the
   // URL onwards is HTTP-shaped. Each such kind either has a transport of its own
@@ -178,6 +180,22 @@ async function executeSingleRequest(
       return warnings.length > 0 ? { ...result, warnings } : result;
     }
 
+    if (yaml.websocket) {
+      const wsVars = variableStore
+        ? variableStore.merge(applyPreRequestVars(vars, yaml.vars))
+        : prepareVariables(applyPreRequestVars(vars, yaml.vars), new Map());
+      const wsOauth = await resolveOAuth2(yaml, rootChain, wsVars, tokenCache);
+      const result = await executeWebsocketRequest({
+        request: yaml,
+        vars: wsVars,
+        rootChain,
+        oauth2Token: wsOauth.token,
+        options: websocketOptions,
+      });
+      const warnings = [...(result.warnings ?? []), ...(wsOauth.error ? [wsOauth.error] : [])];
+      return warnings.length > 0 ? { ...result, warnings } : result;
+    }
+
     const kind = yaml.info.type ?? 'unknown';
     return {
       name: yaml.info.name,
@@ -186,7 +204,8 @@ async function executeSingleRequest(
       status: 0,
       duration_ms: 0,
       tests: [],
-      error: `Cannot execute a "${kind}" request: this server runs http, graphql and grpc requests only`,
+      error: `Cannot execute a "${kind}" request: this server runs http, graphql, grpc and `
+        + 'websocket requests only',
     };
   }
 
@@ -736,7 +755,7 @@ export class RequestExecutor {
       try {
         return await executeSingleRequest(
           req.yaml, vars, scriptRunner, store, bodyCapture, collectionPath,
-          jar, await rootLoader.forRequest(req.filePath), tokenCache,
+          jar, await rootLoader.forRequest(req.filePath), tokenCache, options?.websocket,
         );
       } finally {
         release();
