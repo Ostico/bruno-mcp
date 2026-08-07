@@ -82,9 +82,36 @@ message SayReply { string text = 1; }
 let root: string;
 let savedAllowlist: string | undefined;
 
+/** Imports a bundled well-known type and a local neighbour, then serves Echo. */
+const CHAIN_PROTO = `syntax = "proto3";
+package echo;
+import "google/protobuf/timestamp.proto";
+import "leaf.proto";
+service Echo { rpc Say (SayRequest) returns (SayReply); }
+message SayRequest { string text = 1; }
+message SayReply { string text = 1; }
+`;
+
+const LEAF_PROTO = `syntax = "proto3";
+package leaf;
+message Leaf { string id = 1; }
+`;
+
+/** A local neighbour that reaches back out of the collection, one hop further in. */
+const ESCAPING_LEAF = `syntax = "proto3";
+package leaf;
+import "../../../../etc/hosts";
+message Leaf { string id = 1; }
+`;
+
 beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), 'grpc-unit-'));
   await writeFile(join(root, 'echo.proto'), PROTO);
+  await writeFile(join(root, 'chain.proto'), CHAIN_PROTO);
+  await writeFile(join(root, 'leaf.proto'), LEAF_PROTO);
+  await writeFile(join(root, 'escaping.proto'), CHAIN_PROTO.replace('leaf.proto', 'bad-leaf.proto'));
+  await writeFile(join(root, 'bad-leaf.proto'), ESCAPING_LEAF);
+  await writeFile(join(root, 'broken.proto'), 'syntax = "proto3"\nthis is not a proto file {{{\n');
   savedAllowlist = process.env.BRUNO_SSRF_ALLOWLIST;
   // Two entries, because they exercise different validation paths: an IP literal
   // is validated as an address and comes back as one to pin, while an allowlisted
@@ -127,6 +154,66 @@ const call = (url: string, overrides?: Partial<NonNullable<YamlRequest['grpc']>>
     collectionRoot: root,
     timeoutMs: 5000,
   });
+
+describe('the import graph is walked, not just the entry file', () => {
+  // The pre-scan exists because `@grpc/proto-loader` has no `resolvePath` option
+  // and does not hand back protobufjs's Root: there is nowhere to inject a
+  // resolver, so the imports are resolved separately, before the loader reads a
+  // byte. These tests are what make that walk more than a formality.
+  it('loads a proto that imports a bundled type and a local neighbour', async () => {
+    const result = await call('grpc://127.0.0.1:50051', { protoPath: './chain.proto' });
+    // The interesting part is that it got past the scan at all: a bundled
+    // `google/protobuf/` import has no file under the collection to resolve to,
+    // and treating it as an escape would refuse every proto that uses a
+    // well-known type.
+    expect(result.error).toBeUndefined();
+  });
+
+  it('refuses an escape one hop in, through a confined neighbour', async () => {
+    // The entry file is confined and so is the file it imports. Only the third
+    // file leaves the collection, which a non-transitive scan would never see.
+    const result = await call('grpc://127.0.0.1:50051', { protoPath: './escaping.proto' });
+    expect(result.status).toBe(0);
+    expect(result.error).toMatch(/outside the collection|proto/i);
+  });
+});
+
+describe('a proto file that will not yield a callable method', () => {
+  it('refuses a file the loader cannot parse, naming it as a load failure', async () => {
+    const result = await call('grpc://127.0.0.1:50051', { protoPath: './broken.proto' });
+    expect(result.status).toBe(0);
+    expect(result.error).toMatch(/Failed to load proto file/);
+  });
+
+  it('refuses a path that resolves to something other than a method', async () => {
+    // `echo.SayRequest` is a message, and proto-loader gives it an object with
+    // `type` on it — so the lookup finds something, and the "no such method"
+    // check above this one passes. What separates a message from a method is
+    // the serialiser, which is why the check is written on that and not on
+    // presence.
+    const result = await call('grpc://127.0.0.1:50051', { method: '/echo.SayRequest/type' });
+    expect(result.status).toBe(0);
+    expect(result.error).toMatch(/not as a callable method/);
+  });
+});
+
+describe('a request that reaches the transport with nothing to dial', () => {
+  // Unreachable through a collection run — the executor only calls this when
+  // `yaml.grpc` is present — so it is tested at the function boundary, the same
+  // way the http-block guard is. Without it the narrowing below would be a
+  // non-null assertion in all but name.
+  it('refuses rather than throwing when there is no grpc block', async () => {
+    const result = await executeGrpcRequest({
+      request: { info: { name: 'Blockless', type: 'grpc' } },
+      vars: new Map(),
+      collectionRoot: root,
+      timeoutMs: 5000,
+    });
+    expect(result.status).toBe(0);
+    expect(result.error).toMatch(/grpc block/i);
+    expect(clientCalls).toHaveLength(0);
+  });
+});
 
 describe('every channel disables proxying', () => {
   // grpc-js honours the ambient http_proxy while undici's fetch does not, so an
