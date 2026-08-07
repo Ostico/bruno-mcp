@@ -56,7 +56,19 @@ Every critical is tracked here by its review identifier so nothing is quietly dr
   Do not write a `catch` for a condition that cannot occur.
 - Five CI gates must pass: `test 22.x`, `test 24.x`, `build`, `Test adequacy gate`, `Test-Guard`.
 - `.eslintrc.json` sets `max-lines` to **1300** with `skipBlankLines: false, skipComments: false`.
-  `request-executor.ts` is at 1245. Comments may not be deleted to buy headroom.
+  Comments may not be deleted to buy headroom. **Two files are near the ceiling, not one** — the
+  first version of this plan tracked only the executor and `types.ts` broke first:
+
+  | file | at plan time | headroom |
+  |---|---|---|
+  | `src/bruno/types.ts` | 1281 | 19 |
+  | `src/bruno/request-executor.ts` | 1277 | 23 |
+
+  So **new interfaces do not go in `types.ts`.** `GrpcResultDetail` and the WebSocket transcript
+  types live in `src/bruno/transport-results.ts` for exactly this reason, and the `YamlGrpc`,
+  `YamlWebsocket`, `BruGrpc` and `BruWs` shapes PR1-T2 and PR1-T3 introduce must go in their own
+  module too — adding four interfaces to `types.ts` would break the ceiling again. Re-measure with
+  `wc -l` before adding to either file.
 - Any newly added gate requires a **red-proof**: break the thing it guards, watch the gate fail,
   restore. A gate never observed failing is not a gate.
 - Every acceptance criterion must be checkable by an agent with no human in the loop.

@@ -59,6 +59,8 @@
   "author": "Ostico (https://github.com/Ostico)",
   "license": "MIT",
   "dependencies": {
+    "@grpc/grpc-js": "^1.14.4",
+    "@grpc/proto-loader": "^0.8.1",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@usebruno/common": "^0.24.0",
     "@usebruno/lang": "^0.36.0",
@@ -66,12 +68,14 @@
     "jsonc-parser": "^3.3.1",
     "tough-cookie": "^6.0.2",
     "undici": "^8.9.0",
+    "ws": "^8.21.2",
     "yaml": "^2.9.0",
     "zod": "^3.22.4"
   },
   "devDependencies": {
     "@types/jest": "^29.0.0",
     "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
     "@usebruno/filestore": "^0.11.0",

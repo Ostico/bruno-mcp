@@ -430,7 +430,24 @@ New collections are YAML unless you pass `format: "bru"`.
 
 A collection may hold gRPC and WebSocket requests alongside HTTP ones. This server **reads, preserves and reports** them: `read_request` returns the kind, the target, the method and proto path for gRPC, its metadata block, and how many messages are stored; `list_requests` lists them; and editing any request in the collection no longer destroys them. Before this, both formats dropped the target block, the credentials and every stored message, so one `modify_request` on an unrelated request rewrote the file without them.
 
-**Running them is not supported yet.** `run_collection` reports such a request as a failure with status `0` and a reason naming the kind, and the rest of the collection still runs. `modify_request` refuses an edit naming an HTTP-shaped field — method, url, headers, body, auth, query, path params — on a kind that has no HTTP block, and leaves the file byte-unchanged; `name` and `sequence` still apply. `create_request` does not author these kinds: copy a file Bruno wrote.
+**`run_collection` runs both.** A gRPC request performs one unary call against the service its `.proto` declares; a WebSocket request opens the socket, sends the frames the file stores and records what comes back until a bound is reached. Each reports its own detail: a gRPC result carries the gRPC status code, the details string and redacted trailing metadata, and a WebSocket result carries the transcript, the `stop_reason` that ended it and whether it was truncated. The gRPC code lives in its own field and is never mapped onto the result's `status`, because gRPC's OK is `0` and `0` is this API's refusal sentinel — a successful call and a security refusal would otherwise be indistinguishable in the field read first.
+
+A WebSocket session has no natural end, so it is bounded, and every bound is settable per run under `run_collection`'s `websocket` argument:
+
+| Bound | Default | What it does |
+|---|---|---|
+| `maxMessages` | 50 | Inbound frames recorded before stopping |
+| `maxDurationMs` | 5000 | Wall-clock ceiling for one session |
+| `includePayloads` | `false` | Record frame contents, not just size and timing |
+| `maxFrameBytes` | 65536 | Per-frame ceiling on recorded payload |
+| `maxTranscriptBytes` | 1048576 | Cumulative ceiling, counted from wire size |
+| `engineIoKeepalive` | `false` | Answer an engine.io `2` with a `3` |
+
+`includePayloads` is off by default as a security property, not a preference: outbound frames are recorded **after** `{{var}}` substitution, so recording them by default would write every secret passed in `variables` into a result that is returned by default. `engineIoKeepalive` is off for a related reason — it puts a frame on the wire the request did not author — and even when on it replies only after an OPEN frame has actually been seen.
+
+**Authoring them is still not supported.** `modify_request` refuses an edit naming an HTTP-shaped field — method, url, headers, body, auth, query, path params — on a kind that has no HTTP block, and leaves the file byte-unchanged; `name` and `sequence` still apply. `create_request` does not author these kinds: copy a file Bruno wrote.
+
+Both transports are loaded lazily, and that is enforced rather than asserted: a test records every module the real server resolves and fails if an HTTP-only run names `@grpc/grpc-js` or `ws`. Measured, an HTTP-only run loads `undici` and neither of them.
 
 Two things are refused rather than guessed at. A file whose declared type and target block disagree (`type: grpc` with an `http:` block) is a parse error naming both, because the type decides what a reader reports while the block decides what a runner contacts. And a `.bru` request whose target url is empty is refused on write, because the format drops such a block while keeping the credentials beside it — the result would look authored and go nowhere.
 

@@ -4,10 +4,11 @@ Written alongside the implementation of gRPC and WebSocket support so that a lat
 re-litigate a decision that was already made, or assume a gap is an oversight. Every item below is
 either implemented and named as such, or deferred with the reason.
 
-**Status of this document.** It describes two pieces of work. The first — reading, preserving and
-reporting these request kinds — is implemented. The second — executing them — is a separate change;
-where this document refers to it, it says so in the future tense. Nothing here describes an unbuilt
-feature as though it exists.
+**Status of this document.** It describes two pieces of work, shipped as two changes. The first —
+reading, preserving and reporting these request kinds — is implemented. The second — executing them
+— is implemented too, and this document was revised when it landed rather than left in the future
+tense. Nothing here describes an unbuilt feature as though it exists; the deferred list below is
+still deferred.
 
 ## What is implemented
 
@@ -16,10 +17,18 @@ by `read_request`, and written back without loss. Before this, both dialects sil
 target block, the credentials and every stored message: a `modify_request` on *any* request in such a
 collection rewrote the file from a model that had never held those blocks.
 
+`run_collection` executes both: one unary call for a gRPC request, and a bounded recorded session for
+a WebSocket one. A gRPC result carries the gRPC status code in its own field — never mapped onto the
+result's `status`, because gRPC's OK is `0` and `0` is that field's refusal sentinel — and a
+WebSocket result carries the transcript, the `stop_reason` and whether it was truncated. Every
+WebSocket bound is settable per run; payload recording and the engine.io keepalive reply are both
+off by default, each for a security reason given where it is implemented.
+
 The kinds are refused, by name, where they cannot be honoured:
 
-- `run_collection` reports a gRPC or WebSocket request as a failure with `status: 0` and a reason
-  naming the kind. The rest of the collection still runs.
+- A request whose declared kind names no transport this server has — and a transport request with no
+  target block for its own transport — is a failure with `status: 0` and a reason naming the kind.
+  The rest of the collection still runs.
 - `modify_request` refuses an edit naming an HTTP-shaped field (method, url, headers, body, auth,
   query, pathParams) on a kind that has no http block, and leaves the file untouched. `name` and
   `sequence` still apply, because a request nothing can edit is the same data problem from the other
@@ -82,8 +91,10 @@ Measured against socket.io 4.8.3 while planning this work:
    `42["echoed","pong:…"]`.
 6. **Answer `2` with `3`.** The server sends `2` (PING) every `pingInterval`; a client that does not
    reply `3` (PONG) is disconnected after `pingTimeout`. Any recording longer than that window
-   therefore depends on the runner replying to keepalives on the caller's behalf — part of the
-   execution work, not of the fidelity work this document accompanies.
+   therefore depends on the runner replying to keepalives on the caller's behalf. **This is now
+   built**: `run_collection`'s `websocket.engineIoKeepalive` does it, off by default, and only after
+   an OPEN frame has actually been seen — a server that merely sends `2` never gets a `3` it did not
+   earn. Steps 1 to 5 need nothing from the runner; they are frames the request file already stores.
 
 Limits, stated plainly:
 
@@ -95,6 +106,12 @@ Limits, stated plainly:
 - **The file stays a legal `ws` request.** That is the whole reason this beats inventing a block:
   Bruno itself can open, run and edit the file, and nothing has to be migrated when upstream picks a
   spelling of its own.
+- **What is verified, and what is not.** Steps 1 to 5 were measured against a real socket.io 4.8.3
+  server while planning this work. Step 6 is covered by tests against a purpose-built engine.io peer
+  — one that sends the OPEN frame and then pings — rather than against socket.io itself: what those
+  tests must observe is our own reply and its two gates, and a real socket.io server would add a
+  dependency without adding an observation. The gap that leaves is one real end-to-end session
+  against socket.io driven by this recipe, which nothing in the suite performs.
 
 ## Why the transports are taken directly rather than through `@usebruno/requests`
 

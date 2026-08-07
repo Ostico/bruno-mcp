@@ -1,5 +1,6 @@
 import type { GroupInput } from './run-plan.js';
 import type { ScriptRunner } from './sandbox-host.js';
+import type { WebsocketRunOptions } from './ws-transport.js';
 
 /**
  * What a caller may ask of a collection run.
@@ -68,4 +69,14 @@ export interface ExecutionOptions {
    * of the policy.
    */
   captureVariables?: string[];
+  /**
+   * Bounds for any WebSocket request in the run.
+   *
+   * Every one of them has a default, because a socket has no natural end and an
+   * unbounded recording would hold the tool call open for as long as the peer
+   * keeps talking. They are overridable per run rather than per request: the
+   * caller, not the collection file, is the one who knows how long it is prepared
+   * to wait.
+   */
+  websocket?: WebsocketRunOptions;
 }

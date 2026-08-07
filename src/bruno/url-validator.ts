@@ -122,6 +122,83 @@ export interface UrlValidationResult {
    * normally.
    */
   addresses?: string[];
+  /**
+   * The URL that was actually checked, present only on success.
+   *
+   * A transport must dial THIS and never re-parse the author's raw target. The
+   * two differ whenever normalisation did something — a bare `host:port` gained
+   * a scheme, or a non-special scheme's host was lower-cased — and re-parsing
+   * the original would mean the string that was checked and the string that is
+   * dialled are not the same string.
+   */
+  normalisedUrl?: string;
+}
+
+/** Schemes the HTTP callers permit. Anything else must opt in explicitly. */
+const DEFAULT_ALLOWED_SCHEMES: readonly string[] = ['http', 'https'];
+
+/**
+ * Schemes the WHATWG URL parser treats as "special" and therefore normalises for
+ * us: it lower-cases the host, applies IDNA, resolves IPv4 shorthand, and reads a
+ * backslash in the authority as a delimiter rather than as data.
+ *
+ * `ws` and `wss` are on that list; `grpc` and `grpcs` are not, and the difference
+ * is not cosmetic. Measured:
+ *
+ *   ws://10.0.0.1\@evil.com:8080    -> hostname "10.0.0.1"   (safe)
+ *   grpc://10.0.0.1\@evil.com:50051 -> hostname "evil.com"   (host confusion)
+ *   ws://EXAMPLE.com                -> "example.com"
+ *   grpc://EXAMPLE.com              -> "EXAMPLE.com"
+ *
+ * So a single normaliser written on the assumption that all four behave alike
+ * would be wrong for two of them. The non-special schemes get the checks the
+ * parser declines to perform.
+ */
+const SPECIAL_SCHEMES: ReadonlySet<string> = new Set(['http', 'https', 'ws', 'wss', 'ftp', 'file']);
+
+export interface UrlValidationOptions {
+  /**
+   * Schemes this call permits. Defaults to http/https, so the existing HTTP call
+   * sites keep exactly today's narrow gate and only a transport that needs a
+   * wider one has to say so.
+   */
+  allowedSchemes?: readonly string[];
+  /**
+   * Scheme to assume when the target carries none, e.g. a bare `host:port` gRPC
+   * target. Omitted by the HTTP callers, so their behaviour is unchanged.
+   */
+  defaultScheme?: string;
+}
+
+/**
+ * Give a scheme-less target its scheme before anything tries to parse it.
+ *
+ * Shape first, deliberately. The tempting order — try `new URL`, prepend on
+ * failure — does not work, because `new URL('example.com:50051')` SUCCEEDS,
+ * yielding `{protocol:'example.com:', hostname:'', pathname:'50051'}`. Only a
+ * digit-leading authority such as `127.0.0.1:50051` throws. So a hostname target
+ * would sail past the try/catch and be rejected later as a blocked scheme named
+ * after the host itself.
+ */
+function withDefaultScheme(url: string, defaultScheme: string | undefined): string {
+  if (defaultScheme === undefined) return url;
+  const trimmed = url.trim();
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `${defaultScheme}://${trimmed}`;
+}
+
+/**
+ * Reject a backslash in the authority of a non-special-scheme URL.
+ *
+ * The parser reads it as data rather than as a delimiter for these schemes, so
+ * `grpc://10.0.0.1\@evil.com:50051` resolves to `evil.com` while looking, to a
+ * human reviewing the collection file, like it targets `10.0.0.1`.
+ */
+function authorityHasBackslash(url: string): boolean {
+  const start = url.indexOf('://');
+  if (start === -1) return false;
+  const rest = url.slice(start + 3);
+  const end = rest.search(/[/?#]/);
+  return (end === -1 ? rest : rest.slice(0, end)).includes('\\');
 }
 
 /**
@@ -133,19 +210,44 @@ export interface UrlValidationResult {
  * @param url - The URL string to validate
  * @returns Validation result with optional reason for rejection
  */
-export async function validateUrl(url: string): Promise<UrlValidationResult> {
+export async function validateUrl(
+  url: string,
+  options?: UrlValidationOptions,
+): Promise<UrlValidationResult> {
+  const allowedSchemes = options?.allowedSchemes ?? DEFAULT_ALLOWED_SCHEMES;
+
+  // Normalise by shape before parsing, so a scheme-less target is not later
+  // rejected as a scheme named after its own host. A no-op unless the caller
+  // supplied a default scheme.
+  const candidate = withDefaultScheme(url, options?.defaultScheme);
+
   // Parse the URL
   let parsed: URL;
   try {
-    parsed = new URL(url);
+    parsed = new URL(candidate);
   } catch {
     return { valid: false, reason: 'Invalid URL: unable to parse' };
   }
 
-  // 1. Check scheme — only http and https allowed
+  // 1. Check scheme against the set this caller permits
   const scheme = parsed.protocol.replace(/:$/, '').toLowerCase();
-  if (scheme !== 'http' && scheme !== 'https') {
-    return { valid: false, reason: `Blocked scheme: ${scheme}. Only http and https are allowed` };
+  if (!allowedSchemes.includes(scheme)) {
+    return {
+      valid: false,
+      reason: `Blocked scheme: ${scheme}. Only ${allowedSchemes.join(' and ')} are allowed`,
+    };
+  }
+
+  // 1b. For a scheme the parser does not treat as special, perform the authority
+  // checks it declines to perform. Skipped for http/https/ws/wss, where the
+  // parser has already read a backslash as a delimiter.
+  if (!SPECIAL_SCHEMES.has(scheme) && authorityHasBackslash(candidate)) {
+    return {
+      valid: false,
+      reason: 'Invalid URL: backslash in authority. '
+        + `The "${scheme}" scheme is not normalised by the URL parser, so this would resolve to a `
+        + 'different host than it appears to name',
+    };
   }
 
   const rawHostname = parsed.hostname.toLowerCase();
@@ -153,9 +255,12 @@ export async function validateUrl(url: string): Promise<UrlValidationResult> {
   // 2. Reject empty hostname
   // Note: some URL parsers treat 'http:///path' as hostname='path', so also
   // check if the original URL had an authority section with empty host.
-  /* istanbul ignore next -- defensive: the WHATWG URL parser requires a non-empty
-     host for http/https (an empty authority throws), so a successfully-parsed
-     http(s) URL never reaches here with an empty hostname */
+  //
+  // Reachable: a non-special scheme accepts an empty authority where http would
+  // throw — `new URL('grpcs://')` parses with hostname '', while `new URL('wss://')`
+  // throws. Left unchecked, `checkHostname('')` returns null and the empty name
+  // reaches `dns.lookup('')`, which has historically resolved to loopback on
+  // Linux — a platform-dependent bypass.
   if (!rawHostname) {
     return { valid: false, reason: 'Invalid URL: empty hostname' };
   }
@@ -172,17 +277,29 @@ export async function validateUrl(url: string): Promise<UrlValidationResult> {
   // Detect empty-authority URLs like 'http:///path' where the parser
   // mistakenly treats the path component as the hostname.
   // A triple-slash after scheme means no host was provided.
-  const schemeEnd = url.indexOf('://');
-  if (schemeEnd !== -1 && url[schemeEnd + 3] === '/') {
+  const schemeEnd = candidate.indexOf('://');
+  if (schemeEnd !== -1 && candidate[schemeEnd + 3] === '/') {
     return { valid: false, reason: 'Invalid URL: empty hostname' };
   }
+
+  // The string a transport must dial. Rebuilt from the parsed URL rather than
+  // handed back verbatim, so a non-special scheme's host arrives lower-cased —
+  // the parser does not do it for those, and the checks below all ran against the
+  // lower-cased form.
+  const normalisedUrl = parsed.hostname === hostname
+    ? parsed.toString()
+    : (() => {
+      const rebuilt = new URL(parsed.toString());
+      rebuilt.hostname = hostname;
+      return rebuilt.toString();
+    })();
 
   const allowlist = getAllowlist();
 
   // 3. Explicit host allowlist — an operator-approved exact hostname bypasses
   // all host/IP policy checks (the operator has vouched for this target).
   if (allowlist.hosts.has(hostname)) {
-    return { valid: true };
+    return { valid: true, normalisedUrl };
   }
 
   // 4. Check hostname denylist (localhost, *.local, cloud metadata)
@@ -246,7 +363,7 @@ export async function validateUrl(url: string): Promise<UrlValidationResult> {
 
   // Hand back exactly the addresses that were checked, so the connection is
   // pinned to them instead of re-resolving the hostname (DNS rebinding).
-  return { valid: true, addresses: ips };
+  return { valid: true, addresses: ips, normalisedUrl };
 }
 
 // ---------------------------------------------------------------------------
