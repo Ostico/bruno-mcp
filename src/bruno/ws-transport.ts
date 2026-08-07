@@ -37,10 +37,17 @@ import type { YamlRequest } from './types.js';
 const WS_SCHEMES = ['ws', 'wss', 'http', 'https'] as const;
 const TLS_SCHEMES = new Set(['wss:', 'https:']);
 
-/** How many inbound frames a session records before stopping. */
-const DEFAULT_MAX_MESSAGES = 50;
+/**
+ * How many inbound frames a session records before stopping.
+ *
+ * Exported, like the byte ceilings in transport-redaction, so the tool schema's
+ * documented default can be asserted equal to the one the transport actually
+ * applies. A schema that says 50 while the transport uses something else is a lie
+ * an agent has no way to detect.
+ */
+export const DEFAULT_MAX_MESSAGES = 50;
 /** How long a session records before stopping, in milliseconds. */
-const DEFAULT_MAX_DURATION_MS = 5000;
+export const DEFAULT_MAX_DURATION_MS = 5000;
 /** How long to wait for a close handshake before pulling the socket down. */
 const CLOSE_GRACE_MS = 250;
 
