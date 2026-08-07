@@ -104,6 +104,18 @@ const run = async (root: string, websocket?: ExecutionOptions['websocket']) => {
   return result.groups.flatMap((g) => g.results);
 };
 
+/** A run with variables supplied, and the whole result kept for inspection. */
+const runWithVariables = (
+  root: string,
+  variables: Record<string, string>,
+  websocket?: ExecutionOptions['websocket'],
+) =>
+  RequestExecutor.executeCollection(root, {
+    scriptRunner: TestRunner,
+    variables,
+    ...(websocket ? { websocket } : {}),
+  });
+
 let savedAllowlist: string | undefined;
 
 beforeAll(() => {
@@ -353,6 +365,77 @@ describe('the engine.io keepalive is gated twice', () => {
         engineIoKeepalive: true,
       });
       expect(harness.received).not.toContain('3');
+    } finally {
+      await stop(harness);
+    }
+  }, 10000);
+});
+
+describe('the allowlist is what lets any of this reach loopback', () => {
+  // A canary, not a feature test. Every assertion in this file runs with
+  // BRUNO_SSRF_ALLOWLIST set, and the variable is process-global and cached
+  // inside url-validator. If a sibling suite in the same worker leaked an
+  // assignment, or the reset here quietly stopped working, every SSRF-dependent
+  // assertion in this file would keep passing for the wrong reason and nothing
+  // would notice. This one fails if the allowlist has stopped being load-bearing.
+  it('refuses ws://127.0.0.1 with the allowlist cleared', async () => {
+    const harness = await startServer((socket) => socket.send('hi'));
+    try {
+      const root = await collection({ 'a.bru': bruWs('127.0.0.1', harness.port) });
+      delete process.env.BRUNO_SSRF_ALLOWLIST;
+      resetAllowlistCache();
+
+      const [result] = await run(root);
+
+      expect(result?.status).toBe(0);
+      expect(result?.error).toMatch(/^Blocked:/);
+      // Nothing was dialled: the server saw no frame at all.
+      expect(harness.received).toEqual([]);
+    } finally {
+      // Restored on BOTH sides, in a finally, because a failure here would
+      // otherwise leave the rest of the worker running without an allowlist.
+      process.env.BRUNO_SSRF_ALLOWLIST = '127.0.0.1,localhost';
+      resetAllowlistCache();
+      await stop(harness);
+    }
+  }, 10000);
+});
+
+describe('a secret substituted into a frame stays out of the default result', () => {
+  const SECRET = 'sup3r-s3cret-token';
+
+  // Outbound frames are recorded AFTER {{var}} substitution, so the transcript is
+  // the one place a value supplied in memory could reach a returned result.
+  // `variables` is documented as the only correct way to pass a secret, which
+  // makes this the claim standing behind that advice.
+  it('never appears anywhere in the result under the default bounds', async () => {
+    const harness = await startServer((socket) => socket.send('ack'));
+    try {
+      const root = await collection({ 'a.bru': bruWs('127.0.0.1', harness.port, '{{token}}') });
+
+      const result = await runWithVariables(root, { token: SECRET }, { maxMessages: 1 });
+
+      // The secret really was on the wire — otherwise its absence from the
+      // result would prove nothing except that substitution had failed.
+      expect(harness.received).toEqual([SECRET]);
+      expect(JSON.stringify(result)).not.toContain(SECRET);
+    } finally {
+      await stop(harness);
+    }
+  }, 10000);
+
+  it('appears once payloads are asked for, which is the opt-in working', async () => {
+    const harness = await startServer((socket) => socket.send('ack'));
+    try {
+      const root = await collection({ 'a.bru': bruWs('127.0.0.1', harness.port, '{{token}}') });
+
+      const result = await runWithVariables(
+        root,
+        { token: SECRET },
+        { maxMessages: 1, includePayloads: true },
+      );
+
+      expect(JSON.stringify(result)).toContain(SECRET);
     } finally {
       await stop(harness);
     }

@@ -34,9 +34,19 @@ import type {
   BruGraphql,
 } from './types.js';
 
-function isMultipartBody(body: NonNullable<YamlRequest['http']>['body']): boolean {
+type HttpBody = NonNullable<YamlRequest['http']>['body'];
+
+/**
+ * Takes a present body, so the caller narrows before asking rather than after.
+ *
+ * It used to accept `HttpBody | undefined` and return a plain `boolean`, which
+ * left the one caller writing `body!.data`: a non-null assertion whose
+ * correctness rested on a guard the compiler could not see, and which would have
+ * gone on compiling if that guard ever stopped checking for absence. Neither a
+ * predicate nor a cast is needed once absence is handled where it is known.
+ */
+function isMultipartBody(body: NonNullable<HttpBody>): boolean {
   return (
-    !!body &&
     (body.type === 'multipart-form' || body.type === 'form-data') &&
     Array.isArray(body.data)
   );
@@ -210,9 +220,9 @@ export async function buildFetchOptions(
 
   const bodyWarnings: string[] = [];
   const body = http.body;
-  if (isMultipartBody(body)) {
+  if (body && isMultipartBody(body)) {
     const form = new FormData();
-    const parts = body!.data as MultipartFormPart[];
+    const parts = body.data as MultipartFormPart[];
 
     for (const part of parts) {
       // A part explicitly disabled in the collection must not be sent.
