@@ -5,6 +5,20 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Listed on the MCP registry.** A `server.json` declares the server under
+  `io.github.Ostico/bruno-mcp-studio`, and `package.json` carries the matching
+  `mcpName` that the registry reads back off the published npm manifest to prove
+  the two are owned by the same people. A release now updates the listing by
+  itself: the release workflow gained a second job that authenticates with the
+  same GitHub OIDC token npm already uses, so no additional secret exists to
+  leak or rotate. The job is separate from the publish job on purpose — if the
+  listing fails it can be re-run alone, where re-running the publish job would
+  try to publish a version npm already has and fail permanently.
+
 ## [2.2.0] - 2026-08-07
 
 ### Fixed

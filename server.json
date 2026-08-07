@@ -1,0 +1,25 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Ostico/bruno-mcp-studio",
+  "title": "Bruno MCP Studio",
+  "description": "Author, read and run Bruno API collections over HTTP, gRPC and WebSocket.",
+  "version": "2.2.0",
+  "websiteUrl": "https://github.com/Ostico/bruno-mcp-studio#readme",
+  "repository": {
+    "source": "github",
+    "url": "https://github.com/Ostico/bruno-mcp-studio",
+    "id": "1262098166"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@ostico/bruno-mcp",
+      "version": "2.2.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
