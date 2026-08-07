@@ -5,6 +5,113 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **A gRPC or WebSocket request was destroyed by an edit to any request in the
+  same collection.** Neither dialect's parser modelled a transport block, so the
+  run model never held one — and every write rebuilds the file from that model.
+  One `modify_request` on an unrelated request, or a rename, rewrote the file
+  without its target, its credentials and every stored message. The data was gone
+  from disk and nothing reported it. Both dialects now carry `grpc` and
+  `websocket` blocks through parse, model and write, and four files — both kinds
+  in both formats — are edited on an unrelated field and asserted intact, by
+  message *content* rather than by count: the `.bru` grammar substitutes `{}` for
+  an empty message body, so two content-destroyed messages still round-trip as two
+  blocks and a count assertion would pass on total loss.
+
+### Added
+
+- **gRPC and WebSocket requests run.** A gRPC request performs one unary call
+  against the service its `.proto` declares; a WebSocket request opens the socket,
+  sends the frames the file stores and records what comes back until a bound is
+  reached. Both go through the same SSRF validation, address pinning, variable
+  substitution and auth as an HTTP request.
+
+  A gRPC result carries the gRPC status code, the details string and redacted
+  trailing metadata. The code lives in its own field and is never mapped onto the
+  result's `status`, because gRPC's OK is `0` and `0` is this API's refusal
+  sentinel — a successful call and a security refusal would otherwise be
+  indistinguishable in the field read first.
+
+- **WebSocket sessions are bounded, and every bound is settable per run.** A
+  socket has no natural end, so `run_collection` takes a `websocket` argument:
+  `maxMessages` (50), `maxDurationMs` (5000), `maxFrameBytes` (65536),
+  `maxTranscriptBytes` (1048576), `includePayloads` (false) and
+  `engineIoKeepalive` (false). The result names which bound ended the session in
+  `stop_reason` and sets `truncated` for the three that cut one short. Out-of-range
+  values are refused by name rather than clamped.
+
+- **`read_request` reports both kinds**: the target, the method and proto path for
+  gRPC, the metadata or headers block, and how many messages are stored.
+  `list_requests` and `get_collection_stats` include them.
+
+- **A collection can be reached over socket.io** without a socket.io block
+  existing in either file format. A socket.io v4 server accepts a raw WebSocket at
+  its own path, and its frames are text; the recipe is written up in
+  `docs/superpowers/specs/2026-08-06-grpc-websocket-design.md`. The one part that
+  cannot be written as a stored frame — answering the server's engine.io PING so
+  it does not disconnect you at `pingTimeout` — is `websocket.engineIoKeepalive`.
+
+### Changed
+
+- **`run_collection`'s description no longer claims that every unparseable
+  request file is skipped.** That holds for a file the server discovered, by
+  running the whole collection or expanding a directory. A file you *named*
+  yourself fails the group that named it, because you asked for that specific
+  request and there is no partial answer to it. The other groups still run. The
+  behaviour is unchanged; the description was wrong about it.
+
+- **Neither transport package is loaded until a request needs one.** An HTTP-only
+  run resolves `undici` and neither `@grpc/grpc-js` nor `ws`. This is enforced by a
+  test that records every module the real server child resolves, with a positive
+  control on each transport — a recorder that silently wrote nothing would satisfy
+  the negative assertion perfectly.
+
+- **A file whose declared type and target block disagree is now a parse error
+  naming both** — `type: grpc` with an `http:` block, say. The type decides what a
+  reader reports and the block decides what a runner contacts, so a file where they
+  differ cannot be read unambiguously and neither signal should win silently.
+
+- **A `.bru` request whose target url is empty is refused on write.** The grammar
+  drops a transport block with a falsy url while keeping its sibling `metadata`
+  block, so writing one produces a file that looks authored, carries a credential,
+  and goes nowhere.
+
+### Security
+
+- **A gRPC channel never uses an ambient proxy.** `@grpc/grpc-js` honours
+  `http_proxy` where undici's `fetch` does not, so a proxy the operator never
+  configured for this server would have seen gRPC traffic that HTTP traffic never
+  reaches. `grpc.enable_http_proxy` is set to `0` unconditionally, and a test with
+  a real proxy listener asserts it counts zero CONNECTs.
+
+- **A proto file's whole import graph is confined to the collection.** Transitive,
+  because the escape can be one hop in: a confined entry file importing a confined
+  neighbour that imports `/etc/hosts` would otherwise pass. Symlinks that point
+  out, absolute imports and paths under `$HOME` are all refused. Bundled
+  `google/protobuf/` imports are exempt — they resolve to no file under the
+  collection, and treating them as escapes would refuse every proto that uses a
+  well-known type.
+
+- **Frame contents are not recorded unless asked for.** Outbound frames are
+  recorded *after* `{{var}}` substitution, so recording them by default would write
+  every secret passed in `variables` — documented as the only correct way to supply
+  one — into a result that is returned by default. `includePayloads` opts in.
+
+- **A target that asked for TLS and cannot have it fails rather than downgrading.**
+  Upstream's client falls back to an insecure channel when SSL credentials cannot
+  be built; that sends the credential in the clear. Credential-bearing gRPC
+  metadata and WebSocket handshake headers are masked by name in results, including
+  any header the request's own auth wrote.
+
+- **An auth mode a transport cannot honour is refused, not sent bare and not
+  silently dropped.** A digest credential needs a 401 challenge and there is no
+  such exchange on either transport, so it refuses. A query-placed api-key refuses
+  for gRPC, whose target has no query string, and is appended for WebSocket, whose
+  target has one.
+
 ## [2.1.1] - 2026-08-05
 
 ### Added
