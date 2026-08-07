@@ -1,7 +1,7 @@
 {
   "name": "@ostico/bruno-mcp",
   "mcpName": "io.github.Ostico/bruno-mcp-studio",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "MCP server for Bruno: an AI agent can author, read and run .bru and .yml (opencollection) API collections — no bru CLI needed, byte-parity with Bruno's own reader.",
   "main": "dist/index.js",
   "bin": {

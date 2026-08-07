@@ -3,7 +3,7 @@
   "name": "io.github.Ostico/bruno-mcp-studio",
   "title": "Bruno MCP Studio",
   "description": "Author, read and run Bruno API collections over HTTP, gRPC and WebSocket.",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "websiteUrl": "https://github.com/Ostico/bruno-mcp-studio#readme",
   "repository": {
     "source": "github",
@@ -15,7 +15,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@ostico/bruno-mcp",
-      "version": "2.2.0",
+      "version": "2.2.1",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
