@@ -70,10 +70,12 @@ publishes anything. So a release is a normal PR followed by one tag push.
 2. **Roll the changelog.** `## [Unreleased]` becomes `## [X.Y.Z] - YYYY-MM-DD`. Do not
    reorder or rewrite the entries — they were written when the work landed, by whoever
    understood it.
-3. **Bump the version in three places**, which must agree: `package.json`,
-   `package-lock.json` (both via `npm version X.Y.Z --no-git-tag-version`), and the literal
-   in `src/server.ts` that the server reports to its client on connect.
-   `tests/unit/meta/version-matches-package.test.ts` fails if the last one is forgotten.
+3. **Bump the version in four places**, which must agree: `package.json`,
+   `package-lock.json` (both via `npm version X.Y.Z --no-git-tag-version`), the literal
+   in `src/server.ts` that the server reports to its client on connect, and both version
+   fields in `server.json` (`.version` and `.packages[0].version`).
+   `tests/unit/meta/version-matches-package.test.ts` and
+   `tests/unit/meta/registry-manifest.test.ts` fail if either is forgotten.
 4. **Verify before pushing**: `npx tsc --noEmit`, `npx eslint src/ --ext .ts`, `npx jest`,
    `npm run build`. Check the suite *count*, not just "0 failures" — a broken build drops
    whole suites silently.
