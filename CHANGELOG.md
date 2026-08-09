@@ -5,6 +5,45 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **An auth block the parser could not interpret was applied as no auth, in
+  silence.** An unrecognised auth *value* has always been reported; an
+  unrecognised auth *shape* was not, so a request whose file plainly claims a
+  credential went out bare with nothing in the result saying so. The specific
+  shape worth naming is `mode:`, which is Bruno's in-memory spelling and the one
+  collection and folder roots genuinely use on disk — a request spells it `type:`,
+  and guessing wrong produced no diagnostic at all. It now warns, names the keys
+  it found, and points at the right spelling.
+
+- **`websocket.maxTranscriptBytes` was a hint rather than a bound.** The ceiling
+  was only checked after a frame had been appended, so a single large frame was
+  recorded whole: a 100-byte budget could hold 2000 bytes. The payload is now
+  clipped to what is left of the budget before it is stored, while the reported
+  `bytes` still gives the frame's true size — the same honest arrangement
+  `maxFrameBytes` already had.
+
+- **A WebSocket request that sends nothing now says so.** Five shapes produce a
+  session that connects, sends no frame, records whatever the peer volunteers and
+  passes: no `message` key, an empty list, every entry deselected, `selected`
+  omitted, and `selected` given as the string `"false"`. The last two look
+  selected to anyone reading the file. The run already refuses to let zero
+  requests or an empty group pass silently; this applies the same rule to the
+  message list.
+
+- **A handshake header the WebSocket constructor rejects now reports which target
+  it refused.** The constructor validates headers and throws synchronously — on a
+  CR/LF in a value, or a name that is not a token — and that throw escaped the
+  transport to be reported without a `url`. A caller refusing several targets at
+  once could not tell which one had been rejected.
+
+- **A misspelled `websocket` run option is now rejected instead of ignored.**
+  Every option already rejected an out-of-range value by name, but an unknown key
+  was accepted and dropped, silently restoring the default. `maxMessage` is one
+  character from `maxMessages` and looked applied.
+
 ## [2.2.1] - 2026-08-07
 
 ### Added

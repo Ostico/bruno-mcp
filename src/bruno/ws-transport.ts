@@ -25,6 +25,7 @@ import { substitute } from './env-loader.js';
 import { redactUrl, appendQueryCredential } from './request-redaction.js';
 import {
   toTranscriptEntry,
+  transcriptBytes,
   transcriptCapReached,
   toWebsocketDetail,
   type TranscriptOptions,
@@ -195,25 +196,69 @@ export async function executeWebsocketRequest(
   const maxMessages = options.maxMessages ?? DEFAULT_MAX_MESSAGES;
   const maxDurationMs = options.maxDurationMs ?? DEFAULT_MAX_DURATION_MS;
 
+  // A session that sends nothing is almost never what the file meant, and it is
+  // indistinguishable from a healthy one in the result: it connects, records
+  // whatever the peer volunteers, and passes. The run already refuses to let
+  // "zero requests" or "an empty group" pass silently; this is the same
+  // principle one level down, at the message list.
+  //
+  // Five shapes reach here — no `message` key, an empty list, every entry
+  // deselected, `selected` omitted, and `selected` as the STRING "false". The
+  // last two are the dangerous ones, because they look selected to a human
+  // reading the file. `.yml` parsing resolves `selected` to an explicit boolean,
+  // so an omitted flag has already become `false` by the time the filter below
+  // sees it.
+  if (framesToSend(request, subst).length === 0) {
+    warnings.push(
+      'This WebSocket request sends no messages: none are selected, so the session only '
+        + 'records what the peer volunteers. Sending nothing is not a pass. Set `selected: true` '
+        + '(a boolean, not the string "false") on the messages that should go out.',
+    );
+  }
+
   const { WebSocket } = await import('ws');
 
   const transcript: WebsocketTranscriptEntry[] = [];
   const startedAt = Date.now();
   const offset = () => Date.now() - startedAt;
   const record = (direction: 'sent' | 'received', payload: string) => {
-    transcript.push(toTranscriptEntry({ direction, offset_ms: offset(), payload }, options));
+    // The running total is what lets the entry clip itself to the cumulative
+    // ceiling. Computed from the transcript rather than carried in a counter so
+    // there is one source of truth for it.
+    transcript.push(
+      toTranscriptEntry(
+        { direction, offset_ms: offset(), payload },
+        options,
+        transcriptBytes(transcript),
+      ),
+    );
   };
 
-  const socket = new WebSocket(dialUrl, {
-    headers: handshakeHeaders(request, subst, authHeaders),
-    handshakeTimeout: maxDurationMs,
-    // Both branches are load-bearing. `pinnedLookup([])` fails closed with
-    // ENOTFOUND by design, and the allowlisted-hostname path returns no addresses
-    // at all — so passing it unconditionally would make every such request fail
-    // as if DNS were broken.
-    ...(addresses.length > 0 ? { lookup: pinnedLookup(addresses) } : {}),
-    ...(tls ?? {}),
-  });
+  // Wrapped because the constructor validates the handshake headers and throws
+  // SYNCHRONOUSLY on a bad one — an invalid character in a value, a name that is
+  // not a token. Unwrapped, that escaped this function entirely and was reported
+  // by a generic handler with no `url`, so a caller refusing several targets at
+  // once could not tell which one was rejected. Everything else here reports the
+  // target it refused; this now does too.
+  let socket: InstanceType<typeof WebSocket>;
+  try {
+    socket = new WebSocket(dialUrl, {
+      headers: handshakeHeaders(request, subst, authHeaders),
+      handshakeTimeout: maxDurationMs,
+      // Both branches are load-bearing. `pinnedLookup([])` fails closed with
+      // ENOTFOUND by design, and the allowlisted-hostname path returns no addresses
+      // at all — so passing it unconditionally would make every such request fail
+      // as if DNS were broken.
+      ...(addresses.length > 0 ? { lookup: pinnedLookup(addresses) } : {}),
+      ...(tls ?? {}),
+    });
+  } catch (err) {
+    // Read off the object rather than through `instanceof Error`: the throw
+    // comes from inside `ws`, and a cross-realm builtin fails that test while
+    // still carrying a perfectly good message.
+    const detail = String((err as { message?: unknown })?.message ?? err);
+    return refuse(request, target, `WebSocket handshake was refused: ${detail}`, warnings);
+  }
 
   let stopReason: WebsocketResultDetail['stop_reason'] = 'closed';
   let failure: string | undefined;

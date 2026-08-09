@@ -65,6 +65,32 @@ function reasonsFor(value: unknown): string[] {
   return (outcome.error?.issues ?? []).map((issue) => issue.message);
 }
 
+// Every bound below rejects an out-of-range value BY NAME. A misspelled key used
+// to be accepted and then ignored, silently restoring the default — so the one
+// mistake that produced no diagnostic at all was the one a typo makes.
+describe('an unknown websocket option key', () => {
+  it('is rejected rather than ignored', () => {
+    const outcome = inputSchema.websocket!.safeParse({ maxMessages: 3, bogusOption: true });
+    expect(outcome.success).toBe(false);
+  });
+
+  it('names the key it did not recognise', () => {
+    expect(reasonsFor({ maxMessage: 3 }).join(' ')).toMatch(/maxMessage/);
+  });
+
+  it('still accepts every key the transport really honours', () => {
+    const everyKey = {
+      maxMessages: 10,
+      maxDurationMs: 1000,
+      includePayloads: true,
+      maxFrameBytes: 128,
+      maxTranscriptBytes: 4096,
+      engineIoKeepalive: true,
+    };
+    expect(inputSchema.websocket!.parse(everyKey)).toEqual(everyKey);
+  });
+});
+
 describe('the websocket bounds a caller can set', () => {
   it('defaults every bound to the value the transport actually applies', () => {
     // Asserted against the transport's own constants, not against literals: a

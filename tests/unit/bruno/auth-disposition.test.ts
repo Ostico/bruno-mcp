@@ -240,4 +240,48 @@ describe('http dispositions are unchanged', () => {
     );
     expect(disposition).toEqual({ outcome: 'query', key: 'x-key', value: 'v' });
   });
+
+  // An unrecognised auth VALUE was always loud. An unrecognised auth SHAPE was
+  // silent, which is the worse of the two: the file claims a credential, the
+  // request goes out bare, and nothing in the result says so.
+  describe('an auth block with no "type" key', () => {
+    it('warns and names the keys it did find, rather than passing as unauthenticated', () => {
+      const { disposition, warnings } = apply(
+        { mode: 'bearer', bearer: { token: 'never-sent' } } as never,
+        'http',
+      );
+      expect(disposition?.outcome).toBe('done');
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatch(/no "type" key/);
+      expect(warnings[0]).toMatch(/mode, bearer/);
+    });
+
+    it('names `mode` specifically, because it is the root spelling and the likely mistake', () => {
+      const { warnings } = apply({ mode: 'bearer' } as never, 'http');
+      expect(warnings[0]).toMatch(/root spelling/);
+    });
+
+    it('sends no credential for the unreadable block', () => {
+      const headers: Record<string, string> = {};
+      applyAuth(
+        { mode: 'bearer', bearer: { token: 'never-sent' } } as never,
+        headers,
+        identity,
+        [],
+        [],
+      );
+      expect(headers).toEqual({});
+    });
+
+    it('stays silent for an empty block, which claims nothing', () => {
+      const { disposition, warnings } = apply({} as never, 'http');
+      expect(disposition?.outcome).toBe('done');
+      expect(warnings).toEqual([]);
+    });
+
+    it('warns on a non-http transport too, where nothing else would catch it', () => {
+      const { warnings } = apply({ mode: 'basic' } as never, 'ws');
+      expect(warnings[0]).toMatch(/no "type" key/);
+    });
+  });
 });
