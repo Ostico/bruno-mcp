@@ -429,23 +429,36 @@ export function generateYamlRequest(request: YamlRequest): string {
     doc.runtime = runtime;
   }
 
-  // settings section, always written and always complete.
+  // settings section. Which keys belong here — and whether the block is written
+  // at all — depends on the request kind, because upstream's three `.yml`
+  // writers disagree, measured in `@usebruno/filestore/src/formats/yml/items`:
   //
-  // Upstream's `.yml` writer is unconditional — it builds all four keys and
-  // assigns `ocRequest.settings = settings` for every request, defaulting
-  // `encodeUrl` and `followRedirects` to true, `maxRedirects` to 5 and `timeout`
-  // to 0 (`bruno-filestore/src/formats/yml/items/stringifyHttpRequest.ts`). This
-  // writer used to emit the block only when the model carried one, which left
-  // two visible differences from a request Bruno created: the block was missing,
-  // and — because the `.yml` reader treats an omitted `encodeUrl` as **true**
-  // while a missing block means false — the request went out with its URL raw
-  // where Bruno sends it encoded. Same collection, two behaviours, depending on
-  // which tool wrote the request.
+  // - `stringifyHttpRequest.ts` is unconditional. It builds all four keys and
+  //   assigns `ocRequest.settings = settings` for every request, defaulting
+  //   `encodeUrl` and `followRedirects` to true, `maxRedirects` to 5 and
+  //   `timeout` to 0.
+  // - `stringifyWebsocketRequest.ts` writes a **different pair** — `timeout` and
+  //   `keepAliveInterval`, both defaulting to 0 — and none of the other three.
+  //   Its reader produces that object for every WebSocket request, so in
+  //   practice the block is always present there too.
+  // - `stringifyGrpcRequest.ts` writes no settings block at all.
   //
-  // The `.bru` writer deliberately does NOT do this: upstream's `jsonToBru` is a
-  // passthrough that writes only the keys the model holds, and 248 of the 275
-  // `.bru` files in upstream's own test collection carry no settings block at
-  // all. The two dialects differ here, so this server differs with them.
+  // This writer used to emit the HTTP four for every kind. For an HTTP request
+  // that is right, and it is why the block is unconditional: emitting it only
+  // when the model carried one left two visible differences from a request
+  // Bruno created — the block was missing, and, because the `.yml` reader treats
+  // an omitted `encodeUrl` as **true** while a missing block means false, the
+  // request went out with its URL raw where Bruno sends it encoded.
+  //
+  // For a gRPC or WebSocket request the same defaults are invention: they
+  // describe redirect and URL-encoding behaviour that neither transport has, and
+  // Bruno's own reader for those kinds does not look at them.
+  //
+  // The `.bru` writer deliberately does NOT do any of this: upstream's
+  // `jsonToBru` is a passthrough that writes only the keys the model holds, and
+  // 248 of the 275 `.bru` files in upstream's own test collection carry no
+  // settings block at all. The two dialects differ here, so this server differs
+  // with them.
   //
   // `extra` is destructured off rather than left to the skip list, because the
   // whole rest of the object is passed through verbatim and the bag would
@@ -453,20 +466,39 @@ export function generateYamlRequest(request: YamlRequest): string {
   const { extra: settingsExtra, ...modelledSettings } = request.settings ?? {};
   const settings = (stripEmpty(modelledSettings) ?? {}) as Record<string, unknown>;
 
-  // Assigned onto whatever the source already had, never rebuilt from these four
-  // alone: `settings` also carries `tls` and `proxy`, and a first cut that
-  // constructed a fresh object out of the four keys silently dropped both. A key
-  // already present keeps its position — assigning to an existing property does
-  // not reorder it — so a document Bruno wrote is unchanged, and only the keys it
-  // was missing are appended.
-  settings.encodeUrl = modelledSettings.encodeUrl ?? true;
-  settings.timeout = resolveTimeoutSetting(modelledSettings.timeout);
-  settings.followRedirects = modelledSettings.followRedirects ?? true;
-  settings.maxRedirects =
-    typeof modelledSettings.maxRedirects === 'number' ? modelledSettings.maxRedirects : 5;
+  // Assigned onto whatever the source already had, never rebuilt from the
+  // defaults alone: `settings` also carries `tls` and `proxy`, and a first cut
+  // that constructed a fresh object out of the four HTTP keys silently dropped
+  // both. Those two are load-bearing on every kind — `grpc-transport.ts` and
+  // `ws-transport.ts` both gate TLS on `settings.tls` — which is why the gRPC
+  // branch below suppresses the block only when it would otherwise be empty,
+  // rather than suppressing it outright as upstream does. A key already present
+  // keeps its position — assigning to an existing property does not reorder it —
+  // so a document Bruno wrote is unchanged, and only the keys it was missing are
+  // appended.
+  if (request.websocket) {
+    // `timeout` is passed through rather than coerced with upstream's
+    // `Number(...)`, which turns an authored `inherit` into 0. This server reads
+    // that value, so destroying it would change how the request runs.
+    settings.timeout = resolveTimeoutSetting(modelledSettings.timeout);
+    // Not a field of this model, so an authored value arrives in `extra` and is
+    // restored by `applyExtraKeys` below. Claiming the key here first is what
+    // fixes its position: upstream writes it directly after `timeout`, and a key
+    // takes the slot of its first assignment.
+    const authored = settingsExtra?.keepAliveInterval;
+    settings.keepAliveInterval = typeof authored === 'number' ? authored : 0;
+  } else if (!request.grpc) {
+    settings.encodeUrl = modelledSettings.encodeUrl ?? true;
+    settings.timeout = resolveTimeoutSetting(modelledSettings.timeout);
+    settings.followRedirects = modelledSettings.followRedirects ?? true;
+    settings.maxRedirects =
+      typeof modelledSettings.maxRedirects === 'number' ? modelledSettings.maxRedirects : 5;
+  }
 
   applyExtraKeys(settings, settingsExtra, YAML_SETTINGS_KEYS);
-  doc.settings = settings;
+  if (!request.grpc || Object.keys(settings).length > 0) {
+    doc.settings = settings;
+  }
 
   // docs
   if (request.docs) {
