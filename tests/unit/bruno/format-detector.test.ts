@@ -1,6 +1,7 @@
 import {
   detectFormat,
   findCollectionRoot,
+  findCollectionRootFromDirectory,
   clearFormatCache,
 } from '../../../src/bruno/format-detector';
 
@@ -156,6 +157,34 @@ describe('format-detector', () => {
 
       const root = await findCollectionRoot('/col/req.bru');
       expect(root).toBe('/col');
+    });
+  });
+
+  describe('findCollectionRootFromDirectory()', () => {
+    it('sees a marker in the directory it was given', async () => {
+      // The file-taking form starts at the parent, so handing it a directory
+      // would look one level too high and miss this marker entirely.
+      fs.access.mockImplementation((p: string) => {
+        if (p === '/project/col/bruno.json') return Promise.resolve();
+        return Promise.reject(new Error('ENOENT'));
+      });
+
+      expect(await findCollectionRootFromDirectory('/project/col')).toBe('/project/col');
+    });
+
+    it('walks up from a subdirectory like the file-taking form', async () => {
+      fs.access.mockImplementation((p: string) => {
+        if (p === '/project/col/opencollection.yml') return Promise.resolve();
+        return Promise.reject(new Error('ENOENT'));
+      });
+
+      expect(await findCollectionRootFromDirectory('/project/col/sub')).toBe('/project/col');
+    });
+
+    it('returns null when nothing above declares a collection', async () => {
+      fs.access.mockRejectedValue(new Error('ENOENT'));
+
+      expect(await findCollectionRootFromDirectory('/loose/dir')).toBeNull();
     });
   });
 });

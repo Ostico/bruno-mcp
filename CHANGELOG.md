@@ -43,6 +43,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The reader and the writer disagreed about a request whose extension does not
+  match its collection.** A run happily executed a `.yml` request sitting in a
+  `bruno.json` collection, while `modify_request`, `add_test_script`,
+  `remove_script` and `read_request` refused to touch it — so the one file you
+  could not repair was the one being executed, and Bruno's own app and `bru run`
+  skipped it either way (`bruno-cli` selects request files by the dialect the
+  collection's marker declares, not by trying both).
+
+  One decision now applies in both directions, and it is the decision this
+  project already documented for `.yaml`: operate on the file, and say Bruno will
+  not see it. The four tools succeed and append a warning naming the file and the
+  rename that fixes it; `run_collection` reports the same thing for every
+  mismatched request it discovers, so a green run here can no longer be read as a
+  green run in Bruno. **This is a behaviour change**: calls that previously came
+  back as errors now succeed.
+
+  The refusal was also hiding a latent write fault rather than preventing it:
+  `add_test_script` picked its serialiser from the *collection's* dialect, so the
+  first caller to reach that line with a mismatched file would have had `.bru`
+  text written into a file named `.yml`. The dialect now follows the file.
+
 - **A message payload written as a YAML mapping was sent as `[object Object]`.**
   Writing structure as structure is the reason to author a payload in YAML at all,
   and it produced those fifteen literal characters on the wire — the declared type

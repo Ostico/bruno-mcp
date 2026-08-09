@@ -309,7 +309,7 @@ describe('modify_request tool handler', () => {
   // ── Extension vs format mismatch ───────────────────────────────────────
 
   describe('extension-format mismatch', () => {
-    it('rejects .bru file in YAML collection', async () => {
+    it('modifies a .bru file in a YAML collection, warning that Bruno skips it', async () => {
       mockDetectFormat.mockResolvedValue({
         format: 'yaml',
         configPath: '/workspace/collection/opencollection.yml',
@@ -319,11 +319,14 @@ describe('modify_request tool handler', () => {
         filePath: '/workspace/collection/request.bru',
         url: 'https://example.com',
       });
-      expect(res.isError).toBe(true);
-      expect(res.content[0].text).toMatch(/extension.*format|format.*extension|mismatch/i);
+      // Refusing here left the caller unable to repair the very file being
+      // warned about — the run path reads it either way.
+      expect(res.isError).toBeUndefined();
+      expect(mockUpdateRequest).toHaveBeenCalled();
+      expect(res.content[0].text).toContain('rename them to ".yml"');
     });
 
-    it('rejects .yml file in BRU collection', async () => {
+    it('modifies a .yml file in a BRU collection, warning that Bruno skips it', async () => {
       mockDetectFormat.mockResolvedValue({
         format: 'bru',
         configPath: '/workspace/collection/bruno.json',
@@ -333,8 +336,22 @@ describe('modify_request tool handler', () => {
         filePath: '/workspace/collection/request.yml',
         url: 'https://example.com',
       });
-      expect(res.isError).toBe(true);
-      expect(res.content[0].text).toMatch(/extension.*format|format.*extension|mismatch/i);
+      expect(res.isError).toBeUndefined();
+      expect(res.content[0].text).toContain('rename them to ".bru"');
+    });
+
+    it('says nothing when the extension matches the collection', async () => {
+      mockDetectFormat.mockResolvedValue({
+        format: 'bru',
+        configPath: '/workspace/collection/bruno.json',
+        collectionName: 'Test',
+      });
+      const res = await handler({
+        filePath: '/workspace/collection/request.bru',
+        url: 'https://example.com',
+      });
+      expect(res.isError).toBeUndefined();
+      expect(res.content[0].text).not.toContain('rename');
     });
   });
 

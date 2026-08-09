@@ -10,10 +10,8 @@ import { readFile } from 'node:fs/promises';
 import { writeFileAtomic } from '../bruno/atomic-write.js';
 import { withPathLock } from '../bruno/path-mutex.js';
 import { createWriter, normalizeScriptType } from '../bruno/format-factory.js';
-import { findCollectionRoot, detectFormat } from '../bruno/format-detector.js';
 import { validateToolPath, resolveRequestFile } from './tool-path.js';
 import type { ToolContext } from './context.js';
-import { isRequestExtension, isYamlExtension, REQUEST_EXTENSIONS } from '../bruno/request-extensions.js';
 
 export function registerAddTestScriptTool(ctx: ToolContext): void {
   ctx.server.registerTool(
@@ -65,34 +63,15 @@ export function registerAddTestScriptTool(ctx: ToolContext): void {
           };
         }
 
-        // 3. File extension validation
-        const ext = path.extname(args.bruFilePath).toLowerCase();
-        if (!isRequestExtension(ext)) {
+        // 3. Extension, collection root and dialect. `resolvedFile.format` follows the FILE,
+        // not the collection, and that distinction is load-bearing here: it
+        // picks the serializer below. Deriving it from the collection would
+        // write `.bru` text into a file named `.yml` whenever the two disagree —
+        // which the old refusal hid rather than prevented.
+        const resolvedFile = await resolveRequestFile(args.bruFilePath, 'bruFilePath');
+        if (!resolvedFile.ok) {
           return {
-            content: [{ type: 'text', text: `Invalid file extension "${ext}": expected ${REQUEST_EXTENSIONS.join(', ')}` }],
-            isError: true,
-          };
-        }
-
-        // 4. Find collection root
-        const collectionRoot = await findCollectionRoot(args.bruFilePath);
-        if (!collectionRoot) {
-          return {
-            content: [{ type: 'text', text: 'Could not determine collection format: no opencollection.yml or bruno.json found within 10 parent directories' }],
-            isError: true,
-          };
-        }
-
-        // 5. Detect format
-        const detection = await detectFormat(collectionRoot);
-
-        // 6. Verify extension matches detected format
-        // `.yaml` satisfies a YAML collection: a dialect spelling, not another
-        // format. The run path warns that Bruno itself will not read it.
-        const expectedExt = detection.format === 'yaml' ? '.yml' : '.bru';
-        if ((detection.format === 'yaml') !== isYamlExtension(ext)) {
-          return {
-            content: [{ type: 'text', text: `File extension "${ext}" does not match collection format "${detection.format}" (expected "${expectedExt}")` }],
+            content: [{ type: 'text', text: resolvedFile.message }],
             isError: true,
           };
         }
@@ -109,7 +88,7 @@ export function registerAddTestScriptTool(ctx: ToolContext): void {
         // The read also serves as an existence check — ENOENT caught below.
         await withPathLock(args.bruFilePath, async () => {
           const content = await readFile(args.bruFilePath, 'utf-8');
-          const writer = createWriter(detection.format);
+          const writer = createWriter(resolvedFile.format);
           const updated = writer.injectScript(
             content,
             canonicalScriptType,
@@ -124,7 +103,10 @@ export function registerAddTestScriptTool(ctx: ToolContext): void {
           content: [
             {
               type: 'text',
-              text: `Successfully ${scriptMode === 'replace' ? 'replaced' : 'appended'} ${canonicalScriptType} script in ${path.basename(args.bruFilePath)} (${detection.format} format)`
+              text: [
+                `Successfully ${scriptMode === 'replace' ? 'replaced' : 'appended'} ${canonicalScriptType} script in ${path.basename(args.bruFilePath)} (${resolvedFile.format} format)`,
+                ...resolvedFile.warnings,
+              ].join('\n\n')
             }
           ]
         };
@@ -200,7 +182,10 @@ export function registerRemoveScriptTool(ctx: ToolContext): void {
           content: [
             {
               type: 'text',
-              text: `Removed ${canonicalScriptType} script from ${path.basename(args.bruFilePath)} (${resolved.format} format)`
+              text: [
+                `Removed ${canonicalScriptType} script from ${path.basename(args.bruFilePath)} (${resolved.format} format)`,
+                ...resolved.warnings,
+              ].join('\n\n')
             }
           ]
         };

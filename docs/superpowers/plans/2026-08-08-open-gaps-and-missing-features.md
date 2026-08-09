@@ -20,13 +20,18 @@ a reader who meets the same symptom again should land on it. A4 also has its
 classification corrected: it was filed as "binary frames are broken", and the
 upstream source says there is no binary path to break.
 
+**A1 closed 2026-08-09 in #159**, in the permissive direction: a request whose
+extension its collection's dialect does not read is now operated on and warned
+about rather than refused, on both the read and the write side. See its entry for
+what only surfaced by doing it.
+
 ---
 
 ## A. Defects
 
 Things that behave wrongly today.
 
-### A1. The reader and the writer disagree about collection dialect
+### A1. The reader and the writer disagree about collection dialect — CLOSED (#159)
 
 **Evidence.** `run_collection` discovered and executed a `.yml` request inside a
 collection whose root manifest is `bruno.json`. `modify_request` refuses the
@@ -46,6 +51,28 @@ without updating them looks like a large unrelated breakage.
 
 **Done when:** one decision applied in both directions, fixtures updated, and a
 test pinning whichever behaviour was chosen.
+
+**Closed by #159, in the permissive direction.** The decision was already
+documented in this repo for `.yaml` — read the file, and warn that Bruno will not
+— and it applies here for the same reason: refusing left the caller unable to
+repair the one file that was being executed anyway. The four tools that refused
+now succeed with a warning naming the file and the rename, and discovery emits
+the same warning for every mismatched request it finds, so the run path reports
+what it previously executed in silence. The trap above dissolved rather than being
+worked around: nothing was tightened, so no fixture depended on a stricter reader.
+
+Confirmed at the source first, since the fix rests on the claim that Bruno really
+cannot see the file: `bruno-cli/src/utils/collection.js:28` skips any entry whose
+`path.extname` differs from `FORMAT_CONFIG[format].ext`, with `format` read from
+the root marker.
+
+Two things surfaced only by doing it. The refusal was **masking a latent write
+fault**, not preventing it — `add_test_script` chose its serialiser from the
+collection's dialect, so the first caller past that gate would have had `.bru`
+text written into a file named `.yml`; the dialect now follows the file. And the
+two warnings had to be made mutually exclusive: in a `.bru` collection a `.yaml`
+request trips both, and the `.yaml` warning's advice (rename to `.yml`) would have
+left it exactly as invisible.
 
 ### A2. The writer injects a `settings:` block the source file never had
 

@@ -82,7 +82,23 @@ export async function detectFormat(
  * @returns The directory containing the marker file, or `null` if not found
  */
 export async function findCollectionRoot(filePath: string): Promise<string | null> {
-  let current = dirname(filePath);
+  return findCollectionRootFromDirectory(dirname(filePath));
+}
+
+/**
+ * The same walk, starting at a directory rather than at a file inside one.
+ *
+ * A directory run needs this: handing the directory itself to
+ * {@link findCollectionRoot} would start the search one level too high and miss
+ * a marker sitting in that very directory.
+ *
+ * @param dirPath  Absolute path to a directory in or at a collection
+ * @returns The directory containing the marker file, or `null` if not found
+ */
+export async function findCollectionRootFromDirectory(
+  dirPath: string,
+): Promise<string | null> {
+  let current = dirPath;
   const MAX_LEVELS = 10;
 
   for (let i = 0; i < MAX_LEVELS; i++) {

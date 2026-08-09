@@ -287,7 +287,7 @@ describe('add_test_script tool handler', () => {
   // ── Extension vs format mismatch ────────────────────────────────────────
 
   describe('extension-format mismatch', () => {
-    it('rejects .bru file in YAML collection', async () => {
+    it('injects into a .bru file in a YAML collection with the .bru writer', async () => {
       mockDetectFormat.mockResolvedValue({
         format: 'yaml',
         configPath: '/workspace/collection/opencollection.yml',
@@ -298,11 +298,15 @@ describe('add_test_script tool handler', () => {
         scriptType: 'tests',
         script: 'test("ok", () => {});',
       });
-      expect(res.isError).toBe(true);
-      expect(res.content[0].text).toMatch(/extension.*format|format.*extension|mismatch/i);
+      expect(res.isError).toBeUndefined();
+      // The serializer follows the FILE. Taking the collection's dialect here
+      // would write YAML into a file named `.bru`, which the old refusal hid
+      // rather than prevented.
+      expect(mockCreateWriter).toHaveBeenCalledWith('bru');
+      expect(res.content[0].text).toContain('rename them to ".yml"');
     });
 
-    it('rejects .yml file in BRU collection', async () => {
+    it('injects into a .yml file in a BRU collection with the YAML writer', async () => {
       mockDetectFormat.mockResolvedValue({
         format: 'bru',
         configPath: '/workspace/collection/bruno.json',
@@ -313,8 +317,9 @@ describe('add_test_script tool handler', () => {
         scriptType: 'tests',
         script: 'test("ok", () => {});',
       });
-      expect(res.isError).toBe(true);
-      expect(res.content[0].text).toMatch(/extension.*format|format.*extension|mismatch/i);
+      expect(res.isError).toBeUndefined();
+      expect(mockCreateWriter).toHaveBeenCalledWith('yaml');
+      expect(res.content[0].text).toContain('rename them to ".bru"');
     });
   });
 

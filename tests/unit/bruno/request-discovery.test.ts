@@ -105,6 +105,44 @@ describe('discoverRequests', () => {
     expect(warnings[0]).toContain('Broken.yaml');
   });
 
+  it('warns about the requests whose extension the collection does not read', async () => {
+    // The read side of the same disagreement: this walk finds both files, and
+    // `bru run` finds only the `.bru` one. Saying so is the only thing that
+    // stops a green run here from reading as a green run in Bruno.
+    await write('bruno.json', '{ "version": "1", "name": "C" }');
+    await write('Get.yml', YML);
+    await write('Post.bru', BRU);
+
+    const { requests, warnings } = await discoverRequests(dir);
+
+    expect(requests).toHaveLength(2);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('Get.yml');
+    expect(warnings[0]).not.toContain('Post.bru');
+  });
+
+  it('finds the collection marker from a subdirectory, not just from the root', async () => {
+    await write('bruno.json', '{ "version": "1", "name": "C" }');
+    await write('sub/Get.yml', YML);
+
+    const { warnings } = await discoverRequests(join(dir, 'sub'));
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('Get.yml');
+  });
+
+  it('says nothing about dialect where no marker declares one', async () => {
+    // Without a marker there is no collection for an extension to disagree
+    // with, and `detectFormat`'s write-time default of `yaml` would otherwise
+    // make every `.bru` file here look invisible.
+    await write('Post.bru', BRU);
+
+    const { requests, warnings } = await discoverRequests(dir);
+
+    expect(requests).toHaveLength(1);
+    expect(warnings).toEqual([]);
+  });
+
   it('still skips the collection and folder metadata files', async () => {
     await write('collection.bru', 'auth {\n  mode: none\n}\n');
     await write('sub/folder.bru', 'meta {\n  name: sub\n}\n');
@@ -135,6 +173,17 @@ describe('resolveRunTargets', () => {
     expect(requests).toHaveLength(1);
     expect(requests[0].filePath).toBe(filePath);
     expect(warnings[0]).toContain('Get.yaml');
+  });
+
+  it('warns about a single named request the collection dialect does not read', async () => {
+    await write('bruno.json', '{ "version": "1", "name": "C" }');
+    const filePath = await write('Get.yml', YML);
+
+    const { requests, warnings } = await resolveRunTargets(filePath, dir);
+
+    expect(requests).toHaveLength(1);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('rename them to ".bru"');
   });
 
   it('runs a single named .bru request with nothing to warn about', async () => {
