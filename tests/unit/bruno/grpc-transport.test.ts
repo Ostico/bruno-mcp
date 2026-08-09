@@ -147,13 +147,16 @@ function request(url: string, overrides: Partial<NonNullable<YamlRequest['grpc']
   };
 }
 
-const call = (url: string, overrides?: Partial<NonNullable<YamlRequest['grpc']>>) =>
-  executeGrpcRequest({
+// The transport returns the result alongside what a post-response script may
+// examine, and these tests are about the result. The script-facing half is
+// asserted in transport-verification.test.ts.
+const call = async (url: string, overrides?: Partial<NonNullable<YamlRequest['grpc']>>) =>
+  (await executeGrpcRequest({
     request: request(url, overrides),
     vars: new Map(),
     collectionRoot: root,
     timeoutMs: 5000,
-  });
+  })).result;
 
 describe('the import graph is walked, not just the entry file', () => {
   // The pre-scan exists because `@grpc/proto-loader` has no `resolvePath` option
@@ -203,12 +206,16 @@ describe('a request that reaches the transport with nothing to dial', () => {
   // way the http-block guard is. Without it the narrowing below would be a
   // non-null assertion in all but name.
   it('refuses rather than throwing when there is no grpc block', async () => {
-    const result = await executeGrpcRequest({
+    const outcome = await executeGrpcRequest({
       request: { info: { name: 'Blockless', type: 'grpc' } },
       vars: new Map(),
       collectionRoot: root,
       timeoutMs: 5000,
     });
+    // A call that was never placed carries no response, so its assertions are not
+    // evaluated against it. See TransportOutcome.
+    expect(outcome.response).toBeUndefined();
+    const result = outcome.result;
     expect(result.status).toBe(0);
     expect(result.error).toMatch(/grpc block/i);
     expect(clientCalls).toHaveLength(0);

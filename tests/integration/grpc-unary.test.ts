@@ -294,3 +294,93 @@ describe('TLS is not downgraded on demand', () => {
     expect(result.response_body ?? '').not.toContain('echo:hi');
   }, 15000);
 });
+
+/**
+ * A gRPC call that can fail.
+ *
+ * It could not, before: the executor returned from the gRPC branch before the path
+ * that runs scripts and assertions, so a call's declared checks were parsed,
+ * written back faithfully and never evaluated. In a mixed collection that inflated
+ * `passed` with zero verification, and `requestsWithoutTests` was the only signal —
+ * which reads as an author's omission rather than as a capability that did not
+ * exist.
+ *
+ * The first test below is the one that matters: it must FAIL. A suite where the
+ * negative case cannot go red is exactly the condition being fixed here.
+ */
+const withTests = (port: number, body: string) => `${ymlSay(port)}runtime:
+  scripts:
+    - type: tests
+      code: |
+${body.split('\n').map((line) => `        ${line}`).join('\n')}
+`;
+
+describe('a gRPC call is verified, not assumed', () => {
+  it('fails the run when its test fails', async () => {
+    const root = await collection({
+      'checked.yml': withTests(
+        started.port,
+        "test('the server did not echo', function () {\n"
+        + "  expect(res.getBody().text).to.equal('nothing like it');\n"
+        + '});',
+      ),
+    });
+    const [result] = await run(root);
+
+    expect(result.tests).toHaveLength(1);
+    expect(result.tests[0].status).toBe('fail');
+  }, 15000);
+
+  it('passes a test that reads the response body', async () => {
+    const root = await collection({
+      'ok.yml': withTests(
+        started.port,
+        "test('the server echoed', function () {\n"
+        + "  expect(res.getBody().text).to.contain('hi');\n"
+        + '});',
+      ),
+    });
+    const [result] = await run(root);
+
+    expect(result.tests[0]?.status).toBe('pass');
+  }, 15000);
+
+  it('gives a script the gRPC status code, where 0 means OK', async () => {
+    // The single most misreadable field in this API: `status: 0` is the refusal
+    // sentinel everywhere else, and gRPC's OK is also 0. Mapping OK to 200 would
+    // make a passing assertion say something untrue about the call, so the
+    // collision is kept and the script sees the real code.
+    const root = await collection({
+      'code.yml': withTests(
+        started.port,
+        "test('OK is zero here', function () {\n"
+        + '  expect(res.getStatus()).to.equal(0);\n'
+        + '});',
+      ),
+    });
+    const [result] = await run(root);
+
+    expect(result.tests[0]?.status).toBe('pass');
+    // And the result's own status stays the refusal sentinel, unchanged.
+    expect(result.status).toBe(0);
+    expect(result.grpc?.code).toBe(0);
+  }, 15000);
+
+  it('counts a verified call in the run summary rather than as untested', async () => {
+    const root = await collection({
+      'summary.yml': withTests(
+        started.port,
+        "test('echoed', function () {\n"
+        + "  expect(res.getBody().text).to.contain('hi');\n"
+        + '});',
+      ),
+    });
+    const summary = (await RequestExecutor.executeCollection(root, { scriptRunner: TestRunner }))
+      .summary;
+
+    expect(summary.tests.total).toBe(1);
+    expect(summary.tests.passed).toBe(1);
+    // The field that used to be the only signal that nothing was checked.
+    expect(summary.requestsWithoutTests).toBe(0);
+  }, 15000);
+});
