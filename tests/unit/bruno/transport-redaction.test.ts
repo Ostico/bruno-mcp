@@ -103,6 +103,61 @@ describe('frame and transcript ceilings', () => {
     expect(transcriptCapReached(entries, { maxTranscriptBytes: 100 })).toBe(true);
     expect(transcriptCapReached(entries, { maxTranscriptBytes: 1000 })).toBe(false);
   });
+
+  // The cumulative ceiling used to be enforced only by the caller's stop check,
+  // which runs after the entry is appended — so a single frame arriving under a
+  // small budget was recorded whole. Measured against the live service: a
+  // 100-byte budget held a 1968-byte payload, twenty times over.
+  describe('the cumulative ceiling clips the payload, not just the session', () => {
+    it('keeps one oversized frame within the whole-transcript budget', () => {
+      const entry = toTranscriptEntry(
+        { direction: 'received', offset_ms: 1, payload: 'q'.repeat(2000) },
+        { includePayloads: true, maxTranscriptBytes: 100 },
+      );
+      expect(entry.payload).toHaveLength(100);
+      // Still the honest number: something 2000 bytes long really did arrive.
+      expect(entry.bytes).toBe(2000);
+    });
+
+    it('clips to what is LEFT of the budget, not to the whole of it', () => {
+      const first = toTranscriptEntry(
+        { direction: 'sent', offset_ms: 0, payload: 'a'.repeat(60) },
+        { includePayloads: true, maxTranscriptBytes: 100 },
+      );
+      const second = toTranscriptEntry(
+        { direction: 'received', offset_ms: 1, payload: 'b'.repeat(500) },
+        { includePayloads: true, maxTranscriptBytes: 100 },
+        transcriptBytes([first]),
+      );
+      expect(second.payload).toHaveLength(40);
+    });
+
+    it('records no payload at all once the budget is spent', () => {
+      const entry = toTranscriptEntry(
+        { direction: 'received', offset_ms: 2, payload: 'c'.repeat(500) },
+        { includePayloads: true, maxTranscriptBytes: 100 },
+        120,
+      );
+      expect(entry.payload).toBe('');
+      expect(entry.bytes).toBe(500);
+    });
+
+    it('still lets the smaller per-frame ceiling win when it is the tighter one', () => {
+      const entry = toTranscriptEntry(
+        { direction: 'received', offset_ms: 1, payload: 'd'.repeat(500) },
+        { includePayloads: true, maxFrameBytes: 10, maxTranscriptBytes: 100_000 },
+      );
+      expect(entry.payload).toHaveLength(10);
+    });
+
+    it('leaves a frame that fits untouched', () => {
+      const entry = toTranscriptEntry(
+        { direction: 'sent', offset_ms: 0, payload: 'short' },
+        { includePayloads: true, maxTranscriptBytes: 100 },
+      );
+      expect(entry.payload).toBe('short');
+    });
+  });
 });
 
 describe('toWebsocketDetail', () => {
