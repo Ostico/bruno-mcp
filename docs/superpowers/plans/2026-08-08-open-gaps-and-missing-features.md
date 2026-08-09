@@ -13,12 +13,18 @@ and are recorded at the bottom so they are not re-litigated.
 first; section C is deliberate and should generally not be started at all until
 its stated trigger fires.
 
-**Updated 2026-08-09.** Seven of the eleven defects are closed: A5, A6, A8, A9 and
-A10 in #154, A4 and A7 in #155. Their entries are kept in place, marked CLOSED,
-rather than moved to the bottom — the evidence in them is why they were found, and
-a reader who meets the same symptom again should land on it. A4 also has its
-classification corrected: it was filed as "binary frames are broken", and the
-upstream source says there is no binary path to break.
+**Updated 2026-08-09.** Nine of the eleven defects are closed: A5, A6, A8, A9 and
+A10 in #154, A4 and A7 in #155, A3 in #157, A2 in #158. Their entries are kept in
+place, marked CLOSED, rather than moved to the bottom — the evidence in them is
+why they were found, and a reader who meets the same symptom again should land on
+it. Two also have their classification corrected: A4 was filed as "binary frames
+are broken", and the upstream source says there is no binary path to break; A2 was
+filed as "the writer injects a block the source never had", and upstream injects
+the same block — the real fault was narrower and elsewhere in the same code.
+
+A11 could not be reproduced and is reclassified as an evidence problem rather than
+a defect; the reasoning is in its entry. Two new defects were found while measuring
+A2 and are filed as A12 and A13.
 
 ---
 
@@ -47,25 +53,60 @@ without updating them looks like a large unrelated breakage.
 **Done when:** one decision applied in both directions, fixtures updated, and a
 test pinning whichever behaviour was chosen.
 
-### A2. The writer injects a `settings:` block the source file never had
+### A2. The writer injects a `settings:` block the source file never had — CLOSED (#158), AND MISFILED
 
 **Evidence.** A `.yml` WebSocket request was renamed via `modify_request`. The
 file came back with a `settings:` block carrying `encodeUrl`, `timeout`,
 `followRedirects` and `maxRedirects` that it did not contain before.
 
-**Why it matters.** Possibly nothing — upstream may write the same defaults, in
-which case this is byte-parity and correct. Possibly our writer inventing content
-the author never wrote, which is the same family as `.bru` injecting `seq: 1`.
-Unknown is the problem, not the injection.
+**What the measurement found.** The injection is not the fault. Upstream's three
+`.yml` writers in `@usebruno/filestore/src/formats/yml/items` disagree about this
+block, and each was read rather than inferred:
 
-**Done when:** compared against a file Bruno itself writes, by reading the
-upstream writer at `/Volumes/Projects/tools/working_dir/bruno-tool`. Then either
-a test pinning the injection as intended, or a fix. Do not infer the answer from
-our own round-trip — our parser tolerates our own malformed output.
+- `stringifyHttpRequest.ts:113-141` is **unconditional**. It builds all four keys
+  and assigns `ocRequest.settings = settings` for every request, defaulting
+  `encodeUrl` and `followRedirects` to true, `maxRedirects` to 5 and `timeout` to
+  0. For an HTTP request this server already matched it, deliberately, and that
+  is still right — the `.yml` reader treats an omitted `encodeUrl` as **true**
+  while a missing block means false, so writing no block changes how the request
+  runs.
+- `stringifyWebsocketRequest.ts:105-113` writes a **different pair** —
+  `timeout` and `keepAliveInterval`, both defaulting to 0 — and none of the other
+  three. Its reader produces that object for every WebSocket request, so the block
+  is always present there too.
+- `stringifyGrpcRequest.ts` writes **no settings block at all**.
 
-### A3. Scripts and assertions never run on gRPC or WebSocket requests
+So the fault is narrower than filed: this writer applied the HTTP shape to all
+three kinds. The four keys describe redirect-following and URL encoding, which
+neither transport does, and upstream's own gRPC and WebSocket readers never look
+at them. A WebSocket request also lost the one key it should have had.
+
+**Fixed in #158.** The block is now chosen by kind. gRPC keeps one the source
+authored but gains nothing — a deliberate deviation from upstream, which drops it:
+`grpc-transport.ts:374` and `ws-transport.ts:281` both gate TLS on `settings.tls`,
+so suppressing the block outright would disarm the gate on the next write.
+Suppressing invention is the fix; suppressing the author's own content would be a
+different bug.
+
+**What this shows.** The original entry said "Unknown is the problem, not the
+injection", and that was the right call — the answer was neither "byte-parity, do
+nothing" nor "stop injecting". Reading the three upstream writers was the only way
+to see that the block is right, the kind is wrong, and a key was missing.
+
+### A3. Scripts and assertions never run on gRPC or WebSocket requests — CLOSED (#157)
 
 **Severity: highest in this document.**
+
+**Closed 2026-08-09.** Both transports now return a `TransportOutcome` carrying a
+`MockResponseData`, and post-response scripts, `test()` blocks, assertions and
+`vars:post-response` all run through the same `runVerification` the HTTP path
+uses. `res` reports what happened rather than translating it into HTTP: gRPC's
+`res.getStatus()` is the gRPC code, so **0 is OK**, and a WebSocket session has
+`res.getStatusText()` as its stop reason with the transcript as `res.getBody()`.
+
+**Still open, deliberately scoped out:** pre-request scripts do not run for these
+transports. `req.setUrl`, `setHeader` and `setBody` have no target when the
+transport builds its own request, which is separate machinery and its own change.
 
 **Evidence.** A collection with `runtime.scripts` (pre-request, post-response and
 a tests block with two `test()` calls) and `runtime.assertions` on a WebSocket
@@ -290,11 +331,67 @@ out-of-range *known* keys are properly rejected by the schema.
 **Why it matters.** A typo such as `maxMessage` for `maxMessages` silently falls
 back to the default, and the run looks fine.
 
-### A11. Parse errors end at a dangling colon
+### A11. Parse errors end at a dangling colon — NOT REPRODUCED
 
-**Evidence.** `"Failed to parse .bru file: Line 7, col 1:"` — the message stops
-where the offending content should follow. Cosmetic, but it reads as truncated
-output rather than a complete diagnostic.
+**Evidence as filed.** `"Failed to parse .bru file: Line 7, col 1:"` — the message
+stops where the offending content should follow. Cosmetic, but it reads as
+truncated output rather than a complete diagnostic.
+
+**What the probe found.** The grammar's message is complete. `bruToJsonV2` was
+called directly on four malformed inputs, and every one produced a full diagnostic
+— position, a three-line code frame with a caret, and an expectation:
+
+```
+"Line 8, col 1:\n  7 | body:ws {\n> 8 | \n      ^\nExpected \"}\" or \":\""
+```
+
+Nothing in `src/` truncates it: `bru-parser.ts:317` interpolates `err.message`
+whole, and there is no first-line slice anywhere in the tree. The reported symptom
+is therefore an artefact of how the message was recorded or displayed, not of what
+the server produced — the newlines were lost somewhere after the throw.
+
+**Left open as a question, not a defect.** Worth one more datum: the `ws.bru` file
+that produced it (see B8). Note the probe also showed that `bruToJsonV2` **accepts**
+a `ws { url: … }` block, which makes B8's headline — "`.bru` cannot express a
+WebSocket request" — suspect for the same reason A4's was. Whatever failed in that
+file, it was not the `ws` block itself.
+
+### A12. An authored `timeout: inherit` is dropped on the next write
+
+**Evidence.** `resolveTimeoutSetting` in `yaml-generator.ts:191` handles the string
+`inherit` explicitly, but `parseSettings` in `yaml-parser.ts` accepts `timeout`
+only when `typeof obj.timeout === 'number'`. The key is modelled, so it is excluded
+from the passthrough bag as well. An authored `timeout: inherit` therefore reaches
+neither the model nor the file it came from, and comes back as `0`.
+
+**Why it matters.** `settings.timeout` is read by the executor and by
+`grpc-transport.ts`, so this is a silent behaviour change to somebody's request, not
+just a lost string. Upstream accepts the value: `parseGraphQLRequest.ts:121-122`
+has the `=== 'inherit'` branch this parser is missing.
+
+**Why it was not fixed alongside A2.** `YamlSettings.timeout` is typed `number`,
+and widening it makes every consumer a type error — which is the right way to find
+them, but it means implementing inherit semantics, not just parsing the word. That
+is its own change.
+
+**Done when:** the parser keeps the value and every consumer decides what
+inheriting means, or the writer preserves it verbatim without the model claiming to
+understand it.
+
+### A13. An unrecognised `settings.tls` shape is dropped whole
+
+**Evidence.** Found while writing a fixture for A2: `settings: {tls: {enabled:
+true}}` round-trips to nothing at all. `tls` is a modelled key, so it never reaches
+the passthrough bag, and `parseTls` keeps only the fields it names — so an object
+made entirely of unrecognised fields parses to `undefined` and the key vanishes.
+
+**Why it matters.** This is the failure mode the passthrough bag exists to prevent,
+reappearing one level down. A partially-recognised `tls` block loses its unknown
+fields silently; a wholly-unrecognised one loses the block. Same class as A2, but
+nested, and it applies to every kind.
+
+**Done when:** unmodelled keys inside `tls` survive a write, or the parser refuses
+a `tls` block it cannot read rather than deleting it.
 
 ---
 

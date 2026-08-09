@@ -43,6 +43,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A gRPC or WebSocket request was written with HTTP's `settings:` block.** Every
+  `.yml` request got `encodeUrl`, `followRedirects` and `maxRedirects` — keys that
+  describe redirect-following and URL encoding, which neither transport does, and
+  which Bruno's own readers for those kinds never look at. A WebSocket request also
+  lost the one setting it should have had. Each kind now gets the block Bruno
+  writes for it: the four keys for HTTP, `timeout` and `keepAliveInterval` for
+  WebSocket, and none for gRPC. A gRPC request keeps a block the author wrote,
+  which is a deliberate difference from Bruno — `settings.tls` gates the transport
+  here, so discarding it would disarm that gate on the next write.
+
 - **A message payload written as a YAML mapping was sent as `[object Object]`.**
   Writing structure as structure is the reason to author a payload in YAML at all,
   and it produced those fifteen literal characters on the wire — the declared type

@@ -511,7 +511,32 @@ describe.each(FIXTURES)('.yml round-trip: $name', (fixture: YamlFixture) => {
     }
   });
 
-  it('states all four settings after a write, whatever the source had', () => {
+  // Which keys a write states depends on the kind, because upstream's three
+  // `.yml` writers disagree. The HTTP four describe redirect-following and URL
+  // encoding, which neither transport does, and upstream's own gRPC and
+  // WebSocket readers never look at them.
+  it('states the settings its kind has after a write, whatever the source had', () => {
+    if (after.grpc) {
+      // Upstream's `stringifyGrpcRequest` writes no settings block. This writer
+      // keeps one the source authored, because `settings.tls` gates the
+      // transport, but it invents nothing.
+      expect(after.settings).toEqual(before.settings);
+      return;
+    }
+
+    if (after.websocket) {
+      expect(after.settings).toEqual(
+        expect.objectContaining({ timeout: expect.anything() }),
+      );
+      // Checked by value, not by `toHaveProperty`: the parser builds the block
+      // with every modelled key present, so an absent setting is a key holding
+      // `undefined` rather than a missing one.
+      expect(after.settings?.encodeUrl).toBeUndefined();
+      expect(after.settings?.followRedirects).toBeUndefined();
+      expect(after.settings?.maxRedirects).toBeUndefined();
+      return;
+    }
+
     expect(after.settings).toEqual(
       expect.objectContaining({
         encodeUrl: expect.any(Boolean),

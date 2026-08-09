@@ -166,6 +166,81 @@ describe('the block is modelled, so the passthrough bag no longer carries it', (
   });
 });
 
+/**
+ * Which `settings` keys a `.yml` request carries is decided by its kind, and the
+ * three upstream writers in `@usebruno/filestore/src/formats/yml/items` disagree:
+ * `stringifyHttpRequest` writes four keys unconditionally, `stringifyWebsocketRequest`
+ * writes `timeout` and `keepAliveInterval` and none of the other three, and
+ * `stringifyGrpcRequest` writes no block at all.
+ *
+ * This writer used to emit the HTTP four for every kind, which described redirect
+ * and URL-encoding behaviour that neither transport has, on a request whose own
+ * reader upstream never looks at those keys.
+ */
+describe('the settings block a transport request gets', () => {
+  const settingsBlockOf = (yaml: string): string | undefined =>
+    /^settings:\n((?:[ ].*\n)*)/m.exec(generateYamlRequest(parseYamlRequest(yaml)))?.[1];
+
+  it('gives a websocket request timeout and keepAliveInterval', () => {
+    const settings = settingsBlockOf(WEBSOCKET) ?? '';
+    expect(settings).toContain('timeout:');
+    expect(settings).toContain('keepAliveInterval:');
+  });
+
+  // The three HTTP keys describe redirect-following and URL encoding. A WebSocket
+  // request does neither, and upstream's WebSocket reader ignores all three, so
+  // writing them states something about the request that is not true.
+  it('does not give a websocket request the three HTTP-only keys', () => {
+    const settings = settingsBlockOf(WEBSOCKET) ?? '';
+    expect(settings).not.toContain('encodeUrl');
+    expect(settings).not.toContain('followRedirects');
+    expect(settings).not.toContain('maxRedirects');
+  });
+
+  it('keeps an authored keepAliveInterval rather than resetting it to the default', () => {
+    const authored = `${WEBSOCKET}settings:\n  keepAliveInterval: 30000\n`;
+    expect(settingsBlockOf(authored)).toContain('keepAliveInterval: 30000');
+  });
+
+  // Upstream writes the pair in this order. The key takes the slot of its first
+  // assignment, so claiming it before the passthrough pass is what fixes it.
+  it('writes keepAliveInterval directly after timeout', () => {
+    const settings = settingsBlockOf(WEBSOCKET) ?? '';
+    expect(settings.indexOf('keepAliveInterval')).toBeGreaterThan(settings.indexOf('timeout'));
+  });
+
+  it('gives a grpc request no settings block at all', () => {
+    expect(generateYamlRequest(parseYamlRequest(GRPC))).not.toContain('settings:');
+  });
+
+  // Upstream drops these on a gRPC round trip; this server does not, because
+  // `grpc-transport.ts` gates TLS on `settings.tls`. Suppressing the block
+  // outright would disarm the gate on the next write. Suppressing invention is
+  // the fix; suppressing the author's own content is a different bug.
+  it('keeps a grpc settings block that carries something the transport reads', () => {
+    const written = generateYamlRequest(
+      parseYamlRequest(`${GRPC}settings:\n  tls:\n    rejectUnauthorized: false\n`),
+    );
+    expect(written).toContain('settings:');
+    expect(written).toContain('rejectUnauthorized: false');
+    expect(written).not.toContain('maxRedirects');
+  });
+
+  // The HTTP block is unconditional and stays that way: emitting it only when the
+  // model carried one made a request this server wrote behave differently from one
+  // Bruno wrote, because the `.yml` reader treats an omitted `encodeUrl` as true
+  // while a missing block means false.
+  it('still gives an http request all four keys, with no block in the source', () => {
+    const written = generateYamlRequest(
+      parseYamlRequest('info:\n  name: H\n  type: http\n  seq: 1\nhttp:\n  url: http://h\n'),
+    );
+    expect(written).toContain('encodeUrl:');
+    expect(written).toContain('timeout:');
+    expect(written).toContain('followRedirects:');
+    expect(written).toContain('maxRedirects:');
+  });
+});
+
 describe('info.type is written back as the wire token', () => {
   // The model's kind for a WebSocket request is `ws`; the `.yml` token is
   // `websocket`. Writing the model's name would produce a file Bruno dispatches
