@@ -473,6 +473,27 @@ function parseSettings(raw: unknown): YamlSettings | undefined {
  * `message: { type, data }`. Reading a WebSocket payload the gRPC way yields the
  * string `[object Object]`.
  */
+/**
+ * A message payload, as the wire will carry it.
+ *
+ * `String()` on a YAML mapping yields `[object Object]`, and that is what used to
+ * reach the wire: a `data:` written as a mapping — the obvious way to author a
+ * JSON payload in YAML — went out as those fifteen literal characters, having
+ * declared a type the runner accepted.
+ *
+ * Upstream never meets this case, because its payloads only ever come from a text
+ * editor and are already strings. Its own normaliser nonetheless serialises a
+ * non-string with `JSON.stringify` (`bruno-requests/src/ws/ws-client.js`,
+ * `normalizeMessageByFormat`), so that is what a structured payload becomes here
+ * rather than something invented for the occasion.
+ */
+function messagePayload(data: unknown): string {
+  if (data == null) return '';
+  if (typeof data === 'string') return data;
+  if (typeof data === 'object') return JSON.stringify(data);
+  return String(data);
+}
+
 function parseTransportMessages(
   raw: unknown,
   nested: boolean,
@@ -485,12 +506,12 @@ function parseTransportMessages(
       if (nested) {
         const payload = isRecord(entry.message) ? entry.message : {};
         message.type = String(payload.type ?? 'text');
-        message.content = String(payload.data ?? '');
+        message.content = messagePayload(payload.data);
         // Kept as an explicit false: for a streaming request the difference
         // between "not selected" and "not stated" decides what gets sent.
         message.selected = entry.selected === true;
       } else {
-        message.content = String(entry.message ?? '');
+        message.content = messagePayload(entry.message);
       }
       return message;
     });
@@ -498,7 +519,7 @@ function parseTransportMessages(
 
   if (nested && isRecord(raw)) {
     return [
-      { name: '', type: String(raw.type ?? 'text'), content: String(raw.data ?? '') },
+      { name: '', type: String(raw.type ?? 'text'), content: messagePayload(raw.data) },
     ];
   }
 

@@ -180,3 +180,81 @@ describe('info.type is written back as the wire token', () => {
     expect(generateYamlRequest(parseYamlRequest(GRPC))).toContain('type: grpc');
   });
 });
+
+/**
+ * A message payload written as a YAML mapping.
+ *
+ * YAML's advantage over a quoted JSON string is that a structured payload can be
+ * written as structure. Before this, `String()` turned that structure into the
+ * literal characters `[object Object]` and sent them: the declared type was
+ * accepted, the frame went out, and the run passed. The assertions below are on
+ * the payload the transport would send, because a round trip is exactly what did
+ * not catch this — the writer wrote back what the parser had already destroyed.
+ */
+describe('a structured message payload', () => {
+  const MAPPING = '        data:\n          hello: world\n          nested:\n            n: 1\n';
+  const structured = `info:
+  name: Structured
+  type: websocket
+  seq: 1
+websocket:
+  url: wss://example.test/socket
+  message:
+    - title: mapping
+      selected: true
+      message:
+        type: json
+${MAPPING}`;
+
+  it('is serialised as JSON rather than stringified into [object Object]', () => {
+    const parsed = parseYamlRequest(structured);
+    const content = parsed.websocket?.messages?.[0]?.content;
+
+    expect(content).not.toContain('[object Object]');
+    expect(JSON.parse(content ?? '')).toEqual({ hello: 'world', nested: { n: 1 } });
+  });
+
+  it('serialises a sequence the same way', () => {
+    const parsed = parseYamlRequest(
+      structured.replace(MAPPING, '        data:\n          - 1\n          - two\n'),
+    );
+
+    expect(JSON.parse(parsed.websocket?.messages?.[0]?.content ?? '')).toEqual([1, 'two']);
+  });
+
+  it('leaves a string payload byte-for-byte alone', () => {
+    // The common case, and the only one upstream ever has. Running JSON.stringify
+    // over it would wrap every existing file's frames in a fresh pair of quotes.
+    const parsed = parseYamlRequest(
+      structured.replace(MAPPING, '        data: \'{"already":"json"}\'\n'),
+    );
+
+    expect(parsed.websocket?.messages?.[0]?.content).toBe('{"already":"json"}');
+  });
+
+  it('stringifies a scalar rather than JSON-quoting it', () => {
+    const parsed = parseYamlRequest(structured.replace(MAPPING, '        data: 42\n'));
+
+    expect(parsed.websocket?.messages?.[0]?.content).toBe('42');
+  });
+
+  it('applies the same rule to a gRPC message', () => {
+    // The gRPC branch carried the identical `String()` and is easier to miss,
+    // because its transport JSON.parses the payload and so failed with a parse
+    // error rather than sending nonsense down the wire. A mapping body now works.
+    const parsed = parseYamlRequest(`info:
+  name: Structured
+  type: grpc
+  seq: 1
+grpc:
+  url: grpc://localhost:50051
+  method: /pkg.Svc/Method
+  message:
+    - title: one
+      message:
+        id: 7
+`);
+
+    expect(JSON.parse(parsed.grpc?.messages?.[0]?.content ?? '')).toEqual({ id: 7 });
+  });
+});

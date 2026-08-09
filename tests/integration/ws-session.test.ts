@@ -548,3 +548,220 @@ websocket:
     }
   }, 10000);
 });
+
+/**
+ * What a declared message `type` does, and what it cannot do.
+ *
+ * Asserted from `harness.received` rather than from the transcript, because the
+ * claim is about the bytes that reached a peer. That distinction is the whole
+ * finding: every declared type was accepted, and every one produced a text frame
+ * carrying the literal characters of whatever was written, so a payload of
+ * `AQIDBA==` announced as binary arrived as eight ASCII characters and passed.
+ *
+ * Nothing decodes it now either — upstream has no binary WebSocket path at all,
+ * and inventing one here would put bytes on the wire that Bruno's own runner
+ * never would. The fix is that the request now says so.
+ */
+describe('a message type this transport cannot honour', () => {
+  const typed = (host: string, port: number, type: string, data: string) => `info:
+  name: Typed
+  type: websocket
+  seq: 1
+websocket:
+  url: ws://${host}:${port}
+  message:
+    - title: payload
+      selected: true
+      message:
+        type: ${type}
+        data: ${data}
+`;
+
+  const echoServer = () => startServer((socket) => {
+    socket.on('message', (data) => socket.send(`echo:${data.toString()}`));
+  });
+
+  it('still sends the frame, and says what it could not honour', async () => {
+    const harness = await echoServer();
+    try {
+      const results = await run(
+        await collection({ 'binary.yml': typed('127.0.0.1', harness.port, 'binary', 'AQIDBA==') }),
+        { maxMessages: 1, maxDurationMs: 2000 },
+      );
+
+      const warnings = results[0].warnings?.join(' ') ?? '';
+      expect(warnings).toMatch(/declares type "binary"/);
+      // The characters, not four bytes — stated so the reader of a failing run
+      // learns which of the two they actually sent.
+      expect(harness.received).toEqual(['AQIDBA==']);
+    } finally {
+      await stop(harness);
+    }
+  }, 10000);
+
+  it('names the gap for binary and base64 rather than implying a fixable setting', async () => {
+    const harness = await echoServer();
+    try {
+      const results = await run(
+        await collection({ 'b64.yml': typed('127.0.0.1', harness.port, 'base64', 'aGVsbG8=') }),
+        { maxMessages: 1, maxDurationMs: 2000 },
+      );
+
+      expect(results[0].warnings?.join(' ') ?? '').toMatch(/no binary WebSocket path/);
+    } finally {
+      await stop(harness);
+    }
+  }, 10000);
+
+  it('warns about a type nobody defined, which used to be accepted in silence', async () => {
+    const harness = await echoServer();
+    try {
+      const results = await run(
+        await collection({ 'bogus.yml': typed('127.0.0.1', harness.port, 'hologram', 'payload') }),
+        { maxMessages: 1, maxDurationMs: 2000 },
+      );
+
+      const warnings = results[0].warnings?.join(' ') ?? '';
+      expect(warnings).toMatch(/declares type "hologram"/);
+      // Not the binary sentence: that one is about a gap in the format, and
+      // attaching it to a typo would send someone looking for a missing feature.
+      expect(warnings).not.toMatch(/no binary WebSocket path/);
+    } finally {
+      await stop(harness);
+    }
+  }, 10000);
+
+  it('says nothing about the types it does honour', async () => {
+    const harness = await echoServer();
+    try {
+      const results = await run(
+        await collection({ 'text.yml': typed('127.0.0.1', harness.port, 'text', 'plain') }),
+        { maxMessages: 1, maxDurationMs: 2000 },
+      );
+
+      expect(results[0].warnings?.join(' ') ?? '').not.toMatch(/declares type/);
+      expect(harness.received).toEqual(['plain']);
+    } finally {
+      await stop(harness);
+    }
+  }, 10000);
+
+  it('puts a structured payload on the wire as JSON, not as [object Object]', async () => {
+    // The end of the path the parser test starts: a mapping authored in YAML
+    // arrives at the peer as JSON. Proven here because the parser and the
+    // transport could each be right while the pair still sent the wrong bytes.
+    const harness = await echoServer();
+    try {
+      await run(
+        await collection({
+          'mapping.yml': `info:
+  name: Structured
+  type: websocket
+  seq: 1
+websocket:
+  url: ws://127.0.0.1:${harness.port}
+  message:
+    - title: mapping
+      selected: true
+      message:
+        type: json
+        data:
+          hello: world
+`,
+        }),
+        { maxMessages: 1, maxDurationMs: 2000 },
+      );
+
+      expect(harness.received).toEqual(['{"hello":"world"}']);
+    } finally {
+      await stop(harness);
+    }
+  }, 10000);
+});
+
+/**
+ * A message that authored no payload.
+ *
+ * An empty frame is a protocol event in its own right — a peer can be waiting for
+ * one — so fabricating it from a message that carries nothing is worse than
+ * sending nothing at all. Both malformed shapes reach the same place: an entry
+ * with no inner `message` object, and one with a `message` object but no `data`.
+ *
+ * Upstream's two send paths disagree on this. The per-message send guards with
+ * `if (message && message.content)` and skips; the queue-everything-on-connect
+ * path sends the empty frame. This follows the deliberate one.
+ */
+describe('a message carrying no payload', () => {
+  const empty = (host: string, port: number, entry: string) => `info:
+  name: Hollow
+  type: websocket
+  seq: 1
+websocket:
+  url: ws://${host}:${port}
+  message:
+    - title: real
+      selected: true
+      message:
+        type: text
+        data: sent
+${entry}
+`;
+
+  const echoServer = () => startServer((socket) => {
+    socket.on('message', (data) => socket.send(`echo:${data.toString()}`));
+  });
+
+  it('is not sent, and the frames around it still are', async () => {
+    const harness = await echoServer();
+    try {
+      const results = await run(
+        await collection({
+          'hollow.yml': empty('127.0.0.1', harness.port, '    - title: hollow\n      selected: true'),
+        }),
+        { maxMessages: 2, maxDurationMs: 2000 },
+      );
+
+      expect(harness.received).toEqual(['sent']);
+      expect(results[0].warnings?.join(' ') ?? '').toMatch(/"hollow" carries no payload/);
+    } finally {
+      await stop(harness);
+    }
+  }, 10000);
+
+  it('treats a message object with no data key the same way', async () => {
+    const harness = await echoServer();
+    try {
+      const results = await run(
+        await collection({
+          'nodata.yml': empty(
+            '127.0.0.1',
+            harness.port,
+            '    - title: nodata\n      selected: true\n      message:\n        type: text',
+          ),
+        }),
+        { maxMessages: 2, maxDurationMs: 2000 },
+      );
+
+      expect(harness.received).toEqual(['sent']);
+      expect(results[0].warnings?.join(' ') ?? '').toMatch(/"nodata" carries no payload/);
+    } finally {
+      await stop(harness);
+    }
+  }, 10000);
+
+  it('identifies an untitled message by position rather than by an empty name', async () => {
+    const harness = await echoServer();
+    try {
+      const results = await run(
+        await collection({
+          'untitled.yml': empty('127.0.0.1', harness.port, '    - selected: true'),
+        }),
+        { maxMessages: 2, maxDurationMs: 2000 },
+      );
+
+      expect(results[0].warnings?.join(' ') ?? '').toMatch(/at index 1 carries no payload/);
+    } finally {
+      await stop(harness);
+    }
+  }, 10000);
+});
