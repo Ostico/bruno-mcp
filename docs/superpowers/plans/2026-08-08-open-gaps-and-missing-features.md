@@ -13,6 +13,13 @@ and are recorded at the bottom so they are not re-litigated.
 first; section C is deliberate and should generally not be started at all until
 its stated trigger fires.
 
+**Updated 2026-08-09.** Seven of the eleven defects are closed: A5, A6, A8, A9 and
+A10 in #154, A4 and A7 in #155. Their entries are kept in place, marked CLOSED,
+rather than moved to the bottom — the evidence in them is why they were found, and
+a reader who meets the same symptom again should land on it. A4 also has its
+classification corrected: it was filed as "binary frames are broken", and the
+upstream source says there is no binary path to break.
+
 ---
 
 ## A. Defects
@@ -89,7 +96,50 @@ does not exist.
 refused with an explicit reason. Silently counting an unverifiable request as
 passed is the behaviour to remove either way.
 
-### A4. Message `type` is decorative; binary frames cannot be sent at all
+### A4. Message `type` is decorative; binary frames cannot be sent at all — CLOSED (#155), AND MISFILED
+
+**Closed 2026-08-09, but read the correction first: the headline above is wrong.**
+
+The defect was real and is fixed. Its *diagnosis* was not, and the difference
+matters because acting on the original wording would have made the tool worse.
+
+**What the upstream source says.** Bruno has no binary WebSocket path anywhere.
+The only `.send()` on a ws socket is `bruno-requests/src/ws/ws-client.js:218`, fed
+by `normalizeMessageByFormat` in the same file, whose every branch returns a
+string — the value unchanged, `JSON.stringify(...)`, or `''`. No `Buffer.from`, no
+base64 decode, no file read exists in the ws client, the WS UI components, or the
+opencollection converter. `type` itself is `Yup.string().nullable()` in
+`bruno-schema` with no `.oneOf`; the only enumerated list is the UI constant
+`RAW_MODES` = `json`, `xml`, `text`, and the editor collapses anything else to
+text.
+
+So `binary` and `base64` are **not upstream concepts**. "Binary frames cannot be
+sent at all" describes the format, not a fault in this server, and decoding them
+here would have put bytes on the wire that Bruno's own runner never sends — the
+trade this project has refused elsewhere. A binary transport stays a gap in the
+format, and belongs in section B, not here.
+
+**What the actual defect was**, and what #155 fixed:
+
+- A declared type outside `text`/`json`/`xml` was accepted in silence. It is now
+  named in a warning, with an extra sentence for `binary` and `base64` saying the
+  gap is in the format rather than in a setting to correct. The frame still goes
+  out unchanged.
+- **The bug the probe did not find:** a `data:` written as a YAML mapping — the
+  obvious way to author a JSON payload in YAML — was `String()`-ed into the
+  literal characters `[object Object]` and sent. Now serialised with
+  `JSON.stringify`, matching `normalizeMessageByFormat`'s own non-string branch;
+  a payload that is already a string is left byte-for-byte alone.
+- **Wider than WebSocket:** the gRPC message branch carried the identical
+  `String()`. It was harder to spot for the inverse reason to usual — there the
+  mangled payload hit `JSON.parse` and failed loudly, so it read as a bad request
+  file rather than as our defect. A mapping body works there now.
+
+**The lesson worth keeping.** A black-box probe reports what it could not do. It
+cannot tell "this server is broken" from "this format has no such thing", and it
+guessed the first. Check the upstream source before filing a fidelity defect.
+
+*Original entry follows, unedited.*
 
 **Evidence.** Echoed back by the server, so this is what reached the wire:
 
@@ -110,7 +160,15 @@ is untestable and fails invisibly, having declared a type the runner accepted.
 **Done when:** `binary`/`base64` decode, `json` serialises or is refused, and an
 unrecognised type is an error rather than a silent text frame.
 
-### A5. An auth block using the `mode:` spelling is silently ignored
+### A5. An auth block using the `mode:` spelling is silently ignored — CLOSED (#154)
+
+**Closed 2026-08-09, with the framing corrected.** The applier reading `.type` is
+*right*: `bruno-filestore/src/formats/yml/common/auth.ts` builds every on-disk auth
+as `{ type: … }`, and `mode` is Bruno's in-memory spelling. "Fixing" it by
+accepting `mode:` on a request, as the heading implies, would have broken correct
+behaviour. What was wrong was accepting an uninterpretable block in silence: a
+block with no `type` key now warns, names the keys it did find, and points at the
+root-versus-request spelling when it sees `mode`.
 
 **Evidence.** `auth-apply.ts:86` reads `const mode = String(auth.type ?? 'none')`.
 A block spelled `{mode: bearer, bearer: {token: …}}` therefore resolves to `none`
@@ -140,7 +198,11 @@ success.
 **Done when:** an auth block that cannot be interpreted produces a warning, in the
 same voice as the unknown-mode message.
 
-### A6. `maxTranscriptBytes` overshoots by a whole frame
+### A6. `maxTranscriptBytes` overshoots by a whole frame — CLOSED (#154)
+
+**Closed 2026-08-09.** The payload is clipped to the remaining budget before
+storage, while the reported `bytes` still gives the frame's true size — the
+arrangement `maxFrameBytes` already had.
 
 **Evidence.** With `maxTranscriptBytes: 100`, a single frame recorded 1968 bytes —
 roughly twenty times the budget — because the cap is checked after the entry is
@@ -152,7 +214,19 @@ right thing: it clips before storing while still reporting the true `bytes`.
 
 **Done when:** the transcript is clipped to the remaining budget before storing.
 
-### A7. A malformed message fabricates an empty frame
+### A7. A malformed message fabricates an empty frame — CLOSED (#155)
+
+**Closed 2026-08-09.** Such a message is skipped and named in a warning; the
+frames around it are unaffected.
+
+**Upstream contradicts itself here, so there was no parity to copy.** The
+per-message send guards with `if (message && message.content)` and skips, while
+queue-everything-on-connect sends the empty frame — both in
+`bruno-electron/src/ipc/network/ws-event-handlers.js`. We follow the guard, and
+the source comment records that the choice existed rather than implying it was
+forced. Consequence worth stating: there is now no way to send a deliberate empty
+frame. If that is ever wanted it needs its own explicit spelling, not the removal
+of this check.
 
 **Evidence.** A message entry with no inner `message` object, and one with no
 `data` key, each sent a 0-byte frame rather than failing.
@@ -160,7 +234,19 @@ right thing: it clips before storing while still reporting the true `bytes`.
 **Why it matters.** An empty frame is a meaningful protocol event. Inventing one
 from a malformed request is worse than refusing the request.
 
-### A8. A request that sends nothing is reported as a pass
+### A8. A request that sends nothing is reported as a pass — CLOSED (#154)
+
+**Closed 2026-08-09.** The session now warns, in the same voice the run already
+used for zero requests and empty groups.
+
+**One thing found here is still open and is not a defect we can settle alone.**
+`framesToSend` filters on `selected !== false` deliberately, so that a `.bru`
+message — which has no such flag — sends like an equivalent `.yml` one. But the
+`.yml` parser resolves `selected` to an explicit boolean before the filter runs,
+so an omitted flag has already become `false`. The filter's intent is defeated
+upstream of itself. Whether an omitted flag should mean "send" is an upstream
+parity question; changing it would change what existing files do, so the warning
+makes it visible without deciding it.
 
 **Evidence.** Five separate shapes — `selected` omitted, `selected: "false"` as a
 string, zero selected, an empty message list, and no `message` key — all connect,
@@ -180,7 +266,12 @@ applied well:
 That reasoning stops at groups and does not reach messages. An externally
 generated file that omits `selected` connects, sends nothing, and goes green.
 
-### A9. Pre-flight refusals lose their `url`
+### A9. Pre-flight refusals lose their `url` — CLOSED (#154)
+
+**Closed 2026-08-09.** The `ws` constructor validates handshake headers and throws
+*synchronously*, and that throw escaped the transport entirely. It is caught and
+refused with its target. The message is read off the object rather than through
+`instanceof Error`, which a cross-realm builtin fails.
 
 **Evidence.** Every refusal raised before dialling reports `url: ""`. Requests
 that executed, and connection-level failures, report it correctly.
@@ -188,7 +279,10 @@ that executed, and connection-level failures, report it correctly.
 **Why it matters.** Minor, but it is the field a caller uses to tell which target
 was refused when several are refused at once.
 
-### A10. Unknown `websocket` option keys are accepted silently
+### A10. Unknown `websocket` option keys are accepted silently — CLOSED (#154)
+
+**Closed 2026-08-09.** The schema is `.strict()`, so an unrecognised key is
+rejected by name instead of dropped.
 
 **Evidence.** `{"websocket": {…, "bogusOption": true}}` ran normally, while
 out-of-range *known* keys are properly rejected by the schema.
@@ -366,6 +460,32 @@ usability cliff for exactly the mixed collections this feature was built for.
 
 **Done when:** a session can end on idle, or the default is reconsidered.
 
+### B10. No binary WebSocket frame can be sent, by anyone
+
+Moved here from A4, where it was filed as a defect in this server. It is not one:
+the capability does not exist upstream either, so there is nothing to be faithful
+to and nothing broken to repair.
+
+**Evidence.** `bruno-requests/src/ws/ws-client.js` — the only `.send()` call site
+is fed by `normalizeMessageByFormat`, whose every branch returns a string. No
+`Buffer.from`, no base64 decode, no file read anywhere in the ws client, the WS UI
+components, or the opencollection converter. `type` is `Yup.string().nullable()`
+in `bruno-schema` with no `.oneOf`.
+
+**Why it matters.** Any binary protocol over WebSocket — protobuf, MessagePack —
+is untestable. As of #155 that at least fails visibly: a message declaring
+`binary` or `base64` warns that the gap is in the format.
+
+**Before starting, note what it costs.** Sending real bytes means diverging from
+Bruno: a collection would behave differently under this runner than under Bruno's
+own, which is the trade refused in `decision-keep-our-own-runner`. It also needs a
+spelling on disk that Bruno will not round-trip, and the transcript and
+`response_body` would both need a binary representation. Worth doing only with a
+concrete protocol to test against — not speculatively.
+
+**Done when:** there is a way to put bytes on the wire and read bytes back, with
+the divergence from upstream stated where an author will see it.
+
 ## C. Deliberate exclusions
 
 Recorded so they are not mistaken for oversights. Each has a trigger that would
@@ -502,6 +622,21 @@ Recorded so they are not re-added from stale notes.
 - **The transport-block destruction bug is fixed and verified against disk.** A
   rename through `modify_request` preserved a WebSocket request's URL, bearer
   token, headers and both messages with their `selected` flags.
+
+**Closed 2026-08-09** — entries kept in place above, marked CLOSED:
+
+- #154, the silent-acceptance cluster: A5, A6, A8, A9, A10. One root cause in five
+  costumes — the server accepted something it could not act on, acted on nothing,
+  and reported a pass.
+- #155, the send path: A4 and A7. Both change what goes on the wire, which is why
+  they were held back from #154.
+
+Two corrections came out of closing them, and both are recorded on the entries
+themselves because the original wording would have misled whoever picked them up:
+**A5 named the wrong culprit** (the applier was right; accepting the other shape in
+silence was the fault), and **A4 named a defect that does not exist** (there is no
+binary path upstream to break). Both were settled by reading the upstream source
+rather than by reasoning from the symptom.
 
 ---
 
