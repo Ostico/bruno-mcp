@@ -104,6 +104,9 @@ export interface TranscriptOptions {
 export function toTranscriptEntry(
   input: TranscriptEntryInput,
   options: TranscriptOptions = {},
+  // Bytes already recorded by this transcript. Defaults to 0 so a caller that
+  // records a single entry, and every existing test, needs no change.
+  recordedBytes = 0,
 ): WebsocketTranscriptEntry {
   const bytes = Buffer.byteLength(input.payload, 'utf8');
   const entry: WebsocketTranscriptEntry = {
@@ -112,7 +115,22 @@ export function toTranscriptEntry(
     bytes,
   };
   if (options.includePayloads) {
-    const cap = options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
+    // Two ceilings, and the smaller wins. The per-frame one bounds any single
+    // frame; the cumulative one bounds the whole tool response, and it is the
+    // reason this function needs to know what came before.
+    //
+    // The cumulative bound used to be enforced only by the caller's stop check,
+    // which runs AFTER the entry is appended — so one frame arriving under a
+    // small budget was recorded whole, and a 100-byte budget could hold 2000
+    // bytes. Clipping here is what makes the option a bound rather than a hint.
+    //
+    // `bytes` still reports the frame's true size in both cases. That is the
+    // honest way round: the entry testifies that something that big arrived,
+    // while the payload we chose to keep stays within budget.
+    const frameCap = options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
+    const transcriptCap = options.maxTranscriptBytes ?? DEFAULT_MAX_TRANSCRIPT_BYTES;
+    const remaining = Math.max(0, transcriptCap - recordedBytes);
+    const cap = Math.min(frameCap, remaining);
     entry.payload = bytes > cap ? input.payload.slice(0, cap) : input.payload;
   }
   return entry;

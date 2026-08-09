@@ -194,7 +194,32 @@ export function applyAuth(
   if (refusal) return refusal;
 
   switch (auth.type) {
-    case undefined:
+    case undefined: {
+      // A block with no `type` is not the same as no block at all. `parseAuth`
+      // is a passthrough, so a file that spells the mode any other way arrives
+      // here intact and would otherwise be indistinguishable from `auth: none`
+      // — the file claims a credential and the request goes out bare, which is
+      // the exact failure the `default:` branch below exists to prevent. An
+      // unrecognised VALUE was already loud; an unrecognised SHAPE was silent.
+      //
+      // `mode` is worth naming rather than lumping in with the rest, because it
+      // is the one wrong guess a careful author makes: it is Bruno's in-memory
+      // spelling, and collection and folder roots genuinely do use it on disk,
+      // where `normalizeRootAuth` translates it. Requests are not translated.
+      const keys = Object.keys(auth);
+      if (keys.length > 0) {
+        const named = keys.includes('mode')
+          ? ' On disk a request spells its mode `type`, not `mode` — `mode` is the '
+            + 'collection/folder root spelling.'
+          : '';
+        warnings.push(
+          `auth block has no "type" key, so it could not be interpreted and no credential was `
+            + `sent. Keys present: ${keys.join(', ')}.${named}`,
+        );
+      }
+      return DONE;
+    }
+
     case 'none':
       return DONE;
 

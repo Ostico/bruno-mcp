@@ -441,3 +441,110 @@ describe('a secret substituted into a frame stays out of the default result', ()
     }
   }, 10000);
 });
+
+// The run already refuses to let "zero requests" or "an empty group" pass in
+// silence. A request that connects and sends nothing is the same failure one
+// level down, and it used to be indistinguishable from a healthy session: it
+// connects, records whatever the peer volunteers, and passes.
+describe('a websocket request that sends no messages', () => {
+  const noneSelected = (host: string, port: number) => `info:
+  name: SendsNothing
+  type: websocket
+  seq: 1
+websocket:
+  url: ws://${host}:${port}
+  message:
+    - title: omitted
+      message:
+        type: text
+        data: never-sent
+    - title: string-false
+      selected: "false"
+      message:
+        type: text
+        data: also-never-sent
+`;
+
+  it('warns rather than passing silently, and names the fix', async () => {
+    const harness = await startServer((socket) => {
+      socket.on('message', (data) => socket.send(`echo:${data.toString()}`));
+    });
+    try {
+      const results = await run(
+        await collection({ 'quiet.yml': noneSelected('127.0.0.1', harness.port) }),
+        { maxDurationMs: 300, includePayloads: true },
+      );
+
+      const [result] = results;
+      // It still executes — this is a warning about intent, not a refusal.
+      expect(result.websocket).toBeDefined();
+      expect(result.warnings?.join(' ')).toMatch(/sends no messages/);
+      expect(result.warnings?.join(' ')).toMatch(/selected: true/);
+      // And the reason it is worth warning about: nothing went out.
+      expect(result.websocket?.transcript.some((e) => e.direction === 'sent')).toBe(false);
+    } finally {
+      await stop(harness);
+    }
+  }, 10000);
+
+  it('says nothing when a message really is selected', async () => {
+    const harness = await startServer((socket) => {
+      socket.on('message', (data) => socket.send(`echo:${data.toString()}`));
+    });
+    try {
+      const results = await run(
+        await collection({ 'yml.yml': ymlWs('127.0.0.1', harness.port) }),
+        { maxMessages: 1, maxDurationMs: 2000 },
+      );
+
+      expect(results[0].warnings?.join(' ') ?? '').not.toMatch(/sends no messages/);
+    } finally {
+      await stop(harness);
+    }
+  }, 10000);
+});
+
+// The `ws` constructor validates handshake headers and throws synchronously on a
+// bad one. That throw used to escape this function entirely and be reported by a
+// generic handler with no `url`, so a caller refusing several targets at once
+// could not tell which had been rejected.
+describe('a handshake header the constructor rejects', () => {
+  const badHeader = (host: string, port: number) => `info:
+  name: BadHeader
+  type: websocket
+  seq: 1
+websocket:
+  url: ws://${host}:${port}
+  headers:
+    - name: X-Broken
+      value: "line-one\\r\\nInjected: yes"
+  message:
+    - title: first
+      selected: true
+      message:
+        type: text
+        data: hello
+`;
+
+  it('is refused with the target it refused, not with an empty url', async () => {
+    const harness = await startServer((socket) => {
+      socket.on('message', (data) => socket.send(`echo:${data.toString()}`));
+    });
+    try {
+      const results = await run(
+        await collection({ 'bad.yml': badHeader('127.0.0.1', harness.port) }),
+        { maxDurationMs: 500 },
+      );
+
+      const [result] = results;
+      expect(result.status).toBe(0);
+      expect(result.error).toBeDefined();
+      // The point of the fix: the refusal says WHICH target it was.
+      expect(result.url).toContain(`127.0.0.1:${harness.port}`);
+      // And a refusal is not an executed session.
+      expect(result.websocket).toBeUndefined();
+    } finally {
+      await stop(harness);
+    }
+  }, 10000);
+});
