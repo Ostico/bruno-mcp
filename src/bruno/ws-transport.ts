@@ -105,17 +105,79 @@ function refuse(
 }
 
 /**
- * The frames this session sends, in order.
+ * The frame types a WebSocket message can declare and have honoured.
+ *
+ * Upstream constrains the field to these three in its editor
+ * (`bruno-app/src/components/RequestPane/WsBody/BodyMode`) but validates nothing
+ * on disk, and every one of them ends up as a text frame: `normalizeMessageByFormat`
+ * in `bruno-requests/src/ws/ws-client.js` returns a string on every path, and
+ * nothing anywhere decodes base64 or reads a file. So a declared type changes how
+ * a payload is *serialised*, never what kind of frame carries it.
+ */
+const HONOURED_MESSAGE_TYPES = new Set(['text', 'json', 'xml']);
+
+/** What a session will put on the wire, and what it would not. */
+interface PlannedFrames {
+  payloads: string[];
+  warnings: string[];
+}
+
+/**
+ * The frames this session sends, in order, and the reasons some were not sent.
  *
  * `selected: false` is honoured and only `.yml` websocket variants can express it;
  * a `.bru` message has no such flag, so every message in that dialect is sent.
  * Filtering on `!== false` rather than on `=== true` is what keeps the two
  * dialects sending the same frames from equivalent files.
+ *
+ * Two things are refused here rather than sent badly. A type this transport cannot
+ * honour is reported instead of being quietly downgraded to a text frame, because
+ * a caller testing a binary protocol would otherwise get a green run having sent
+ * the characters `AQIDBA==` where four bytes were meant. And a message carrying no
+ * payload is dropped: an empty frame is a protocol event in its own right, and
+ * inventing one from a message that authored none is worse than sending nothing.
+ * Upstream's per-message send guards the same way — `if (message && message.content)`
+ * in `bruno-electron/src/ipc/network/ws-event-handlers.js` — though its
+ * queue-everything-on-connect path does not, so this follows the deliberate one.
  */
-function framesToSend(request: YamlRequest, subst: (value: string) => string): string[] {
-  return (request.websocket?.messages ?? [])
-    .filter((message) => message.selected !== false)
-    .map((message) => subst(message.content ?? ''));
+function framesToSend(request: YamlRequest, subst: (value: string) => string): PlannedFrames {
+  const payloads: string[] = [];
+  const warnings: string[] = [];
+
+  (request.websocket?.messages ?? []).forEach((message, index) => {
+    if (message.selected === false) return;
+
+    const label = message.name && message.name.length > 0
+      ? `"${message.name}"`
+      : `at index ${index}`;
+
+    const declared = message.type ?? 'text';
+    if (!HONOURED_MESSAGE_TYPES.has(declared)) {
+      const binaryNote = declared === 'binary' || declared === 'base64'
+        ? ' Bruno has no binary WebSocket path at all — nothing decodes base64 or reads a file '
+          + 'before sending — so this is a gap in the format rather than a setting to correct.'
+        : '';
+      warnings.push(
+        `Message ${label} declares type "${declared}", which is not one of ${
+          [...HONOURED_MESSAGE_TYPES].join(', ')
+        }. Its payload was sent as a text frame carrying those literal characters.${binaryNote}`,
+      );
+    }
+
+    const payload = subst(message.content ?? '');
+    if (payload.length === 0) {
+      warnings.push(
+        `Message ${label} carries no payload, so nothing was sent for it. An empty frame is a `
+          + 'protocol event in its own right and is not fabricated from a message that authored '
+          + 'none.',
+      );
+      return;
+    }
+
+    payloads.push(payload);
+  });
+
+  return { payloads, warnings };
 }
 
 /** The handshake headers: the request's own, plus whatever auth placed. */
@@ -208,11 +270,17 @@ export async function executeWebsocketRequest(
   // reading the file. `.yml` parsing resolves `selected` to an explicit boolean,
   // so an omitted flag has already become `false` by the time the filter below
   // sees it.
-  if (framesToSend(request, subst).length === 0) {
+  // Planned once, not per use: the plan reports what it would not send, and
+  // computing it twice would say each of those things twice.
+  const planned = framesToSend(request, subst);
+  warnings.push(...planned.warnings);
+
+  if (planned.payloads.length === 0) {
     warnings.push(
-      'This WebSocket request sends no messages: none are selected, so the session only '
-        + 'records what the peer volunteers. Sending nothing is not a pass. Set `selected: true` '
-        + '(a boolean, not the string "false") on the messages that should go out.',
+      'This WebSocket request sends no messages, so the session only records what the peer '
+        + 'volunteers. Sending nothing is not a pass. The usual cause is selection: set '
+        + '`selected: true` (a boolean, not the string "false") on the messages that should '
+        + 'go out.',
     );
   }
 
@@ -298,7 +366,7 @@ export async function executeWebsocketRequest(
     const deadline = setTimeout(() => finish('timeout'), maxDurationMs);
 
     socket.on('open', () => {
-      for (const frame of framesToSend(request, subst)) {
+      for (const frame of planned.payloads) {
         socket.send(frame);
         record('sent', frame);
       }

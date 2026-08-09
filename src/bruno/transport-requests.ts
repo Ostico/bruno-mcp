@@ -98,7 +98,15 @@ export interface BruWs {
 export interface YamlRequestMessage {
   /** The variant's title on disk. Empty for a file that used one bare message. */
   name?: string;
-  /** WebSocket only: `text` or `binary`. A missing value means text upstream. */
+  /**
+   * WebSocket only. A missing value means text upstream.
+   *
+   * Upstream offers `json`, `xml` and `text` in its editor and validates nothing
+   * on disk, so any string can appear here. It has no binary path at all — every
+   * payload is sent as a string — which is why this is kept as the free string it
+   * is on disk rather than narrowed to a union the format does not enforce. The
+   * transport reports a value it cannot honour instead of silently downgrading it.
+   */
   type?: string;
   content?: string;
   /** WebSocket only. */

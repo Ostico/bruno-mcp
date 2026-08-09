@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A message payload written as a YAML mapping was sent as `[object Object]`.**
+  Writing structure as structure is the reason to author a payload in YAML at all,
+  and it produced those fifteen literal characters on the wire — the declared type
+  accepted, the frame sent, the run passed. A structured payload is now serialised
+  as JSON, matching what upstream's own normaliser does with a non-string, while a
+  payload that is already a string is left byte-for-byte alone. The gRPC message
+  path carried the identical fault and is fixed with it: a mapping body there
+  failed with a JSON parse error rather than sending nonsense, and now works.
+
+- **A WebSocket message declaring a type this transport cannot honour now says
+  so.** Every declared type produced a text frame carrying the literal characters
+  of whatever was written, so a payload announced as `binary` reached the peer as
+  the ASCII of its base64 and passed. Nothing decodes it now either — Bruno has no
+  binary WebSocket path anywhere, and inventing one here would put bytes on the
+  wire its own runner never would — but the request reports what it could not
+  honour instead of accepting it in silence. A type outside `text`, `json` and
+  `xml` is named in a warning; `binary` and `base64` additionally say the gap is
+  in the format rather than in a setting to correct.
+
+- **A message carrying no payload no longer fabricates an empty frame.** An entry
+  with no inner `message` object, and one with a `message` object but no `data`
+  key, each sent a 0-byte frame. An empty frame is a protocol event in its own
+  right — a peer can be waiting for one — so inventing it from a message that
+  authored none is worse than sending nothing. Such a message is now skipped and
+  named in a warning, and the frames around it are unaffected. This follows
+  upstream's per-message send guard rather than its queue-everything-on-connect
+  path, which do not agree with each other.
+
 - **An auth block the parser could not interpret was applied as no auth, in
   silence.** An unrecognised auth *value* has always been reported; an
   unrecognised auth *shape* was not, so a request whose file plainly claims a
