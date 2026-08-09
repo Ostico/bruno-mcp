@@ -37,8 +37,8 @@ import { redactMetadata } from './transport-redaction.js';
 import { applyAuth } from './auth-apply.js';
 import { substitute } from './env-loader.js';
 import { redactUrl } from './request-redaction.js';
+import { grpcResponse, type TransportOutcome } from './transport-verification.js';
 import type { RootChain } from './collection-roots.js';
-import type { RequestExecutionResult } from './run-results.js';
 import type { GrpcResultDetail } from './transport-results.js';
 import type { YamlRequest } from './types.js';
 
@@ -74,16 +74,20 @@ function refuse(
   url: string,
   error: string,
   warnings: string[],
-): RequestExecutionResult {
+): TransportOutcome {
+  // No `response`: a call that was never placed has nothing to assert about, and
+  // it already carries its own error. See `TransportOutcome`.
   return {
-    name: request.info.name,
-    method: 'GRPC',
-    url: redactUrl(url),
-    status: 0,
-    duration_ms: 0,
-    tests: [],
-    ...(warnings.length > 0 ? { warnings } : {}),
-    error,
+    result: {
+      name: request.info.name,
+      method: 'GRPC',
+      url: redactUrl(url),
+      status: 0,
+      duration_ms: 0,
+      tests: [],
+      ...(warnings.length > 0 ? { warnings } : {}),
+      error,
+    },
   };
 }
 
@@ -180,7 +184,7 @@ function buildMetadata(
  */
 export async function executeGrpcRequest(
   input: GrpcExecutionInput,
-): Promise<RequestExecutionResult> {
+): Promise<TransportOutcome> {
   const { request, vars, collectionRoot, rootChain, timeoutMs, oauth2Token } = input;
   const block = request.grpc;
   const warnings: string[] = [];
@@ -483,20 +487,29 @@ export async function executeGrpcRequest(
   });
   client.close();
 
+  const durationMs = Date.now() - startedAt;
+
   return {
-    name: request.info.name,
-    method: 'GRPC',
-    url: redactUrl(validation.normalisedUrl),
-    // Left at the refusal sentinel on purpose: gRPC's OK code is also 0, so the
-    // code lives in `grpc.code` and the presence of `grpc` is what says the call
-    // happened at all.
-    status: 0,
-    duration_ms: Date.now() - startedAt,
-    tests: [],
-    ...(warnings.length > 0 ? { warnings } : {}),
-    grpc: outcome.detail,
-    ...(outcome.body !== undefined
-      ? { response_body: outcome.body, response_content_type: 'application/json' }
-      : {}),
+    result: {
+      name: request.info.name,
+      method: 'GRPC',
+      url: redactUrl(validation.normalisedUrl),
+      // Left at the refusal sentinel on purpose: gRPC's OK code is also 0, so the
+      // code lives in `grpc.code` and the presence of `grpc` is what says the call
+      // happened at all.
+      status: 0,
+      duration_ms: durationMs,
+      tests: [],
+      ...(warnings.length > 0 ? { warnings } : {}),
+      grpc: outcome.detail,
+      ...(outcome.body !== undefined
+        ? { response_body: outcome.body, response_content_type: 'application/json' }
+        : {}),
+    },
+    // A call that reached the server is verifiable whatever its status: asserting
+    // that a request is correctly REFUSED — PERMISSION_DENIED, UNAUTHENTICATED —
+    // is the whole point of an authorization test, so a non-OK code must still
+    // reach the author's assertions.
+    response: grpcResponse(outcome.detail, outcome.body ?? '', durationMs),
   };
 }

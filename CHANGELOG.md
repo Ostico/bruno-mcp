@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **gRPC and WebSocket requests can now fail.** Scripts, `test()` blocks and
+  assertions ran only on the HTTP path — both transports returned before it — so a
+  request's declared checks were parsed, written back faithfully and never
+  evaluated. In a mixed collection both kinds inflated `passed` with zero
+  verification, and `requestsWithoutTests` was the only signal, which reads as an
+  author's omission rather than as a capability that did not exist.
+
+  `res` describes what actually happened rather than a translation into HTTP. For
+  gRPC, `res.getStatus()` is the gRPC code — **`0` means OK here**, colliding with
+  the refusal sentinel used everywhere else, because mapping OK to 200 would make a
+  passing assertion say something untrue about the call; trailers are readable
+  through `res.getHeader()`, and `res.getBody()` is the parsed response message.
+  For a WebSocket session, `res.getBody()` is the transcript, so a script reads a
+  session the way a caller already does, and `res.getStatusText()` is the stop
+  reason.
+
+  A request that never happened — refused, blocked, or a handshake that failed —
+  carries no response and its assertions are not evaluated: it already reports its
+  own error, and checking a request that was never sent would report that single
+  failure twice in the wrong vocabulary.
+
+  **A script sees WebSocket payloads even when the surfaced transcript withholds
+  them.** That is the split the HTTP path already draws — `res.body` always carries
+  the full body while `response_body` is gated — and without it an assertion could
+  not check the one thing a session produces. The script-facing copy is bounded by
+  its own memory ceiling rather than by `maxTranscriptBytes`, so a display setting
+  cannot quietly make an assertion pass by trimming the frame that would have
+  failed it.
+
+  Pre-request scripts still do not run for these transports; that is separate
+  machinery, since `req.setUrl`/`setHeader`/`setBody` have no target here.
+
 ### Fixed
 
 - **An auth block the parser could not interpret was applied as no auth, in

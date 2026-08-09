@@ -37,6 +37,7 @@ import { encodeRequestUrl, shouldEncodeUrl, hasExplicitScheme } from './url-enco
 import { scriptTimeoutMs } from './script-timeout.js';
 import { buildFetchOptions } from './fetch-options.js';
 import { executeGrpcRequest } from './grpc-transport.js';
+import type { TransportOutcome } from './transport-verification.js';
 import { executeWebsocketRequest, type WebsocketRunOptions } from './ws-transport.js';
 
 // Re-exported from its new home so existing importers keep working. The move was
@@ -50,6 +51,7 @@ import type {
   CollectionRunSummary,
   RequestExecutionResult,
   TestResult,
+  MockResponseData,
 } from './types.js';
 
 // The .bru -> YamlRequest translation, the credential-redaction helpers and the
@@ -133,6 +135,152 @@ function capResponseBody(
   return { body: buf.subarray(0, maxBytes).toString('utf8'), truncated: true };
 }
 
+/** What a request's post-response work produced. */
+interface VerificationOutcome {
+  tests: TestResult[];
+  warnings?: string[];
+  /** Set when declared assertions were handed over and nothing came back. */
+  droppedAssertions?: string;
+}
+
+/**
+ * Run a request's post-response script, its `test()` blocks and its assertions.
+ *
+ * Extracted so the three transports share one copy. It began as HTTP's alone, and
+ * the gRPC and WebSocket paths returned before reaching it — which is why neither
+ * could fail an assertion. Two copies would have drifted; the accumulated rules
+ * below are exactly the kind that only get fixed once.
+ */
+async function runVerification(params: {
+  yaml: YamlRequest;
+  rootChain?: RootChain;
+  scriptRunner: ScriptRunner;
+  variableStore?: VariableStore;
+  baseVars: Map<string, string>;
+  response: MockResponseData;
+}): Promise<VerificationOutcome> {
+  const { yaml, rootChain, scriptRunner, variableStore, baseVars, response } = params;
+
+  const testScript = mergePostResponse(
+    rootChain?.scripts ?? [],
+    ownPostScripts(yaml),
+    rootChain?.scriptFlow ?? 'sandwich',
+  );
+  // Assertions the author switched off are dropped here rather than carried
+  // with a flag, so nothing downstream can evaluate one or report it.
+  const assertions = (yaml.assert ?? [])
+    .filter((assertion) => assertion.disabled !== true)
+    .map((assertion) => ({ name: assertion.name, value: assertion.value }));
+  // Same drop-not-flag treatment for vars:post-response. Unlike pre-request
+  // vars these values are JS EXPRESSIONS, evaluated in the sandbox with res
+  // and bru in scope — which is why they travel with the sandbox job rather
+  // than being folded into the interpolation map here.
+  const postResponseVars = (yaml.vars?.postResponse ?? [])
+    .filter((entry) => entry.disabled !== true)
+    .map((entry) => ({ name: entry.name, value: entry.value }));
+
+  // The gate is script OR assertions. Gating on the script alone meant a
+  // request that declared assertions but no post-response script never invoked
+  // the sandbox, so its declared checks were parsed, written back faithfully,
+  // and never evaluated — the run reported zero assertions and looked green.
+  // postResponseVars joins the gate for the same reason assertions did: a
+  // request that declares only vars still has sandbox work to do, and gating it
+  // out would leave those vars parsed, written back and never evaluated.
+  if (!testScript && assertions.length === 0 && postResponseVars.length === 0) {
+    return { tests: [] };
+  }
+
+  const scriptResult = await scriptRunner.runScript(testScript ?? '', response, {
+    // Same budget the pre-request script gets. Omitting it here left the
+    // post-response and tests scripts pinned to the runner's internal 5000ms
+    // default, so a request that raised settings.timeout still had its tests
+    // aborted at five seconds — and since tests are the slot most likely to
+    // wait on something, the setting looked like it did nothing at all.
+    timeout: scriptTimeoutMs(yaml.settings),
+    // Seed the current merged vars (env/collection/runtime plus anything the
+    // pre-request script wrote into the store) so a post-response script can
+    // read them via bru.getVar, and so a declared assertion's `{{var}}`
+    // operand resolves against the same map the URL was built from.
+    variables: Object.fromEntries(
+      variableStore ? variableStore.merge(baseVars) : prepareVariables(baseVars, new Map()),
+    ),
+    assertions,
+    postResponseVars,
+  });
+
+  // An enabled assertion always yields one result. Handing the sandbox N of
+  // them and getting nothing back therefore means the evaluation was lost
+  // somewhere between here and the result, and the caller must not be told
+  // the request was fine: with no results to fail, the request would
+  // otherwise be counted as passed precisely because nothing was checked.
+  const droppedAssertions = assertions.length > 0 && scriptResult.results.length === 0
+    ? `${assertions.length} declared assertion(s) produced no result; `
+      + 'they were not evaluated, so this request was not verified'
+    : undefined;
+
+  // Feed extracted variables into the store for cross-request propagation
+  if (variableStore) {
+    for (const [k, v] of Object.entries(scriptResult.variables)) {
+      variableStore.set(k, v as string | number | boolean);
+    }
+  }
+
+  return {
+    tests: scriptResult.results,
+    ...(scriptResult.warnings && scriptResult.warnings.length > 0
+      ? { warnings: scriptResult.warnings }
+      : {}),
+    ...(droppedAssertions ? { droppedAssertions } : {}),
+  };
+}
+
+/**
+ * Attach a transport's verification outcome to its result.
+ *
+ * The transports report a session that happened; a failed assertion about it is a
+ * separate fact, and `status` stays the refusal sentinel either way. `error` is
+ * only taken over when the transport itself did not already fail — its own failure
+ * is the earlier and more specific cause, exactly as a pre-request script error
+ * outranks a dropped assertion on the HTTP path.
+ */
+async function verifyTransport(params: {
+  outcome: TransportOutcome;
+  yaml: YamlRequest;
+  rootChain?: RootChain;
+  scriptRunner: ScriptRunner;
+  variableStore?: VariableStore;
+  baseVars: Map<string, string>;
+  extraWarnings: string[];
+}): Promise<RequestExecutionResult> {
+  const { outcome, extraWarnings, ...rest } = params;
+  const { result, response } = outcome;
+
+  // No response means the request never happened — refused, blocked, or a
+  // handshake that failed. It already carries its own error, and running the
+  // author's assertions against a request that was never sent would report the
+  // same single failure a second time in the wrong vocabulary.
+  const verification = response
+    ? await runVerification({ ...rest, response })
+    : { tests: [] as TestResult[] };
+
+  const warnings = [
+    ...(result.warnings ?? []),
+    ...extraWarnings,
+    ...(verification.warnings ?? []),
+  ];
+
+  return {
+    ...result,
+    tests: verification.tests,
+    ...(warnings.length > 0 ? { warnings } : {}),
+    // The transport's own failure is the earlier and more specific cause, so it
+    // outranks a dropped assertion — the same precedence the HTTP path gives a
+    // pre-request script error.
+    ...(result.error ?? verification.droppedAssertions
+      ? { error: result.error ?? verification.droppedAssertions }
+      : {}),
+  };
+}
 
 async function executeSingleRequest(
   yaml: YamlRequest,
@@ -161,7 +309,7 @@ async function executeSingleRequest(
         : prepareVariables(applyPreRequestVars(vars, yaml.vars), new Map());
       const grpcOauth = await resolveOAuth2(yaml, rootChain, grpcVars, tokenCache);
       const { timeoutMs, warning } = resolveTimeout(yaml.settings?.timeout);
-      const result = await executeGrpcRequest({
+      const outcome = await executeGrpcRequest({
         request: yaml,
         vars: grpcVars,
         collectionRoot,
@@ -169,15 +317,21 @@ async function executeSingleRequest(
         timeoutMs,
         oauth2Token: grpcOauth.token,
       });
-      // The token fetch reports its failure as one error string, the same way the
-      // http path folds it into that request's warnings — a failed exchange is a
-      // request sent without the credential, not a run that stops.
-      const warnings = [
-        ...(result.warnings ?? []),
-        ...(grpcOauth.error ? [grpcOauth.error] : []),
-        ...(warning ? [warning] : []),
-      ];
-      return warnings.length > 0 ? { ...result, warnings } : result;
+      return verifyTransport({
+        outcome,
+        yaml,
+        rootChain,
+        scriptRunner,
+        variableStore,
+        baseVars: grpcVars,
+        // The token fetch reports its failure as one error string, the same way
+        // the http path folds it into that request's warnings — a failed exchange
+        // is a request sent without the credential, not a run that stops.
+        extraWarnings: [
+          ...(grpcOauth.error ? [grpcOauth.error] : []),
+          ...(warning ? [warning] : []),
+        ],
+      });
     }
 
     if (yaml.websocket) {
@@ -185,15 +339,22 @@ async function executeSingleRequest(
         ? variableStore.merge(applyPreRequestVars(vars, yaml.vars))
         : prepareVariables(applyPreRequestVars(vars, yaml.vars), new Map());
       const wsOauth = await resolveOAuth2(yaml, rootChain, wsVars, tokenCache);
-      const result = await executeWebsocketRequest({
+      const outcome = await executeWebsocketRequest({
         request: yaml,
         vars: wsVars,
         rootChain,
         oauth2Token: wsOauth.token,
         options: websocketOptions,
       });
-      const warnings = [...(result.warnings ?? []), ...(wsOauth.error ? [wsOauth.error] : [])];
-      return warnings.length > 0 ? { ...result, warnings } : result;
+      return verifyTransport({
+        outcome,
+        yaml,
+        rootChain,
+        scriptRunner,
+        variableStore,
+        baseVars: wsVars,
+        extraWarnings: wsOauth.error ? [wsOauth.error] : [],
+      });
     }
 
     const kind = yaml.info.type ?? 'unknown';
@@ -581,72 +742,17 @@ async function executeSingleRequest(
 
     const wrappedResponse = await wrapFetchResponse(response, durationMs);
 
-    let tests: TestResult[] = [];
-    let scriptWarnings: string[] | undefined;
-    let droppedAssertions: string | undefined;
-    const testScript = mergePostResponse(rootChain?.scripts ?? [], ownPostScripts(yaml), rootChain?.scriptFlow ?? 'sandwich');
-    // Assertions the author switched off are dropped here rather than carried
-    // with a flag, so nothing downstream can evaluate one or report it.
-    const assertions = (yaml.assert ?? [])
-      .filter((assertion) => assertion.disabled !== true)
-      .map((assertion) => ({ name: assertion.name, value: assertion.value }));
-    // Same drop-not-flag treatment for vars:post-response. Unlike pre-request
-    // vars these values are JS EXPRESSIONS, evaluated in the sandbox with res
-    // and bru in scope — which is why they travel with the sandbox job rather
-    // than being folded into the interpolation map here.
-    const postResponseVars = (yaml.vars?.postResponse ?? [])
-      .filter((entry) => entry.disabled !== true)
-      .map((entry) => ({ name: entry.name, value: entry.value }));
-    // The gate is script OR assertions. Gating on the script alone meant a
-    // request that declared assertions but no post-response script never invoked
-    // the sandbox, so its declared checks were parsed, written back faithfully,
-    // and never evaluated — the run reported zero assertions and looked green.
-    // postResponseVars joins the gate for the same reason assertions did: a
-    // request that declares only vars still has sandbox work to do, and gating it
-    // out would leave those vars parsed, written back and never evaluated.
-    if (testScript || assertions.length > 0 || postResponseVars.length > 0) {
-      const scriptResult = await scriptRunner.runScript(testScript ?? '', wrappedResponse, {
-        // Same budget the pre-request script gets. Omitting it here left the
-        // post-response and tests scripts pinned to the runner's internal 5000ms
-        // default, so a request that raised settings.timeout still had its tests
-        // aborted at five seconds — and since tests are the slot most likely to
-        // wait on something, the setting looked like it did nothing at all.
-        timeout: scriptTimeoutMs(yaml.settings),
-        // Seed the current merged vars (env/collection/runtime plus anything the
-        // pre-request script wrote into the store) so a post-response script can
-        // read them via bru.getVar, and so a declared assertion's `{{var}}`
-        // operand resolves against the same map the URL was built from.
-        variables: Object.fromEntries(
-          variableStore
-            ? variableStore.merge(baseVars)
-            : prepareVariables(baseVars, new Map()),
-        ),
-        assertions,
-        postResponseVars,
-      });
-      tests = scriptResult.results;
-      if (scriptResult.warnings && scriptResult.warnings.length > 0) {
-        scriptWarnings = scriptResult.warnings;
-      }
-
-      // An enabled assertion always yields one result. Handing the sandbox N of
-      // them and getting nothing back therefore means the evaluation was lost
-      // somewhere between here and the result, and the caller must not be told
-      // the request was fine: with no results to fail, the request would
-      // otherwise be counted as passed precisely because nothing was checked.
-      if (assertions.length > 0 && tests.length === 0) {
-        droppedAssertions =
-          `${assertions.length} declared assertion(s) produced no result; ` +
-          'they were not evaluated, so this request was not verified';
-      }
-
-      // Feed extracted variables into the store for cross-request propagation
-      if (variableStore) {
-        for (const [k, v] of Object.entries(scriptResult.variables)) {
-          variableStore.set(k, v as string | number | boolean);
-        }
-      }
-    }
+    const verification = await runVerification({
+      yaml,
+      rootChain,
+      scriptRunner,
+      variableStore,
+      baseVars,
+      response: wrappedResponse,
+    });
+    const tests = verification.tests;
+    const scriptWarnings = verification.warnings;
+    const droppedAssertions = verification.droppedAssertions;
 
     const combinedWarnings = [
       ...(authWarnings ?? []),

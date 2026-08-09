@@ -55,10 +55,18 @@ function request(overrides: Partial<NonNullable<YamlRequest['websocket']>> = {})
   };
 }
 
-const call = (
+// The transport returns the result alongside what a post-response script may
+// examine, and these tests are about the result. The script-facing half is
+// asserted in transport-verification.test.ts, where its unredacted payloads are
+// the point rather than an incidental extra field.
+const call = async (
   overrides?: Partial<NonNullable<YamlRequest['websocket']>>,
   vars: Map<string, string> = new Map(),
-) => executeWebsocketRequest({ request: request(overrides), vars, options: { maxDurationMs: 500 } });
+) => (await executeWebsocketRequest({
+  request: request(overrides),
+  vars,
+  options: { maxDurationMs: 500 },
+})).result;
 
 describe('the handshake', () => {
   it('dials the validated target', async () => {
@@ -141,11 +149,17 @@ describe('what is refused before anything is dialled', () => {
   });
 
   it('refuses a request with no websocket block', async () => {
-    const result = await executeWebsocketRequest({
+    const outcome = await executeWebsocketRequest({
       request: { info: { name: 'Socket', type: 'ws' } },
       vars: new Map(),
     });
-    expect(result.error).toMatch(/no websocket block/);
+    expect(outcome.result.error).toMatch(/no websocket block/);
+    // A request that never happened has nothing for assertions to examine, so it
+    // carries no response — which is what stops the author's checks being
+    // evaluated against a session that does not exist and reporting the same
+    // single failure twice.
+    expect(outcome.response).toBeUndefined();
+    const result = outcome.result;
     expect(dials).toHaveLength(0);
   });
 });

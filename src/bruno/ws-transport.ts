@@ -30,8 +30,8 @@ import {
   toWebsocketDetail,
   type TranscriptOptions,
 } from './transport-redaction.js';
+import { websocketResponse, type TransportOutcome } from './transport-verification.js';
 import type { RootChain } from './collection-roots.js';
-import type { RequestExecutionResult } from './run-results.js';
 import type { WebsocketResultDetail, WebsocketTranscriptEntry } from './transport-results.js';
 import type { YamlRequest } from './types.js';
 
@@ -51,6 +51,18 @@ export const DEFAULT_MAX_MESSAGES = 50;
 export const DEFAULT_MAX_DURATION_MS = 5000;
 /** How long to wait for a close handshake before pulling the socket down. */
 const CLOSE_GRACE_MS = 250;
+
+/**
+ * Memory ceiling on the session a post-response script can examine.
+ *
+ * Not a display cap, and deliberately much larger than one: this exists so a
+ * runaway socket cannot exhaust the process, which is the job `MAX_RESPONSE_BYTES`
+ * does on the HTTP path. A caller's `maxTranscriptBytes` bounds what is *reported*
+ * and must not silently bound what is *checked* — otherwise an assertion would
+ * start passing because the frame that would have failed it was trimmed for
+ * display, which is the worst way for a check to go green.
+ */
+const MAX_SCRIPT_TRANSCRIPT_BYTES = 8 * 1024 * 1024;
 
 /**
  * engine.io's OPEN and PING frames, and the PONG this may answer with.
@@ -86,21 +98,32 @@ export interface WebsocketExecutionInput {
   options?: WebsocketRunOptions;
 }
 
+/**
+ * A request that never reached a socket.
+ *
+ * Returns the outcome wrapper with no `response`, which is what stops assertions
+ * running against a session that did not happen: a refusal already carries its own
+ * `error`, and evaluating checks about a request that was never sent would report
+ * the same single failure twice, the second time in the vocabulary of the author's
+ * assertions rather than of the refusal.
+ */
 function refuse(
   request: YamlRequest,
   url: string,
   error: string,
   warnings: string[],
-): RequestExecutionResult {
+): TransportOutcome {
   return {
-    name: request.info.name,
-    method: 'WS',
-    url: url ? redactUrl(url) : '',
-    status: 0,
-    duration_ms: 0,
-    tests: [],
-    ...(warnings.length > 0 ? { warnings } : {}),
-    error,
+    result: {
+      name: request.info.name,
+      method: 'WS',
+      url: url ? redactUrl(url) : '',
+      status: 0,
+      duration_ms: 0,
+      tests: [],
+      ...(warnings.length > 0 ? { warnings } : {}),
+      error,
+    },
   };
 }
 
@@ -135,13 +158,16 @@ function handshakeHeaders(
 /**
  * Record a bounded WebSocket session.
  *
- * Always resolves. A refusal, a failed handshake and a completed recording are all
- * `RequestExecutionResult`s, because one WebSocket request must not stop the rest
- * of its group.
+ * Always resolves. A refusal, a failed handshake and a completed recording all come
+ * back as a `TransportOutcome`, because one WebSocket request must not stop the
+ * rest of its group.
+ *
+ * Only a completed session carries a `response`; that is what decides whether the
+ * caller runs this request's assertions against it. See `TransportOutcome`.
  */
 export async function executeWebsocketRequest(
   input: WebsocketExecutionInput,
-): Promise<RequestExecutionResult> {
+): Promise<TransportOutcome> {
   const { request, vars, rootChain, oauth2Token, options = {} } = input;
   const block = request.websocket;
   const warnings: string[] = [];
@@ -219,19 +245,46 @@ export async function executeWebsocketRequest(
   const { WebSocket } = await import('ws');
 
   const transcript: WebsocketTranscriptEntry[] = [];
+
+  // The session as the author's own script sees it, kept apart from the one the
+  // caller is shown.
+  //
+  // The surfaced transcript omits payloads unless `includePayloads` is set, and
+  // clips what it does keep to the display caps, because outbound frames are
+  // recorded AFTER interpolation and would otherwise write supplied secrets into a
+  // result returned by default. A post-response script is not that: it is the
+  // author's own code, and without the payloads it could not assert on the one
+  // thing a session produces. The HTTP path already draws the line here — `res.body`
+  // always carries the full body while `response_body` is gated — so this is the
+  // existing contract rather than a new exception.
+  //
+  // Bounded by its own ceiling rather than by the display caps, for the same reason
+  // HTTP buffers to MAX_RESPONSE_BYTES rather than to the caller's truncation
+  // setting: the display caps protect the tool response, and this one protects the
+  // process.
+  const scriptFrames: WebsocketTranscriptEntry[] = [];
+  let scriptBytes = 0;
+
   const startedAt = Date.now();
   const offset = () => Date.now() - startedAt;
   const record = (direction: 'sent' | 'received', payload: string) => {
+    const offset_ms = offset();
     // The running total is what lets the entry clip itself to the cumulative
     // ceiling. Computed from the transcript rather than carried in a counter so
     // there is one source of truth for it.
     transcript.push(
       toTranscriptEntry(
-        { direction, offset_ms: offset(), payload },
+        { direction, offset_ms, payload },
         options,
         transcriptBytes(transcript),
       ),
     );
+
+    const bytes = Buffer.byteLength(payload, 'utf8');
+    if (scriptBytes + bytes <= MAX_SCRIPT_TRANSCRIPT_BYTES) {
+      scriptBytes += bytes;
+      scriptFrames.push({ direction, offset_ms, bytes, payload });
+    }
   };
 
   // Wrapped because the constructor validates the handshake headers and throws
@@ -341,17 +394,25 @@ export async function executeWebsocketRequest(
   // that made it, and nothing else would ever close it.
   socket.terminate();
 
+  const durationMs = Date.now() - startedAt;
+
   return {
-    name: request.info.name,
-    method: 'WS',
-    url: redactUrl(dialUrl),
-    // The refusal sentinel, as for gRPC: the session's own outcome is in
-    // `websocket`, and its presence is what says the socket was opened at all.
-    status: 0,
-    duration_ms: Date.now() - startedAt,
-    tests: [],
-    ...(warnings.length > 0 ? { warnings } : {}),
-    websocket: toWebsocketDetail(transcript, stopReason),
-    ...(failure ? { error: `WebSocket session failed: ${failure}` } : {}),
+    result: {
+      name: request.info.name,
+      method: 'WS',
+      url: redactUrl(dialUrl),
+      // The refusal sentinel, as for gRPC: the session's own outcome is in
+      // `websocket`, and its presence is what says the socket was opened at all.
+      status: 0,
+      duration_ms: durationMs,
+      tests: [],
+      ...(warnings.length > 0 ? { warnings } : {}),
+      websocket: toWebsocketDetail(transcript, stopReason),
+      ...(failure ? { error: `WebSocket session failed: ${failure}` } : {}),
+    },
+    // A session that opened is verifiable even when it ended badly: "the peer
+    // closed before answering" is a thing an author should be able to assert on,
+    // so the failure branch is not excluded here.
+    response: websocketResponse(scriptFrames, stopReason, durationMs),
   };
 }
