@@ -43,6 +43,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A gRPC or WebSocket request was written with HTTP's `settings:` block.** Every
+  `.yml` request got `encodeUrl`, `followRedirects` and `maxRedirects` — keys that
+  describe redirect-following and URL encoding, which neither transport does, and
+  which Bruno's own readers for those kinds never look at. A WebSocket request also
+  lost the one setting it should have had. Each kind now gets the block Bruno
+  writes for it: the four keys for HTTP, `timeout` and `keepAliveInterval` for
+  WebSocket, and none for gRPC. A gRPC request keeps a block the author wrote,
+  which is a deliberate difference from Bruno — `settings.tls` gates the transport
+  here, so discarding it would disarm that gate on the next write.
+
 - **The reader and the writer disagreed about a request whose extension does not
   match its collection.** A run happily executed a `.yml` request sitting in a
   `bruno.json` collection, while `modify_request`, `add_test_script`,
