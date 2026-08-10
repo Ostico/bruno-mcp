@@ -33,6 +33,9 @@ import {
 import { websocketResponse, type TransportOutcome } from './transport-verification.js';
 import type { RootChain } from './collection-roots.js';
 import type { WebsocketResultDetail, WebsocketTranscriptEntry } from './transport-results.js';
+import type { IncomingMessage } from 'node:http';
+
+import { collectIncomingHeaders, type ResponseHeaders } from './response-headers.js';
 import type { YamlRequest } from './types.js';
 
 const WS_SCHEMES = ['ws', 'wss', 'http', 'https'] as const;
@@ -361,6 +364,7 @@ export async function executeWebsocketRequest(
   // by a generic handler with no `url`, so a caller refusing several targets at
   // once could not tell which one was rejected. Everything else here reports the
   // target it refused; this now does too.
+  let upgradeHeaders: ResponseHeaders | undefined;
   let socket: InstanceType<typeof WebSocket>;
   try {
     socket = new WebSocket(dialUrl, {
@@ -417,6 +421,12 @@ export async function executeWebsocketRequest(
     };
 
     const deadline = setTimeout(() => finish('timeout'), maxDurationMs);
+
+    // Fires on the 101 before `open`, and is the only place the server's own
+    // headers are visible: a WebSocket has no per-message headers to fall back on.
+    socket.on('upgrade', (response: IncomingMessage) => {
+      upgradeHeaders = collectIncomingHeaders(response.headers);
+    });
 
     socket.on('open', () => {
       for (const frame of planned.payloads) {
@@ -476,6 +486,9 @@ export async function executeWebsocketRequest(
       tests: [],
       ...(warnings.length > 0 ? { warnings } : {}),
       websocket: toWebsocketDetail(transcript, stopReason),
+      // The same field an HTTP result uses, carrying the same thing: what the
+      // server answered with. Absent when the handshake never completed.
+      ...(upgradeHeaders ? { response_headers: upgradeHeaders } : {}),
       ...(failure ? { error: `WebSocket session failed: ${failure}` } : {}),
     },
     // A session that opened is verifiable even when it ended badly: "the peer

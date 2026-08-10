@@ -52,6 +52,18 @@ export const DEFAULT_MAX_FRAME_BYTES = 65_536;
  */
 export const DEFAULT_MAX_TRANSCRIPT_BYTES = 1_048_576;
 
+/**
+ * Whether a header name is one whose value is never recorded.
+ *
+ * Exported for the response-header path, which shares this vocabulary but not
+ * the whole-value policy: a response's `set-cookie` is masked in part, since its
+ * attributes are the reason those headers are reported. See
+ * `response-headers.ts`.
+ */
+export function isCredentialHeaderName(name: string): boolean {
+  return isCredentialName(name, []);
+}
+
 function isCredentialName(name: string, extraNames: readonly string[]): boolean {
   const lower = name.toLowerCase();
   return (

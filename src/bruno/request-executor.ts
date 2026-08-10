@@ -2,6 +2,7 @@ import { loadEnvironment } from './env-loader.js';
 import { resetUploadDirsCache } from './upload-path.js';
 import { forkingScriptRunner, type ScriptRunner } from './sandbox-host.js';
 import { wrapFetchResponse } from './response-wrapper.js';
+import { collectResponseHeaders } from './response-headers.js';
 import { validateUrl, ssrfRemediation } from './url-validator.js';
 import { VariableStore } from './variable-store.js';
 import { prepareVariables } from './variable-preparation.js';
@@ -777,6 +778,8 @@ async function executeSingleRequest(
       // specific cause, and it is also why the assertions never ran.
       error: preScriptError ?? droppedAssertions,
     };
+
+    result.response_headers = collectResponseHeaders(wrappedResponse);
 
     if (bodyCapture?.includeResponseBody) {
       const rawBody = wrappedResponse.rawBody ?? '';

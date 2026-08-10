@@ -517,7 +517,7 @@ general-purpose writing tool, against a format the author had to be taught.
 into seven tasks. Note A1 and A2 above were found while measuring it and are
 tracked there too; they are repeated here because they are defects, not features.
 
-### B2. Response headers are not returned
+### B2. Response headers are not returned — CLOSED (#163)
 
 **Evidence.** A run result carries `response_body`, `response_content_type` and
 `response_body_truncated`. There is no response-headers field anywhere in the
@@ -536,6 +536,27 @@ default over adding a second mask.
 
 **Done when:** headers are available on a result without authoring a script, with
 whatever redaction policy matches the existing body handling.
+
+**Closed 2026-08-10 in #163.** `response_headers` is on every result that reached
+the wire, with no flag: the design note was right that a second mask was the wrong
+shape, and `undici` already bounds a whole header map at its 16 KB
+`maxHeaderSize`, so there was nothing for a size knob to protect either.
+
+The policy is where the work was. Reusing `redactMetadata` would have masked
+`set-cookie` whole, which is the one header B2 was filed to make visible — the
+value is the credential, and `HttpOnly`, `Secure` and `SameSite` are the answer to
+the question being asked. So a response's cookies keep every attribute and lose
+only the bytes between the first `=` and the first `;`. A value that cannot be
+taken apart that way is withheld whole rather than guessed at.
+
+Two things that only surfaced by doing it. `set-cookie` is reported as a **list**,
+taken from the response's own `getSetCookie()` rather than the flat header map,
+because a joined value cannot be split back — a cookie value may contain a comma,
+and two cookies is the ordinary case. And a WebSocket had nowhere at all to read
+its headers, script or no script: frames have none, so the 101 is the only place a
+session cookie or an agreed subprotocol appears. It now populates the same
+`response_headers` field, captured on `ws`'s `upgrade` event. gRPC already reported
+its metadata under its own detail and is unchanged.
 
 ### B3. No report file output
 

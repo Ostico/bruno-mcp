@@ -9,6 +9,7 @@
 
 import type { TestResult } from './types.js';
 import type { GrpcResultDetail, WebsocketResultDetail } from './transport-results.js';
+import type { ResponseHeaders } from './response-headers.js';
 
 export interface RequestExecutionResult {
   name: string;
@@ -36,6 +37,15 @@ export interface RequestExecutionResult {
   response_body?: string;
   response_body_truncated?: boolean;
   response_content_type?: string;
+  /**
+   * Response headers, credential values masked, for a request that reached the
+   * wire. `set-cookie` is a list, and its cookies keep their attributes — see
+   * `response-headers.ts` for why that asymmetry is the point of the field.
+   *
+   * Not gated by `includeResponseBody`: that flag exists to keep a large body
+   * out of a result, and headers are neither large nor the thing it names.
+   */
+  response_headers?: ResponseHeaders;
   /** Present only for a gRPC request that actually reached a server. */
   grpc?: GrpcResultDetail;
   /** Present only for a WebSocket session that actually opened. */
