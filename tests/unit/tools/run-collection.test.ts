@@ -540,6 +540,34 @@ describe('run_collection tool', () => {
       expect(mockedExecutor.executeCollection).not.toHaveBeenCalled();
     });
 
+    it('rejects a report that names no format rather than writing nothing', async () => {
+      const tool = getRegisteredTool(server)!;
+      const response = await tool.handler({ collectionPath: collectionDir, report: {} });
+
+      expect(response.isError).toBe(true);
+      expect(response.content[0].text).toMatch(/junit/);
+      expect(response.content[0].text).toMatch(/html/);
+      expect(mockedExecutor.executeCollection).not.toHaveBeenCalled();
+    });
+
+    it('passes a report through to the run, and passes none when none was asked for', async () => {
+      mockedExecutor.executeCollection.mockResolvedValue(createSuccessResult(1, 1, 0));
+
+      const tool = getRegisteredTool(server)!;
+      await tool.handler({ collectionPath: collectionDir, report: { junit: 'reports/junit.xml' } });
+
+      expect(mockedExecutor.executeCollection).toHaveBeenCalledWith(
+        collectionDir,
+        expect.objectContaining({ report: { junit: 'reports/junit.xml' } }),
+      );
+
+      mockedExecutor.executeCollection.mockClear();
+      await tool.handler({ collectionPath: collectionDir });
+
+      // Absent, not an empty object: the executor reads it as "write nothing".
+      expect(mockedExecutor.executeCollection.mock.calls[0]![1]).not.toHaveProperty('report');
+    });
+
     it('names requests and groups, and not the removed arguments, in its description', () => {
       // A caller reaching for requestPath or folder must not find them
       // described as if they still worked.

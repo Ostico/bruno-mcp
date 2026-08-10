@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A run can write report files**, via `report` on `run_collection`: `junit` for a CI
+  system, `html` for a person, either or both, each naming its own path. The results
+  are still returned as JSON — reports exist because the two consumers that are not an
+  agent read files, and the HTML page is around 30 KB, which has no business inline in
+  a tool result. Each file written comes back under `reports` with its absolute path
+  and size. Paths are confined to the collection: one resolving outside it is refused
+  and the reason becomes a run warning, because writing wherever a caller points is a
+  far larger authorization than running its requests. A report that cannot be written
+  never fails a run.
+
+  The JUnit XML follows upstream's reporter, with four deliberate differences that all
+  come down to a report not reading greener than the run it describes: a request that
+  ran and verified nothing gets a *skipped* testcase rather than an empty suite, which
+  every CI summary renders as a pass; a request file that would not parse, a named
+  request that resolved to nothing and a group that crashed each get a suite of their
+  own; a named group's label is folded into the suite name, since the schema has no
+  concept of one; and the machine's hostname is not written into a file meant to be
+  committed. The HTML report is Bruno's own generator, with execution groups as its
+  iterations. Note that its page loads Vue and naive-ui from `unpkg.com`, so it needs
+  network access when opened — that is upstream's template, unmodified.
+
+- **Each result now carries the `path` of the request file it came from**, absolute and
+  in the same shape `list_requests` reports, so a failure in a run of twelve requests
+  can be read back or re-run by name instead of being matched up by its title.
+
 - **A WebSocket request can pace the messages it sends**, via `sendIntervalMs` on the
   run's `websocket` options. Every message previously left in one tick — three sends
   all recorded at the same millisecond — which put any send-wait-send protocol out of

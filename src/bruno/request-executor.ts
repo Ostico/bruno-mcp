@@ -40,6 +40,7 @@ import { buildFetchOptions } from './fetch-options.js';
 import { executeGrpcRequest } from './grpc-transport.js';
 import type { TransportOutcome } from './transport-verification.js';
 import { executeWebsocketRequest, type WebsocketRunOptions } from './ws-transport.js';
+import { writeRunReports } from './run-reports.js';
 
 // Re-exported from its new home so existing importers keep working. The move was
 // made to free `max-lines` headroom in this file, not to change its surface.
@@ -921,10 +922,17 @@ export class RequestExecutor {
       // a failure that precedes every request, like an environment that will
       // not load.
       const runOneSafely = async (req: ParsedRequest): Promise<RequestExecutionResult> => {
+        // Every result a group reports passes through here, the crash path
+        // included, so the request file is recorded in one place rather than in
+        // each of the three that build a result.
+        const located = (result: RequestExecutionResult): RequestExecutionResult => ({
+          ...result,
+          path: req.filePath,
+        });
         try {
-          return await runOne(req, vars, store, jar, tokenCache);
+          return located(await runOne(req, vars, store, jar, tokenCache));
         } catch (reason) {
-          return crashedRequestResult(req, reason);
+          return located(crashedRequestResult(req, reason));
         }
       };
 
@@ -986,7 +994,7 @@ export class RequestExecutor {
     summary.total += crashed;
     summary.failed += crashed;
 
-    return {
+    const runResult: CollectionRunResult = {
       summary,
       groups,
       // Derived, not tallied in parallel with the list: the count and the
@@ -994,6 +1002,23 @@ export class RequestExecutor {
       parseErrors: plan.parseFailures.length,
       parseFailures: plan.parseFailures,
       ...(plan.warnings.length > 0 ? { warnings: plan.warnings } : {}),
+    };
+
+    if (!options?.report) {
+      return runResult;
+    }
+
+    // Written from the finished result, so a report can never describe a run
+    // that differs from the one returned. A failure to write is reported as a
+    // warning on the run: the results are what was asked for, and losing them
+    // because a by-product could not be saved would be the worse outcome.
+    const written = await writeRunReports(runResult, collectionPath, options.report, new Date());
+    return {
+      ...runResult,
+      ...(written.files.length > 0 ? { reports: written.files } : {}),
+      ...(written.warnings.length > 0
+        ? { warnings: [...(runResult.warnings ?? []), ...written.warnings] }
+        : {}),
     };
   }
 }

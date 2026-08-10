@@ -269,6 +269,7 @@ In `.yml` collections `post-response` and `tests` share Bruno's single `after-re
 | `cookieJar` | Keep cookies across the run so a login carries forward. Default `true` |
 | `includeResponseBody` | Include response bodies. Default `true` |
 | `maxResponseBodyBytes` | Truncate bodies past this size. Default `10240` |
+| `report` | Also write the run to disk — see [Report files](#report-files) |
 
 A directory in `requests` expands to the requests under it, ordered by `seq` within each folder, subfolders first, ties broken by filename. Duplicates are honoured: naming a request twice runs it twice.
 
@@ -422,6 +423,30 @@ A variable may be built out of others: `base_url: "https://{{host}}/{{stage}}"` 
 **Secrets:** neither Bruno format stores a secret's *value* — only its name. So pass secrets as run `variables`, which stay in memory and are never written to a file.
 
 An environment name is a name, not a path. Anything containing a separator is refused.
+
+## Report files
+
+`run_collection` returns its results as JSON, which is what an agent reads. The two other consumers of a test run read files, so `report` writes them:
+
+```json
+{ "collectionPath": "/path/to/collection",
+  "report": { "junit": "reports/junit.xml", "html": "reports/run.html" } }
+```
+
+Name either format or both. The result then carries `reports`, one entry per file written, with its absolute path and its size in bytes.
+
+**Paths are confined to the collection.** A path resolving outside it is refused and the reason becomes a run warning; the run itself still succeeds, because the results are what was asked for and the file is a by-product. Copy the file afterwards if your pipeline collects reports from somewhere else — writing wherever a caller points is a much larger authorization than running its requests. Missing parent directories inside the collection are created, and an existing report is overwritten.
+
+The **JUnit XML** follows `bru run --reporter-junit`: one `<testsuite>` per request, one `<testcase>` per assertion or test, and a request that errored reported as a suite error. Four things it does differently, each because the alternative is a report that reads greener than the run:
+
+- A request that ran and verified nothing gets one **skipped** testcase saying so, instead of an empty suite. An empty suite is invisible in every CI summary, which is exactly the "ran green, checked nothing" reading that the `requestsWithoutTests` counter exists to expose.
+- A request file that would not parse, a named request that resolved to nothing, and a group that crashed each get a suite of their own. A report listing only what executed says a subset ran without saying it was a subset.
+- A named group's label is folded into the suite name, since JUnit has no concept of one and two identities running the same request would otherwise be indistinguishable.
+- No `hostname` attribute. Upstream writes the machine name into the file; these reports are meant to be committed.
+
+The **HTML** report is Bruno's own, rendered by `@usebruno/common`, with execution groups as its iterations — a two-identity run reads as two sections. Two things to know: the page embeds the run's data but loads Vue and naive-ui from `unpkg.com`, so **it needs network access when opened** and shows nothing offline; and its request pane is empty, because a result does not retain the request as it was sent. Assertions and script tests share one list for the same reason — a result does not tell them apart.
+
+A report holds what the results hold, on disk: response bodies included, response headers masked exactly as they are in the JSON.
 
 ## Formats
 
