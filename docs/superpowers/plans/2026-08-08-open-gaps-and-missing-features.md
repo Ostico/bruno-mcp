@@ -48,8 +48,9 @@ the A-policy question below, which was never a defect.
 what happened in it is read — then B6 and B7 together in #165, which is what makes a
 send-wait-send protocol drivable and its handshake negotiable. B7's own guess about
 itself was wrong, in a way worth keeping: an authored header was not merely
-ineffective, it aborted the handshake. What remains in section B is B1 (authoring
-either transport through the tool surface), B3, B4 and B10.
+ineffective, it aborted the handshake. Then B3 in #166, which is what lets a run
+leave something behind for CI to read. What remains in section B is B1 (authoring
+either transport through the tool surface), B4 and B10.
 
 ---
 
@@ -566,7 +567,7 @@ session cookie or an agreed subprotocol appears. It now populates the same
 `response_headers` field, captured on `ws`'s `upgrade` event. gRPC already reported
 its metadata under its own detail and is unchanged.
 
-### B3. No report file output
+### B3. No report file output — CLOSED (#166)
 
 **Evidence.** No JUnit, HTML or any other report writer exists in `src/`.
 
@@ -580,8 +581,36 @@ request/response exchange are split, and a realistic HTML report is around 31 KB
 which cannot go inline in a tool result. So this needs a written-to-disk contract
 and a path returned, not a bigger payload.
 
-**Done when:** a run can write JUnit and/or HTML to a caller-named path and return
-that path.
+**Closed by an optional `report` object** on `run_collection`, naming a `junit`
+and/or an `html` file. The run writes each after it finishes and names it back on
+the result with its byte count, and every result now carries `path`, the absolute
+file the request came from. Three decisions are worth recording, because none of
+them follows from "write a report".
+
+A report path is resolved against the collection directory and must stay inside
+it. An unrestricted caller-named path would turn a request-running tool into a
+general file-write primitive, so confinement is the authorization boundary, not a
+convenience. A refused path is a warning on the result rather than a failed run:
+the results are what the caller asked for, and dropping them over a bad path
+would be the worse outcome.
+
+The JUnit document diverges from `bruno-cli` in four places, all answering the
+same rule — a report must not read greener than the run. A request that verified
+nothing gets a skipped testcase instead of upstream's empty suite, which readers
+render as a pass. Parse failures, unresolved references and a group that crashed
+before running get their own suites with `errors=1`; upstream never sees them.
+Group names are folded into suite names, since one document can now describe
+several execution groups. And there is no `hostname` attribute, because a report
+is committable and a developer machine name is not part of the run.
+
+Upstream's HTML report is not self-contained: `generateHtmlReport` emits a page
+that loads Vue and naive-ui from `unpkg.com`, so the file renders blank offline
+even though the run's own data is embedded in it. That is stated in the tool
+description, the README and the source, and a test asserts the script tag so
+nobody archives the file believing otherwise. Masking was deliberately not
+extended to the caller's run variables: `walkAndMask` has no length floor, so a
+variable holding a short value would blank every occurrence of it across the
+report, to hide data the caller already receives inline in the same response.
 
 ### B4. No iteration or data-driven primitive
 
