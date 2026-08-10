@@ -15,8 +15,8 @@ its stated trigger fires.
 
 **Updated 2026-08-10.** All eleven defects are closed, plus the two found while
 measuring them: A5, A6, A8, A9 and A10 in #154, A4 and A7 in #155, A3 in #157, A2
-in #158, A1 in #159, A12 and A13 in #161, and A11 last. Their entries are kept in
-place, marked CLOSED, rather than moved to the bottom — the evidence in them is
+in #158, A1 in #159, A12 and A13 in #161, and A11 in #162. Their entries are kept
+in place, marked CLOSED, rather than moved to the bottom — the evidence in them is
 why they were found, and a reader who meets the same symptom again should land on
 it. Three also have their classification corrected: A4 was filed as "binary frames
 are broken", and the upstream source says there is no binary path to break; A2 was
@@ -24,11 +24,7 @@ filed as "the writer injects a block the source never had", and upstream injects
 the same block — the real fault was narrower and elsewhere in the same code; and
 A11 was cleared as an evidence artefact when it was the defect it looked like.
 
-A11 was reclassified as an evidence problem rather than a defect, and that was
-wrong: it is a defect, closed 2026-08-10. The probe that cleared it read the layer
-that throws a parse error and not the layer that reports one, where the truncation
-it went looking for actually lived. Two new defects were found while measuring A2
-and are filed as A12 and A13.
+Two new defects were found while measuring A2 and are filed as A12 and A13.
 
 **A1 closed 2026-08-09 in #159**, in the permissive direction: a request whose
 extension its collection's dialect does not read is now operated on and warned
@@ -40,12 +36,12 @@ fidelity: an authored `timeout: inherit` is now modelled and honoured in both
 dialects, and an unrecognised `settings.tls` block survives a write instead of being
 deleted.
 
-**A11 closed 2026-08-10**, after being reopened: a `.bru` parse failure reported its
-position and no reason, because the report kept the first line of an error whose
-reason is on its last. That is also what caused B8 to be filed as a missing format
-feature, so B8 is withdrawn — see both entries. **Every defect in section A is now
-closed.** What remains in this document is sections B onward, plus the A-policy
-question below, which was never a defect.
+**A11 closed 2026-08-10 in #162**, after being reopened: a `.bru` parse failure
+reported its position and no reason, because the report kept the first line of an
+error whose reason is on its last. That is also what caused B8 to be filed as a
+missing format feature, so B8 is withdrawn — see both entries. **Every defect in
+section A is now closed.** What remains in this document is sections B onward, plus
+the A-policy question below, which was never a defect.
 
 ---
 
@@ -374,7 +370,7 @@ out-of-range *known* keys are properly rejected by the schema.
 **Why it matters.** A typo such as `maxMessage` for `maxMessages` silently falls
 back to the default, and the run looks fine.
 
-### A11. Parse errors end at a dangling colon — CLOSED; the NOT REPRODUCED verdict was wrong
+### A11. Parse errors end at a dangling colon — CLOSED (#162); the NOT REPRODUCED verdict was wrong
 
 **Evidence as filed.** `"Failed to parse .bru file: Line 7, col 1:"` — the message
 stops where the offending content should follow. Cosmetic, but it reads as
@@ -402,9 +398,9 @@ the recorded evidence looked like a display artefact.
 
 The slice was deliberate and half right: `yaml` puts its reason in the first line
 and a source-echoing code frame under it. The ohm grammar behind `.bru` inverts
-that — position first, `Expected …` last — so the rule that kept `.yml` diagnostics
-whole reduced every `.bru` one to a coordinate. The report now carries the
-expected-token list too, with families collapsed to fit the message cap, and still
+that — position first, `Expected …` last — so the rule that kept `.yml`
+diagnostics whole reduced every `.bru` one to a coordinate. The report now carries
+the expected-token list too, with families collapsed to fit the message cap, and still
 drops the frame. Details and the cost of the missing diagnosis are in B8, which was
 filed *because* of this defect.
 
@@ -609,7 +605,7 @@ asserted on.
 There appears to be no way to express `Sec-WebSocket-Protocol`. Untested — the
 probe had no server requiring one — so confirm before building.
 
-### B8. `.bru` cannot express a WebSocket request — WITHDRAWN; the parse report that hid it is fixed
+### B8. `.bru` cannot express a WebSocket request — WITHDRAWN (#162); the parse report that hid it is fixed
 
 **The headline was wrong.** `.bru` expresses a WebSocket request fully, and this
 server already reads and writes one. Measured against the grammar rather than
