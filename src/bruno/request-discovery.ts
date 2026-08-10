@@ -1,5 +1,5 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { parseYamlRequest } from './yaml-parser.js';
 import { parseBruRequest } from './bru-parser.js';
 import { bruFileToYamlRequest } from './bru-to-yaml.js';
@@ -7,10 +7,12 @@ import { isMetadataFile } from './metadata-files.js';
 import { readFolderSeq, sortFoldersByNameThenSequence } from './request-order.js';
 import { describeParseFailure } from './parse-failure.js';
 import {
+  collectionDialectWarnings,
   isRequestFile,
   isYamlRequestFile,
-  unconventionalExtensionWarning,
 } from './request-extensions.js';
+import { detectFormat, findCollectionRootFromDirectory } from './format-detector.js';
+import type { CollectionFormat } from './format-detector.js';
 import type { YamlRequest, ParseFailure } from './types.js';
 
 /**
@@ -30,9 +32,8 @@ export interface DiscoveryResult {
   parseFailures: ParseFailure[];
   /**
    * Notes about the discovered set as a whole, rather than about one request.
-   * Currently only the `.yaml`-extension divergence — see
-   * `request-extensions.ts` for why reading those files is right and why saying
-   * so is necessary.
+   * The two extension divergences live here — see `request-extensions.ts` for
+   * why reading those files is right and why saying so is necessary.
    */
   warnings: string[];
 }
@@ -97,9 +98,23 @@ async function walkInExecutionOrder(
   groups.push({ dirPath, files });
 }
 
+/**
+ * The dialect this walk is running against, or `null` when nothing declares one.
+ *
+ * `detectFormat` answers `yaml` for a directory holding no marker file at all,
+ * which is the right default for writing but the wrong basis for a warning:
+ * with no marker there is no collection for a file's extension to disagree
+ * with. Walking for the marker first is what makes that absence visible.
+ */
+async function declaredFormat(dirPath: string): Promise<CollectionFormat | null> {
+  const collectionRoot = await findCollectionRootFromDirectory(dirPath);
+  return collectionRoot ? (await detectFormat(collectionRoot)).format : null;
+}
+
 export async function discoverRequests(dirPath: string): Promise<DiscoveryResult> {
   const groups: DirectoryGroup[] = [];
   await walkInExecutionOrder(dirPath, dirPath, groups);
+  const format = await declaredFormat(dirPath);
 
   const requests: ParsedRequest[] = [];
   const parseFailures: ParseFailure[] = [];
@@ -141,9 +156,10 @@ export async function discoverRequests(dirPath: string): Promise<DiscoveryResult
   return {
     requests,
     parseFailures,
-    // Every discovered file, not only the ones that parsed: a `.yaml` file that
-    // also failed to parse is still a `.yaml` file the user should rename.
-    warnings: unconventionalExtensionWarning(allFiles),
+    // Every discovered file, not only the ones that parsed: a file Bruno cannot
+    // see by its extension is still one the user should rename, whether or not
+    // it also happens to be unparseable.
+    warnings: collectionDialectWarnings(allFiles, format),
   };
 }
 
@@ -217,6 +233,6 @@ export async function resolveRunTargets(
   return {
     requests: [{ yaml, filePath: requestPath }],
     parseFailures: [],
-    warnings: unconventionalExtensionWarning([requestPath]),
+    warnings: collectionDialectWarnings([requestPath], await declaredFormat(dirname(requestPath))),
   };
 }

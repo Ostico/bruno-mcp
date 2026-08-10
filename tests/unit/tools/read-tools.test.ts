@@ -49,6 +49,11 @@ function textOf(result: any): string {
   return result.content[0].text as string;
 }
 
+/** Everything after the document block: the warnings, if any were emitted. */
+function warningsOf(result: any): string {
+  return (result.content as { text: string }[]).slice(1).map((block) => block.text).join('\n');
+}
+
 function jsonOf(result: any): any {
   const text = textOf(result);
   try {
@@ -157,28 +162,39 @@ describe('read_request', () => {
     expect(view.url).toBe('https://api.example.com/x');
   });
 
-  it('rejects a .yaml request in a .bru collection', async () => {
+  it('reads a .yaml request in a .bru collection, warning that Bruno will not', async () => {
     // `.yaml` counts as the YAML dialect, so it mismatches a native collection
-    // exactly as `.yml` would — being newly readable does not make it universal.
+    // exactly as `.yml` would. Two things make it invisible to Bruno at once,
+    // and only the dialect is reported: renaming it to `.yml`, which is what the
+    // `.yaml` warning says, would leave it just as invisible here.
     const collectionPath = await makeCollection('yamlinbru', 'bru');
     const filePath = join(collectionPath, 'handwritten.yaml');
-    await fs.writeFile(filePath, 'info:\n  name: X\n', 'utf-8');
+    await fs.writeFile(
+      filePath,
+      'info:\n  name: X\n  type: http\n  seq: 1\nhttp:\n  method: GET\n'
+        + '  url: https://api.example.com/x\n',
+      'utf-8',
+    );
 
     const result = await readRequest({ filePath });
 
-    expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain('does not match collection format');
+    expect(result.isError).toBeUndefined();
+    expect(jsonOf(result).name).toBe('X');
+    expect(warningsOf(result)).toContain('rename them to ".bru"');
   });
 
-  it('rejects a .bru request in a YAML collection, naming .yml as expected', async () => {
+  it('reads a .bru request in a YAML collection with the .bru parser', async () => {
+    // The dialect follows the FILE. Reading this with the YAML parser — the
+    // collection's dialect — would fail on the first brace.
     const collectionPath = await makeCollection('bruinyaml', 'yaml');
     const filePath = join(collectionPath, 'handwritten.bru');
     await fs.writeFile(filePath, 'meta {\n  name: X\n}\n', 'utf-8');
 
     const result = await readRequest({ filePath });
 
-    expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain('expected ".yml"');
+    expect(result.isError).toBeUndefined();
+    expect(jsonOf(result).name).toBe('X');
+    expect(warningsOf(result)).toContain('rename them to ".yml"');
   });
 
   it('rejects a file whose extension names no request dialect', async () => {
@@ -199,14 +215,28 @@ describe('read_request', () => {
     expect(textOf(result)).toContain('Could not determine collection format');
   });
 
-  it('rejects an extension the collection format does not use', async () => {
+  it('names the file in the warning, since the fix is a rename', async () => {
     const collectionPath = await makeCollection('mismatch', 'bru');
     const wrong = join(collectionPath, 'wrong.yml');
-    await fs.writeFile(wrong, 'info:\n  name: Wrong\n');
+    await fs.writeFile(
+      wrong,
+      'info:\n  name: Wrong\n  type: http\n  seq: 1\nhttp:\n  method: GET\n'
+        + '  url: https://api.example.com/x\n',
+    );
 
     const result = await readRequest({ filePath: wrong });
-    expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain('does not match collection format');
+    expect(result.isError).toBeUndefined();
+    expect(warningsOf(result)).toContain(wrong);
+  });
+
+  it('says nothing about the extension when it matches the collection', async () => {
+    const collectionPath = await makeCollection('matching', 'bru');
+    const right = join(collectionPath, 'right.bru');
+    await fs.writeFile(right, 'meta {\n  name: Right\n}\n');
+
+    const result = await readRequest({ filePath: right });
+    expect(result.isError).toBeUndefined();
+    expect(result.content).toHaveLength(1);
   });
 
   it('reports a missing file as an error rather than throwing', async () => {

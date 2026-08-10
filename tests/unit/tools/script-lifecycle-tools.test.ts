@@ -226,7 +226,7 @@ describe('remove_script tool handler', () => {
     expect(res.content[0].text).toMatch(/Could not determine collection format/);
   });
 
-  it('rejects an extension that contradicts the collection format', async () => {
+  it('warns, rather than refusing, when the extension contradicts the collection', async () => {
     mockDetectFormat.mockResolvedValue({
       format: 'bru',
       configPath: '/workspace/collection/bruno.json',
@@ -236,8 +236,8 @@ describe('remove_script tool handler', () => {
       bruFilePath: '/workspace/collection/request.yml',
       scriptType: 'tests',
     });
-    expect(res.isError).toBe(true);
-    expect(res.content[0].text).toMatch(/does not match collection format/);
+    expect(res.isError).toBeUndefined();
+    expect(res.content[0].text).toMatch(/rename them to "\.bru"/);
   });
 
   it('surfaces a read failure as an error', async () => {

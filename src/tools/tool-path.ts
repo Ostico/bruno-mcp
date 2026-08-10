@@ -9,6 +9,7 @@ import path from 'path';
 import { validatePath } from '../bruno/path-validator.js';
 import { findCollectionRoot, detectFormat } from '../bruno/format-detector.js';
 import {
+  collectionDialectWarnings,
   isRequestExtension,
   isYamlExtension,
   REQUEST_EXTENSIONS,
@@ -42,7 +43,7 @@ export async function resolveRequestFile(
   filePath: string,
   argName: string,
 ): Promise<
-  | { ok: true; format: CollectionFormat }
+  | { ok: true; format: CollectionFormat; warnings: string[] }
   | { ok: false; message: string }
 > {
   const pathCheck = validateToolPath(filePath);
@@ -71,16 +72,25 @@ export async function resolveRequestFile(
   }
 
   const detection = await detectFormat(collectionRoot);
-  const wantsYaml = detection.format === 'yaml';
-  // `.yaml` satisfies a YAML collection: it is a dialect spelling, not a
-  // different format. The run path warns that Bruno itself will not read it.
-  if (wantsYaml !== isYamlExtension(ext)) {
-    const expectedExt = wantsYaml ? '.yml' : '.bru';
-    return {
-      ok: false,
-      message: `File extension "${ext}" does not match collection format "${detection.format}" (expected "${expectedExt}")`,
-    };
-  }
 
-  return { ok: true, format: detection.format };
+  // The dialect follows the FILE, not the collection. These can disagree — a
+  // `.yml` request can sit in a `bruno.json` collection — and when they do, the
+  // file's own extension is the only safe answer: taking the collection's would
+  // serialise `.bru` text into a file named `.yml`, destroying it.
+  //
+  // `.yaml` counts as YAML here: it is a dialect spelling, not a different
+  // format.
+  const format: CollectionFormat = isYamlExtension(ext) ? 'yaml' : 'bru';
+
+  // A disagreement is reported, not refused. The run path already reads such a
+  // file, so refusing to write it left the caller able to run a request they
+  // could not repair — and the repair is usually a rename, which needs the tool
+  // to accept the path it is renaming. This is the same decision
+  // `unconventionalExtensionWarning` makes for `.yaml`, applied to the other way
+  // a request can be invisible to Bruno.
+  return {
+    ok: true,
+    format,
+    warnings: collectionDialectWarnings([filePath], detection.format),
+  };
 }

@@ -7,7 +7,6 @@
 import { z } from 'zod';
 import path from 'path';
 import { readFile, unlink } from 'node:fs/promises';
-import { findCollectionRoot, detectFormat } from '../bruno/format-detector.js';
 import {
   CreateRequestInput,
   HttpMethod,
@@ -20,7 +19,6 @@ import { withPathLock } from '../bruno/path-mutex.js';
 import { topologicalSort } from './topological-sort.js';
 import { inlineScriptsSchema, assertionEntrySchema, requestBodySchema, requestVarsSchema, requestSettingsSchema } from './schemas.js';
 import type { ToolContext } from './context.js';
-import { isRequestExtension, isYamlExtension, REQUEST_EXTENSIONS } from '../bruno/request-extensions.js';
 
 export function registerCreateRequestTool(ctx: ToolContext): void {
   ctx.server.registerTool(
@@ -168,32 +166,14 @@ export function registerModifyRequestTool(ctx: ToolContext): void {
           };
         }
 
-        // 2. File extension validation
-        const ext = path.extname(args.filePath).toLowerCase();
-        if (!isRequestExtension(ext)) {
+        // 2. Extension, collection root and dialect, in one place. This was
+        // three inlined blocks duplicating `resolveRequestFile` — including its
+        // dialect check, which is why the same message existed in three files
+        // and had to be corrected in all of them.
+        const resolvedFile = await resolveRequestFile(args.filePath, 'filePath');
+        if (!resolvedFile.ok) {
           return {
-            content: [{ type: 'text', text: `Invalid file extension "${ext}": expected ${REQUEST_EXTENSIONS.join(', ')}` }],
-            isError: true,
-          };
-        }
-
-        // 3. Find collection root
-        const collectionRoot = await findCollectionRoot(args.filePath);
-        if (!collectionRoot) {
-          return {
-            content: [{ type: 'text', text: 'Could not determine collection format: no opencollection.yml or bruno.json found within 10 parent directories' }],
-            isError: true,
-          };
-        }
-
-        // 4. Detect format and verify extension matches
-        const detection = await detectFormat(collectionRoot);
-        // `.yaml` satisfies a YAML collection: a dialect spelling, not another
-        // format. The run path warns that Bruno itself will not read it.
-        const expectedExt = detection.format === 'yaml' ? '.yml' : '.bru';
-        if ((detection.format === 'yaml') !== isYamlExtension(ext)) {
-          return {
-            content: [{ type: 'text', text: `File extension "${ext}" does not match collection format "${detection.format}" (expected "${expectedExt}")` }],
+            content: [{ type: 'text', text: resolvedFile.message }],
             isError: true,
           };
         }
@@ -229,11 +209,18 @@ export function registerModifyRequestTool(ctx: ToolContext): void {
         const result = await ctx.requestBuilder.updateRequest(args.filePath, updates);
 
         if (result.success) {
+          // The dialect warning rides on success rather than blocking it: the
+          // file was modified, and the caller still needs to know Bruno will not
+          // see it. Appended to the message the caller already reads, because a
+          // second content block is easy to drop.
           return {
             content: [
               {
                 type: 'text',
-                text: `Successfully modified request "${path.basename(args.filePath)}"`
+                text: [
+                  `Successfully modified request "${path.basename(args.filePath)}"`,
+                  ...resolvedFile.warnings,
+                ].join('\n\n')
               }
             ]
           };
@@ -586,8 +573,15 @@ export function registerReadRequestTool(ctx: ToolContext): void {
         const parsed = createReader(resolved.format).parseRequest(content);
         const view = toRequestView(parsed, resolved.format, args.filePath);
 
+        // A warning goes in its own block rather than being joined onto the
+        // JSON: this tool's whole output is a document a caller parses, and
+        // prefixing prose to it would break every reader to tell one of them
+        // about a filename.
         return {
-          content: [{ type: 'text', text: JSON.stringify(view, null, 2) }],
+          content: [
+            { type: 'text', text: JSON.stringify(view, null, 2) },
+            ...resolved.warnings.map((warning) => ({ type: 'text' as const, text: warning })),
+          ],
         };
       } catch (error) {
         return {
