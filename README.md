@@ -448,12 +448,17 @@ A WebSocket session has no natural end, so it is bounded, and every bound is set
 | `maxMessages` | 50 | Inbound frames recorded before stopping |
 | `maxDurationMs` | 5000 | Wall-clock ceiling for one session |
 | `idleTimeoutMs` | 1500 | Silence that ends a session; `0` waits for the ceiling |
+| `sendIntervalMs` | 0 | Gap between the messages a request sends; `0` sends them in one tick |
 | `includePayloads` | `false` | Record frame contents, not just size and timing |
 | `maxFrameBytes` | 65536 | Per-frame ceiling on recorded payload |
 | `maxTranscriptBytes` | 1048576 | Cumulative ceiling, counted from wire size |
 | `engineIoKeepalive` | `false` | Answer an engine.io `2` with a `3` |
 
 The wall-clock ceiling is a safety bound rather than a schedule, so `idleTimeoutMs` is what usually ends a session: once nothing has arrived for 1500 ms it stops and reports `stop_reason: "idle"`, which is not counted as truncation because no cap bit and the ceiling went unspent. The clock is armed by the first frame, not at connect, so a listen-only request that authors no messages still waits out `maxDurationMs` for a peer that may yet speak. Set it to `0` for a protocol whose gaps are longer than its answers.
+
+`sendIntervalMs` is what makes a send-wait-send protocol reachable. At the default of `0` a request's messages all leave in one tick, so every reply arrives after the last of them and the exchange has no order to assert on; set a gap and the transcript carries each answer between the sends it belongs to, at the offset it actually arrived. Two consequences worth knowing. `maxDurationMs` has to cover the whole paced sequence — a session stopped part way through names the messages that never went out, by their authored name, rather than leaving a transcript one send short to be read as a peer that stopped answering. And the idle bound is not armed while the sequence is still going out, so a `sendIntervalMs` longer than `idleTimeoutMs` is safe: the gap a request deliberately leaves between its own messages is not the peer's silence.
+
+A subprotocol is authored as a `Sec-WebSocket-Protocol` header on the request, comma-separated for more than one, and is negotiated at the handshake; the one the server agreed to comes back in that result's `response_headers`. There is no separate field for it, here or in Bruno. Writing the header used to be worse than leaving it out: the library validates the server's answer against the list it was given at the connection, so a server that did exactly what the header asked for had its handshake refused for offering a subprotocol nobody requested. An authored `Sec-WebSocket-Version` is honoured the same way, for the same reason.
 
 Each transcript entry says what kind of frame it was — `text`, `binary`, `ping`, `pong` or `close` — carries the authored `title` of a message the session sent, and, on a close frame, the `close_code` the peer gave, with its reason as that entry's payload: `1000` is an ordinary goodbye, `1006` a peer that vanished without one, `1008` a refusal, `1011` a server error. Control frames do not count toward `maxMessages`, or a peer that pings once a second would end a session by itself and report `count` for one that received no answer. A binary frame's payload is base64 and `bytes` is the true wire size for every kind. A post-response script sees the same fields, because the transcript is what `res.body` is on this transport.
 

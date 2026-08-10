@@ -45,10 +45,11 @@ the A-policy question below, which was never a defect.
 
 **Section B is being worked through in order of what unblocks the rest**: B2 in
 #163, then B5 and B9 together in #164 — both being about how a session ends and how
-what happened in it is read. B6 (pacing) comes next, since a send-wait-send protocol
-is only worth driving once the transcript can show what the waiting achieved, and B7
-(subprotocol) is likely already reachable through an authored header, now that the
-handshake response is visible.
+what happened in it is read — then B6 and B7 together in #165, which is what makes a
+send-wait-send protocol drivable and its handshake negotiable. B7's own guess about
+itself was wrong, in a way worth keeping: an authored header was not merely
+ineffective, it aborted the handshake. What remains in section B is B1 (authoring
+either transport through the tool surface), B3, B4 and B10.
 
 ---
 
@@ -634,7 +635,7 @@ A post-response script sees the same fields, since the transcript is what
 `res.body` is on this transport, so an assertion can now name a frame kind or a
 close code instead of matching payloads by hand.
 
-### B6. No inter-message pacing
+### B6. No inter-message pacing — CLOSED (#165)
 
 **Evidence.** All selected messages are sent in one tick — three sends all
 recorded at `156ms`.
@@ -643,10 +644,51 @@ recorded at `156ms`.
 this means a request/response protocol over WebSocket can be neither driven nor
 asserted on.
 
-### B7. No subprotocol field
+**Closed by `sendIntervalMs`** on the run's `websocket` options, defaulting to `0`,
+which is the one-tick behaviour every session had. Two decisions in the fix are worth
+recording, because neither is implied by "wait between sends":
+
+- **A sequence a bound cut short names what it did not send.** A transcript one send
+  short is indistinguishable from a peer that stopped answering, so the unsent
+  messages are reported by their authored name. The count is read after the session
+  rather than from inside the loop: the loop learns it was stopped one microtask after
+  the bound fired, and it is racing the teardown that builds the result.
+- **The idle bound is not armed while the sequence is still going out**, and starts
+  from the last send. The gap a request deliberately leaves between its own messages
+  is not the peer's silence; without this, any `sendIntervalMs` above `idleTimeoutMs`
+  would have ended every session after its first message. This is the same
+  first-recorded-frame reasoning B9 settled, applied to a session that is still
+  talking.
+
+The interleaving cannot be asserted in a unit test — with everything leaving in one
+tick there is no order to observe — so the proof is an integration test whose
+transcript alternates `sent` and `received` against a real echo server.
+
+### B7. No subprotocol field — CLOSED (#165)
 
 There appears to be no way to express `Sec-WebSocket-Protocol`. Untested — the
 probe had no server requiring one — so confirm before building.
+
+**The confirmation changed the fix, and the entry's premise was wrong.** The header
+was authorable all along and did reach the wire. What it could not do was reach the
+*connection*: `ws` validates the 101's `Sec-WebSocket-Protocol` against the list
+handed to its constructor, so a request that wrote only the header, talking to a
+server that agreed to it, had the handshake aborted with `Server sent a subprotocol
+but none was requested` (`node_modules/ws/lib/websocket.js`, in `initAsClient`'s
+upgrade handler; the sibling errors are `Server sent an invalid subprotocol` and
+`Server sent no subprotocol`). Writing the header was worse than leaving it out, and
+"just write the header" would have been the wrong advice to close this with.
+
+Upstream has no field for it either — `bruno-requests/src/ws/ws-client.js` extracts
+the header into the constructor's `protocols` argument, comma-split and trimmed, and
+coerces `Sec-WebSocket-Version` into `protocolVersion` because `ws` overwrites that
+header from its own option. This now does both, so one file negotiates the same
+protocols in Bruno and here, and the agreed protocol is visible in
+`response_headers` (B2). One deliberate divergence from upstream: the header is read
+in whatever case it was written in, not only the two spellings upstream checks, since
+the cost of missing a spelling is an aborted handshake rather than a header that does
+nothing. An empty entry — the trailing comma in `chat,` — is left in, because `ws`
+refuses it and dropping it would negotiate something Bruno would not.
 
 ### B8. `.bru` cannot express a WebSocket request — WITHDRAWN (#162); the parse report that hid it is fixed
 

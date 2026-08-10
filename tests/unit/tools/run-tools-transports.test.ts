@@ -22,6 +22,7 @@ import {
   DEFAULT_MAX_MESSAGES,
   DEFAULT_MAX_DURATION_MS,
   DEFAULT_IDLE_TIMEOUT_MS,
+  DEFAULT_SEND_INTERVAL_MS,
 } from '../../../src/bruno/ws-transport';
 import {
   DEFAULT_MAX_FRAME_BYTES,
@@ -87,6 +88,7 @@ describe('an unknown websocket option key', () => {
       maxMessages: 10,
       maxDurationMs: 1000,
       idleTimeoutMs: 90,
+      sendIntervalMs: 25,
       includePayloads: true,
       maxFrameBytes: 128,
       maxTranscriptBytes: 4096,
@@ -105,6 +107,7 @@ describe('the websocket bounds a caller can set', () => {
       maxMessages: DEFAULT_MAX_MESSAGES,
       maxDurationMs: DEFAULT_MAX_DURATION_MS,
       idleTimeoutMs: DEFAULT_IDLE_TIMEOUT_MS,
+      sendIntervalMs: DEFAULT_SEND_INTERVAL_MS,
       includePayloads: false,
       maxFrameBytes: DEFAULT_MAX_FRAME_BYTES,
       maxTranscriptBytes: DEFAULT_MAX_TRANSCRIPT_BYTES,
@@ -127,6 +130,7 @@ describe('the websocket bounds a caller can set', () => {
       maxMessages: 5,
       maxDurationMs: 1500,
       idleTimeoutMs: 250,
+      sendIntervalMs: 100,
       includePayloads: true,
       maxFrameBytes: 1024,
       maxTranscriptBytes: 4096,
