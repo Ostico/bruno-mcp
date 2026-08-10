@@ -17,6 +17,12 @@ const dials: Array<{ url: string; options: Record<string, unknown> }> = [];
 /** Headers the next handshake answers with, or none for a socket that never upgrades. */
 let upgradeResponse: Record<string, string | string[] | undefined> | undefined;
 
+/**
+ * What the next socket does after opening, for the tests that are about the
+ * session rather than the handshake. Left unset, the socket closes immediately.
+ */
+let drive: ((socket: FakeSocket) => void) | undefined;
+
 class FakeSocket extends EventEmitter {
   constructor(url: string, options: Record<string, unknown>) {
     super();
@@ -27,11 +33,17 @@ class FakeSocket extends EventEmitter {
       // Real order: `ws` emits upgrade on the 101, before open.
       if (upgradeResponse) this.emit('upgrade', { headers: upgradeResponse });
       this.emit('open');
+      if (drive) {
+        drive(this);
+        return;
+      }
       setImmediate(() => this.emit('close'));
     });
   }
   send() {}
-  close() {}
+  // Answers the close handshake, as a real peer does. Without this every bound
+  // that ends a session waited out the grace timer before the call returned.
+  close() { setImmediate(() => this.emit('close')); }
   terminate() {}
 }
 
@@ -51,7 +63,7 @@ afterAll(() => {
   resetAllowlistCache();
 });
 
-beforeEach(() => { dials.length = 0; upgradeResponse = undefined; });
+beforeEach(() => { dials.length = 0; upgradeResponse = undefined; drive = undefined; });
 
 function request(overrides: Partial<NonNullable<YamlRequest['websocket']>> = {}): YamlRequest {
   return {
@@ -67,10 +79,11 @@ function request(overrides: Partial<NonNullable<YamlRequest['websocket']>> = {})
 const call = async (
   overrides?: Partial<NonNullable<YamlRequest['websocket']>>,
   vars: Map<string, string> = new Map(),
+  options: Record<string, unknown> = {},
 ) => (await executeWebsocketRequest({
   request: request(overrides),
   vars,
-  options: { maxDurationMs: 500 },
+  options: { maxDurationMs: 500, ...options },
 })).result;
 
 describe('the handshake', () => {
@@ -197,5 +210,195 @@ describe('the result shape', () => {
   it('omits the field when no handshake completed', async () => {
     const result = await call();
     expect(result.response_headers).toBeUndefined();
+  });
+});
+
+describe('what a transcript entry says about its frame', () => {
+  it('carries the title the file gave each message it sent', async () => {
+    const result = await call(
+      {
+        messages: [
+          { name: 'greeting', content: 'hello', selected: true },
+          { content: 'anonymous', selected: true },
+        ],
+      },
+      new Map(),
+      { includePayloads: true },
+    );
+
+    const sent = result.websocket!.transcript.filter((entry) => entry.direction === 'sent');
+    expect(sent.map((entry) => entry.type)).toEqual(['text', 'text']);
+    expect(sent[0].title).toBe('greeting');
+    // An index is not a name, so an untitled message carries no title at all
+    // rather than a fabricated one.
+    expect('title' in sent[1]).toBe(false);
+  });
+
+  it('records a binary frame as base64, and its true size rather than a decoded one', async () => {
+    drive = (socket) => {
+      socket.emit('message', Buffer.from([0x00, 0xff, 0x10]), true);
+      socket.emit('close');
+    };
+
+    const result = await call(undefined, new Map(), { includePayloads: true });
+
+    // Decoded as UTF-8 those three bytes become two characters and five bytes,
+    // which is both unreadable and a size that never went over the wire.
+    expect(result.websocket!.transcript[0]).toMatchObject({
+      type: 'binary',
+      bytes: 3,
+      payload: 'AP8Q',
+    });
+  });
+
+  it('records control frames without spending the inbound message budget', async () => {
+    drive = (socket) => {
+      socket.emit('ping', Buffer.alloc(0));
+      socket.emit('pong', Buffer.alloc(0));
+      socket.emit('message', Buffer.from('the first answer'));
+      socket.emit('message', Buffer.from('the second answer'));
+    };
+
+    const result = await call(undefined, new Map(), { maxMessages: 2 });
+
+    // Counted as messages, the two keepalives would have spent the budget of two
+    // and ended the session on the first real answer.
+    expect(result.websocket!.transcript.map((entry) => entry.type)).toEqual([
+      'ping',
+      'pong',
+      'text',
+      'text',
+    ]);
+    expect(result.websocket!.stop_reason).toBe('count');
+  });
+
+  it('reads a frame that arrived as an ArrayBuffer rather than a Buffer', async () => {
+    drive = (socket) => {
+      socket.emit('message', new Uint8Array([0x68, 0x69]).buffer);
+      socket.emit('close');
+    };
+
+    const result = await call(undefined, new Map(), { includePayloads: true });
+
+    expect(result.websocket!.transcript[0]).toMatchObject({ payload: 'hi', bytes: 2 });
+  });
+
+  it('drops control frames that arrive after a bound has already stopped it', async () => {
+    drive = (socket) => {
+      socket.emit('message', Buffer.from('the answer'));
+      socket.emit('ping', Buffer.alloc(0));
+      socket.emit('pong', Buffer.alloc(0));
+    };
+
+    const result = await call(undefined, new Map(), { maxMessages: 1 });
+
+    // Same rule as a data frame: the transcript has to mean "this is what the
+    // bound allowed", and a keepalive recorded past the bound is not that.
+    expect(result.websocket!.transcript.map((entry) => entry.type)).toEqual(['text']);
+  });
+
+  it('reports the close code and the reason the peer gave with it', async () => {
+    drive = (socket) => socket.emit('close', 1008, Buffer.from('policy'));
+
+    const result = await call(undefined, new Map(), { includePayloads: true });
+
+    expect(result.websocket!.transcript.at(-1)).toMatchObject({
+      direction: 'received',
+      type: 'close',
+      close_code: 1008,
+      bytes: 6,
+      payload: 'policy',
+    });
+    expect(result.websocket!.stop_reason).toBe('closed');
+  });
+
+  it('invents no code for a close that carried none', async () => {
+    const result = await call();
+
+    const last = result.websocket!.transcript.at(-1)!;
+    expect(last.type).toBe('close');
+    expect('close_code' in last).toBe(false);
+    expect(last.bytes).toBe(0);
+  });
+
+  it('gives a post-response script the same kinds, with the payloads it must assert on', async () => {
+    drive = (socket) => socket.emit('close', 1011, Buffer.from('boom'));
+
+    const outcome = await executeWebsocketRequest({
+      request: request({ messages: [{ name: 'greeting', content: 'hello', selected: true }] }),
+      vars: new Map(),
+      options: { maxDurationMs: 500 },
+    });
+
+    const frames = outcome.response?.body as Array<Record<string, unknown>>;
+    expect(frames[0]).toMatchObject({ type: 'text', title: 'greeting', payload: 'hello' });
+    expect(frames[1]).toMatchObject({ type: 'close', close_code: 1011, payload: 'boom' });
+  });
+});
+
+describe('a session the socket itself fails', () => {
+  it('names the failure in the result and stops on it', async () => {
+    drive = (socket) => socket.emit('error', new Error('econnreset'));
+
+    const result = await call();
+
+    expect(result.websocket?.stop_reason).toBe('error');
+    expect(result.error).toContain('econnreset');
+    // A failure is not a bound cutting a recording short, so it says nothing
+    // about truncation.
+    expect(result.websocket?.truncated).toBe(false);
+  });
+});
+
+describe('the idle bound', () => {
+  it('ends a session that has gone quiet, without calling it truncated', async () => {
+    drive = (socket) => socket.emit('message', Buffer.from('one'));
+
+    const result = await call(undefined, new Map(), { maxDurationMs: 5000, idleTimeoutMs: 60 });
+
+    expect(result.websocket?.stop_reason).toBe('idle');
+    // No cap bit: the wall-clock budget was not spent, and flagging that as
+    // truncated would put the warning on nearly every healthy session.
+    expect(result.websocket?.truncated).toBe(false);
+    expect(result.duration_ms).toBeLessThan(2000);
+  });
+
+  it('restarts on every frame, so a chatty session runs to its own end', async () => {
+    drive = (socket) => {
+      let sent = 0;
+      const tick = setInterval(() => {
+        sent += 1;
+        socket.emit('message', Buffer.from(`frame ${sent}`));
+        if (sent === 4) clearInterval(tick);
+      }, 20);
+    };
+
+    const result = await call(undefined, new Map(), { maxDurationMs: 5000, idleTimeoutMs: 200 });
+
+    expect(result.websocket!.transcript.filter((e) => e.type === 'text')).toHaveLength(4);
+    expect(result.websocket?.stop_reason).toBe('idle');
+  });
+
+  it('is not armed before the first frame, so a listening session keeps its budget', async () => {
+    drive = () => {};
+
+    const result = await call({ messages: [] }, new Map(), {
+      maxDurationMs: 300,
+      idleTimeoutMs: 40,
+    });
+
+    // A request that authors nothing and waits for the peer to volunteer something
+    // is silent by design; ending it after 40 ms would report an empty session as
+    // if the peer had been asked.
+    expect(result.websocket?.stop_reason).toBe('timeout');
+    expect(result.duration_ms).toBeGreaterThanOrEqual(250);
+  });
+
+  it('waits for the wall-clock ceiling when switched off', async () => {
+    drive = (socket) => socket.emit('message', Buffer.from('one'));
+
+    const result = await call(undefined, new Map(), { maxDurationMs: 200, idleTimeoutMs: 0 });
+
+    expect(result.websocket?.stop_reason).toBe('timeout');
   });
 });

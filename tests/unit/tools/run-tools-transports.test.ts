@@ -18,7 +18,11 @@
  */
 import { registerRunCollectionTool } from '../../../src/tools/run-tools';
 import { RequestExecutor } from '../../../src/bruno/request-executor';
-import { DEFAULT_MAX_MESSAGES, DEFAULT_MAX_DURATION_MS } from '../../../src/bruno/ws-transport';
+import {
+  DEFAULT_MAX_MESSAGES,
+  DEFAULT_MAX_DURATION_MS,
+  DEFAULT_IDLE_TIMEOUT_MS,
+} from '../../../src/bruno/ws-transport';
 import {
   DEFAULT_MAX_FRAME_BYTES,
   DEFAULT_MAX_TRANSCRIPT_BYTES,
@@ -82,6 +86,7 @@ describe('an unknown websocket option key', () => {
     const everyKey = {
       maxMessages: 10,
       maxDurationMs: 1000,
+      idleTimeoutMs: 90,
       includePayloads: true,
       maxFrameBytes: 128,
       maxTranscriptBytes: 4096,
@@ -99,6 +104,7 @@ describe('the websocket bounds a caller can set', () => {
     expect(inputSchema.websocket!.parse({})).toEqual({
       maxMessages: DEFAULT_MAX_MESSAGES,
       maxDurationMs: DEFAULT_MAX_DURATION_MS,
+      idleTimeoutMs: DEFAULT_IDLE_TIMEOUT_MS,
       includePayloads: false,
       maxFrameBytes: DEFAULT_MAX_FRAME_BYTES,
       maxTranscriptBytes: DEFAULT_MAX_TRANSCRIPT_BYTES,
@@ -120,12 +126,20 @@ describe('the websocket bounds a caller can set', () => {
     const supplied = {
       maxMessages: 5,
       maxDurationMs: 1500,
+      idleTimeoutMs: 250,
       includePayloads: true,
       maxFrameBytes: 1024,
       maxTranscriptBytes: 4096,
       engineIoKeepalive: true,
     };
     expect(inputSchema.websocket!.parse(supplied)).toEqual(supplied);
+  });
+
+  // Zero is the off switch for the idle bound, and every other bound here rejects
+  // it: a schema that treated this one the same way would leave no way to ask for
+  // the wall-clock ceiling a protocol with long gaps needs.
+  it('accepts the idle bound switched off', () => {
+    expect(inputSchema.websocket!.parse({ idleTimeoutMs: 0 }).idleTimeoutMs).toBe(0);
   });
 
   it('refuses a message count outside the range, naming the bound', () => {

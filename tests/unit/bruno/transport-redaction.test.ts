@@ -177,4 +177,68 @@ describe('toWebsocketDetail', () => {
   it('does not mark an errored session as truncated, since a bound did not cut it', () => {
     expect(toWebsocketDetail([], 'error').truncated).toBe(false);
   });
+
+  it('does not mark an idle stop as truncated: the clock budget went unspent', () => {
+    expect(toWebsocketDetail([], 'idle').truncated).toBe(false);
+  });
+});
+
+describe('what a transcript entry records beyond its bytes', () => {
+  it('calls a frame text unless told otherwise', () => {
+    expect(toTranscriptEntry({ direction: 'received', offset_ms: 1, payload: 'hi' }).type)
+      .toBe('text');
+  });
+
+  it('carries a title and a close code only when there is one', () => {
+    const titled = toTranscriptEntry({
+      direction: 'sent',
+      offset_ms: 1,
+      payload: 'hi',
+      title: 'greeting',
+    });
+    expect(titled.title).toBe('greeting');
+
+    const closed = toTranscriptEntry({
+      direction: 'received',
+      offset_ms: 2,
+      payload: 'bye',
+      type: 'close',
+      closeCode: 1000,
+    });
+    expect(closed).toMatchObject({ type: 'close', close_code: 1000 });
+
+    const plain = toTranscriptEntry({ direction: 'received', offset_ms: 3, payload: 'hi' });
+    expect('title' in plain).toBe(false);
+    expect('close_code' in plain).toBe(false);
+  });
+
+  it('reports a supplied wire size rather than the size of an encoding of it', () => {
+    // Base64 of three bytes is four characters. The entry has to testify to what
+    // arrived, not to what recording it cost.
+    const entry = toTranscriptEntry({
+      direction: 'received',
+      offset_ms: 1,
+      payload: 'AP8Q',
+      type: 'binary',
+      bytes: 3,
+    });
+    expect(entry.bytes).toBe(3);
+  });
+
+  it('holds a base64 payload to the display cap it was recorded under', () => {
+    const entry = toTranscriptEntry(
+      {
+        direction: 'received',
+        offset_ms: 1,
+        payload: 'AAAAAAAAAAAA',
+        type: 'binary',
+        bytes: 9,
+      },
+      { includePayloads: true, maxFrameBytes: 4 },
+    );
+    // Measured against the recorded payload: a wire size under the cap must not
+    // let a longer encoding of it through.
+    expect(entry.payload).toBe('AAAA');
+    expect(entry.bytes).toBe(9);
+  });
 });

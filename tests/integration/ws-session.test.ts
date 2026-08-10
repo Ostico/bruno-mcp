@@ -236,6 +236,44 @@ describe('each bound stops the session and names itself', () => {
     }
   }, 10000);
 
+  it('stops on the idle bound long before the clock, once the peer has answered', async () => {
+    const harness = await startServer((socket) => {
+      socket.on('message', (data) => socket.send(`echo:${data.toString()}`));
+    });
+    try {
+      const startedAt = Date.now();
+      const [result] = await run(
+        await collection({ 'bru.bru': bruWs('127.0.0.1', harness.port) }),
+        { maxDurationMs: 8000, idleTimeoutMs: 200 },
+      );
+      expect(result.websocket?.stop_reason).toBe('idle');
+      // Not truncated: no cap bit, and the clock budget went unspent.
+      expect(result.websocket?.truncated).toBe(false);
+      // The whole point of the bound. A request/response session used to spend
+      // every millisecond of the ceiling waiting on a peer that had already
+      // answered, which is what made eight of them take 22 seconds.
+      expect(Date.now() - startedAt).toBeLessThan(4000);
+    } finally {
+      await stop(harness);
+    }
+  }, 15000);
+
+  it('records the close code and reason a real peer sends', async () => {
+    const harness = await startServer((socket) => socket.close(1008, 'policy'));
+    try {
+      const [result] = await run(
+        await collection({ 'bru.bru': bruWs('127.0.0.1', harness.port) }),
+        { maxDurationMs: 2000, includePayloads: true },
+      );
+      const closed = result.websocket?.transcript.at(-1);
+      expect(closed?.type).toBe('close');
+      expect(closed?.close_code).toBe(1008);
+      expect(closed?.payload).toBe('policy');
+    } finally {
+      await stop(harness);
+    }
+  }, 10000);
+
   it('reports a peer-initiated close as closed, not as truncation', async () => {
     const harness = await startServer((socket) => socket.close());
     try {
