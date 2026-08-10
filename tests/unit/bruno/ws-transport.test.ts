@@ -14,6 +14,9 @@ import type { YamlRequest } from '../../../src/bruno/types.js';
 
 const dials: Array<{ url: string; options: Record<string, unknown> }> = [];
 
+/** Headers the next handshake answers with, or none for a socket that never upgrades. */
+let upgradeResponse: Record<string, string | string[] | undefined> | undefined;
+
 class FakeSocket extends EventEmitter {
   constructor(url: string, options: Record<string, unknown>) {
     super();
@@ -21,6 +24,8 @@ class FakeSocket extends EventEmitter {
     // Open, then close immediately: these tests are about the handshake, and a
     // session that never ends would just be the integration test again.
     setImmediate(() => {
+      // Real order: `ws` emits upgrade on the 101, before open.
+      if (upgradeResponse) this.emit('upgrade', { headers: upgradeResponse });
       this.emit('open');
       setImmediate(() => this.emit('close'));
     });
@@ -46,7 +51,7 @@ afterAll(() => {
   resetAllowlistCache();
 });
 
-beforeEach(() => { dials.length = 0; });
+beforeEach(() => { dials.length = 0; upgradeResponse = undefined; });
 
 function request(overrides: Partial<NonNullable<YamlRequest['websocket']>> = {}): YamlRequest {
   return {
@@ -171,5 +176,26 @@ describe('the result shape', () => {
     expect(result.method).toBe('WS');
     expect(result.websocket?.stop_reason).toBe('closed');
     expect(result.websocket?.truncated).toBe(false);
+  });
+
+  it('reports the handshake response headers, in the field an HTTP result uses', async () => {
+    upgradeResponse = {
+      'sec-websocket-protocol': 'chat',
+      'set-cookie': ['session=s3cret; HttpOnly; Secure'],
+    };
+
+    const result = await call();
+
+    // A WebSocket has no per-message headers, so the 101 is the only place a
+    // session cookie or an agreed subprotocol is visible at all.
+    expect(result.response_headers).toEqual({
+      'sec-websocket-protocol': 'chat',
+      'set-cookie': ['session=[redacted]; HttpOnly; Secure'],
+    });
+  });
+
+  it('omits the field when no handshake completed', async () => {
+    const result = await call();
+    expect(result.response_headers).toBeUndefined();
   });
 });

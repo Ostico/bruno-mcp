@@ -311,6 +311,63 @@ describe('RequestExecutor', () => {
     });
   });
 
+  describe('response headers', () => {
+    beforeEach(() => {
+      setupFsReaddir(['Get Users.yml']);
+      setupFsReadFile({ 'Get Users.yml': GET_REQUEST_YAML, 'dev.yml': ENV_YAML });
+      setupFsStat(['/test-collection', '/test-collection/environments']);
+    });
+
+    /** Two cookies and a security header, which is the shape B2 was filed about. */
+    function responseWithCookies(): Response {
+      const headers = new Headers({
+        'content-type': 'application/json',
+        'strict-transport-security': 'max-age=31536000',
+      });
+      headers.append('set-cookie', 'session=s3cret; HttpOnly; Secure; SameSite=Lax');
+      headers.append('set-cookie', 'csrf=t0ken; Path=/');
+      return {
+        status: 200,
+        statusText: 'OK',
+        headers,
+        text: jest.fn().mockResolvedValue('{}'),
+        ok: true,
+      } as unknown as Response;
+    }
+
+    it('returns them on a result, with cookie attributes intact', async () => {
+      mockFetch.mockResolvedValueOnce(responseWithCookies());
+
+      const result = await RequestExecutor.executeCollection('/test-collection', {
+        scriptRunner: TestRunner,
+        environment: 'dev',
+      });
+
+      const headers = result.groups[0]!.results[0].response_headers!;
+      expect(headers['strict-transport-security']).toBe('max-age=31536000');
+      // No script authored, and no flag passed, to see either of these.
+      expect(headers['set-cookie']).toEqual([
+        'session=[redacted]; HttpOnly; Secure; SameSite=Lax',
+        'csrf=[redacted]; Path=/',
+      ]);
+    });
+
+    it('returns them when the body is suppressed', async () => {
+      mockFetch.mockResolvedValueOnce(responseWithCookies());
+
+      const result = await RequestExecutor.executeCollection('/test-collection', {
+        scriptRunner: TestRunner,
+        environment: 'dev',
+        includeResponseBody: false,
+      });
+
+      // includeResponseBody is about a body's size, not about headers.
+      expect(result.groups[0]!.results[0].response_body).toBeUndefined();
+      expect(result.groups[0]!.results[0].response_headers!['content-type'])
+        .toBe('application/json');
+    });
+  });
+
   describe('executeCollection', () => {
     it('runs a .yaml request and says Bruno itself will not read it', async () => {
       // `.yaml` used to be recognised nowhere, so this collection ran zero

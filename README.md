@@ -332,7 +332,12 @@ Results are group-shaped. There is **no top-level `results` array**, not even wh
           "tests": [{ "description": "ok", "status": "pass" }],
           "response_body": "[{\"id\":1}]",
           "response_content_type": "application/json",
-          "response_body_truncated": false
+          "response_body_truncated": false,
+          "response_headers": {
+            "content-type": "application/json",
+            "strict-transport-security": "max-age=31536000",
+            "set-cookie": ["session=[redacted]; HttpOnly; Secure; SameSite=Lax"]
+          }
         }
       ],
       "capturedVariableNames": ["authToken"]
@@ -342,6 +347,10 @@ Results are group-shaped. There is **no top-level `results` array**, not even wh
 ```
 
 Each group carries its own `summary`, `results`, `missingRequests`, `capturedVariableNames`, `capturedVariables` and `warnings`. The top-level `summary` covers the whole run.
+
+`response_headers` needs no flag and no test script. Credential-named values are masked, and `set-cookie` is a **list** — one entry per cookie, because a comma-joined one cannot be split back — whose entries keep every attribute with only the cookie value withheld. Checking `HttpOnly`, `Secure`, `SameSite` or `Strict-Transport-Security` is therefore a single call. `includeResponseBody: false` does not suppress them: that flag is about a body's size.
+
+A WebSocket result carries `response_headers` as well, holding the handshake response — the 101 is the only place a session cookie or an agreed `sec-websocket-protocol` appears for that transport, since frames have no headers. A gRPC result reports its metadata under its own `grpc` detail instead.
 
 A group that could not start at all reports `error` instead of results and counts as one failure — otherwise a run with a dead group would read green.
 

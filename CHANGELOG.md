@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Response headers on every result, as `response_headers`.** Previously they were
+  reachable only by authoring a test script to capture them, which meant writing a
+  script to see something the runner already had. No flag gates them, and
+  `includeResponseBody: false` does not suppress them — that option bounds a body.
+  Credential-named values are masked, with one deliberate exception: a response's
+  `set-cookie` keeps every attribute and withholds only the cookie value, because
+  `HttpOnly`, `Secure` and `SameSite` are the reason to ask for these headers in the
+  first place. It is reported as a **list**, one entry per cookie, since a
+  comma-joined `set-cookie` cannot be split back into the cookies that produced it.
+  A WebSocket result carries the field too, holding its handshake response: frames
+  have no headers, so the 101 is the only place a session cookie or an agreed
+  `sec-websocket-protocol` is visible for that transport.
+
 - **gRPC and WebSocket requests can now fail.** Scripts, `test()` blocks and
   assertions ran only on the HTTP path — both transports returned before it — so a
   request's declared checks were parsed, written back faithfully and never
