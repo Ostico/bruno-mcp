@@ -43,6 +43,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A `.bru` file that would not parse was reported with its position and no
+  reason.** `parseFailures[].message` kept the first line of the parse error, which
+  is where `yaml` puts its reason and where the ohm grammar behind `.bru` puts only
+  a line and column — its `Expected …` list comes last. A misspelled block name
+  therefore came back as `Failed to parse .bru file: Line 7, col 1:` and nothing
+  else. The message now carries the expected-block list as well, with the families
+  collapsed (`auth:basic`, `auth:bearer`, … to `auth:*`) so the whole grammar fits
+  inside the length cap instead of being cut off before the block the author meant.
+  Code-frame lines are still dropped, because they echo the file: a token list
+  cannot carry a credential out of a request body.
+
 - **An authored `timeout: inherit` was deleted on the next write.** Both dialects
   accept the word — `bruToJsonV2` reads it out of a `.bru` settings block, and
   Bruno's `.yml` writer carries it through rather than flattening it — but both
