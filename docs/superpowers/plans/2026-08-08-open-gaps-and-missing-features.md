@@ -855,7 +855,7 @@ never been executed as a whole.
 **Done when:** an integration test, or a recorded manual run, drives all six steps
 against a real socket.io server.
 
-### D2. WebSocket handshake header content is unverified on the wire
+### D2. WebSocket handshake header content is unverified on the wire — CLOSED (#167)
 
 The largest hole the live probe could not close, and it named it rather than
 papering over it. No public WebSocket endpoint reflects request headers back, so
@@ -869,23 +869,45 @@ HTTP*, but that is a different code path.
 and the connection upgraded anyway. A conforming server could not have done that,
 so those headers are silently overridden rather than rejected.
 
-**Done when:** a local WebSocket listener in the test suite records the handshake
-and asserts on it. Everything else about WebSocket header content is currently
-inference from reading `ws-transport.ts`, including the diagnosed-not-observed
-claim that duplicate header names collapse last-wins on WebSocket where HTTP
-joins them.
+**Closed by `tests/integration/ws-handshake.test.ts`**, a listener that records
+`req.rawHeaders` per connection — `rawHeaders` and not `req.headers`, because Node
+joins duplicates in the parsed map and the question is what was sent. An authored
+header arrives with the name, case and value the file gave it; a `disabled` one is
+withheld entirely; `{{token}}` arrives substituted; an `auth:bearer` block reaches
+the handshake as `Authorization: Bearer …`; and `Connection`/`Upgrade` are observed
+being overridden to `Upgrade`/`websocket`, which turns the probe's negative
+conclusion into a direct reading. `Sec-WebSocket-Version: 8` negotiates 8 because
+the transport extracts it into the library's `protocolVersion`; the header alone
+cannot set it.
 
-### D3. Paths that exist in the code but were never triggered
+**The duplicate-name answer was half right.** Two exact duplicates collapse
+last-wins in the transport's own map, as diagnosed. Two spellings differing in case
+*survive* that map — it is keyed by the authored name, and `X-Dup` is not `x-dup` —
+and collapse one layer lower: Node's outgoing header store is keyed
+case-insensitively, so the second replaces the first and takes its own casing with
+it. Measured separately against a plain `http.request`, which places the behaviour
+in Node rather than in something the transport could decide differently while still
+handing over an object.
 
-- **`stop_reason: "closed"`** — neither echo endpoint closes the connection, so
-  the peer-close path, close codes, and whether `truncated` is false there are all
-  unverified.
-- **`engineIoKeepalive` end to end** — no reachable engine.io endpoint during the
-  probe; `wss://ws.postman-echo.com/socketio/` returned 502. This overlaps D1.
-- **Received binary frames** — no endpoint sent one, so inbound binary rendering
-  is unverified as well as outbound (A4).
-- **WebSocket inside parallel execution groups** — sequential behaviour measured,
-  parallel not.
+### D3. Paths that exist in the code but were never triggered — MOSTLY CLOSED (#167)
+
+- **`stop_reason: "closed"`** — CLOSED, and this bullet was already stale when it
+  was written: #164 and #165 record a real peer's close code and reason, and
+  distinguish a peer-initiated close from truncation.
+- **`engineIoKeepalive` end to end** — STILL OPEN. No reachable engine.io endpoint
+  during the probe; `wss://ws.postman-echo.com/socketio/` returned 502. This
+  overlaps D1 and needs a real socket.io server, so it is the one bullet #167 does
+  not touch.
+- **Received binary frames** — CLOSED (#167). A peer-sent frame comes back with
+  `type: 'binary'`, the payload base64 and `bytes` as the wire length. The fixture
+  is `00 01 ff fe`, invalid UTF-8 on purpose, so a UTF-8 decode could not quietly
+  pass for the same bytes. Outbound binary stays refused for A4's reason.
+- **WebSocket inside parallel execution groups** — CLOSED (#167). Two sessions in
+  two groups hold their sockets open at the same time, asserted from the server's
+  side: both transcripts read correctly whether the run serialises or not, so the
+  only honest evidence is a peak of two concurrent sockets. The test was checked
+  against `parallel: false`, where the peak is 1 and it fails — which is what makes
+  it a test about concurrency rather than about two sessions completing.
 
 ---
 
