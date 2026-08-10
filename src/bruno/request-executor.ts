@@ -52,6 +52,7 @@ import type {
   RequestExecutionResult,
   TestResult,
   MockResponseData,
+  TimeoutSetting,
 } from './types.js';
 
 // The .bru -> YamlRequest translation, the credential-redaction helpers and the
@@ -96,8 +97,12 @@ const MAX_TIMEOUT_MS = 2 ** 31 - 1;
  * `timeout: 0`, and it is the only honest reading of a delay too large for the
  * platform to represent.
  */
-function resolveTimeout(raw: number | undefined): { timeoutMs: number; warning?: string } {
-  if (raw === undefined) {
+function resolveTimeout(raw: TimeoutSetting | undefined): { timeoutMs: number; warning?: string } {
+  // `inherit` is answered the same way an absent value is, and deliberately
+  // without a warning: the authored value was honoured, not discarded. Bruno's
+  // app inherits an application-level preference here; this server has no
+  // preference layer, so the runner's own default is what there is to inherit.
+  if (raw === undefined || raw === 'inherit') {
     return { timeoutMs: DEFAULT_TIMEOUT_MS };
   }
   const n = Number(raw);

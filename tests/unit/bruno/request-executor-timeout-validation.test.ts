@@ -146,5 +146,18 @@ describe('settings.timeout validation', () => {
         expect.arrayContaining([expect.stringContaining('not a number')]),
       );
     });
+
+    it('arms the default deadline for an inherited timeout, and does not warn', async () => {
+      // `inherit` is a legal value in both dialects, meaning "take the
+      // application-level preference" in Bruno's own app. This server has no
+      // preference layer, so what it inherits is the runner's default — and
+      // unlike `.nan` above, nothing was discarded, so nothing is reported.
+      const result = await run('inherit');
+
+      expect(signalOf(0)).toBeInstanceOf(AbortSignal);
+      expect(result.groups[0]!.results[0].warnings ?? []).not.toContainEqual(
+        expect.stringContaining('settings.timeout'),
+      );
+    });
   });
 });

@@ -25,6 +25,7 @@ import {
   MultipartFormPart,
   RequestAssertionInput,
   RequestSettingsInput,
+  TimeoutSetting,
   RequestVarInput,
   YamlAssertion,
   YamlBody,
@@ -504,6 +505,16 @@ export function varsToYamlVars(
 }
 
 /**
+ * What a stored settings block may hold, as opposed to what a caller may author.
+ *
+ * The two differ in one field: `timeout` can be the word `inherit` on disk, in
+ * both dialects, but the MCP schema accepts only a number. Constraining the merge
+ * to the input shape instead would make either dialect model unassignable to it,
+ * and narrowing the model to match would delete the word on the next write.
+ */
+type StoredSettings = Omit<RequestSettingsInput, 'timeout'> & { timeout?: TimeoutSetting };
+
+/**
  * Merge a declared `settings` block over whatever the file already had.
  *
  * Per-field merge, following `varsToBruVarSets` above: an absent field leaves
@@ -524,7 +535,7 @@ export function varsToYamlVars(
  * carry `tls` and `proxy`, which are not authorable here; spreading the existing
  * block first preserves them.
  */
-export function mergeRequestSettings<T extends RequestSettingsInput>(
+export function mergeRequestSettings<T extends StoredSettings>(
   existing: T | undefined,
   updates: RequestSettingsInput,
 ): T {

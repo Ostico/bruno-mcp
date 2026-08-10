@@ -13,8 +13,9 @@ and are recorded at the bottom so they are not re-litigated.
 first; section C is deliberate and should generally not be started at all until
 its stated trigger fires.
 
-**Updated 2026-08-09.** Ten of the eleven defects are closed: A5, A6, A8, A9 and
-A10 in #154, A4 and A7 in #155, A3 in #157, A2 in #158, A1 in #159. Their entries are kept in
+**Updated 2026-08-10.** Ten of the eleven defects are closed: A5, A6, A8, A9 and
+A10 in #154, A4 and A7 in #155, A3 in #157, A2 in #158, A1 in #159, and the two
+found while measuring them in #161. Their entries are kept in
 place, marked CLOSED, rather than moved to the bottom — the evidence in them is
 why they were found, and a reader who meets the same symptom again should land on
 it. Two also have their classification corrected: A4 was filed as "binary frames
@@ -30,6 +31,12 @@ A2 and are filed as A12 and A13.
 extension its collection's dialect does not read is now operated on and warned
 about rather than refused, on both the read and the write side. See its entry for
 what only surfaced by doing it.
+
+**A12 and A13 closed 2026-08-10 in #161**, together, both being settings-parser
+fidelity: an authored `timeout: inherit` is now modelled and honoured in both
+dialects, and an unrecognised `settings.tls` block survives a write instead of being
+deleted. **Every defect in section A is now closed.** What remains in this document
+is sections B onward, plus the A-policy question below, which was never a defect.
 
 ---
 
@@ -383,7 +390,7 @@ a `ws { url: … }` block, which makes B8's headline — "`.bru` cannot express 
 WebSocket request" — suspect for the same reason A4's was. Whatever failed in that
 file, it was not the `ws` block itself.
 
-### A12. An authored `timeout: inherit` is dropped on the next write
+### A12. An authored `timeout: inherit` is dropped on the next write — CLOSED (#161)
 
 **Evidence.** `resolveTimeoutSetting` in `yaml-generator.ts:191` handles the string
 `inherit` explicitly, but `parseSettings` in `yaml-parser.ts` accepts `timeout`
@@ -405,7 +412,22 @@ is its own change.
 inheriting means, or the writer preserves it verbatim without the model claiming to
 understand it.
 
-### A13. An unrecognised `settings.tls` shape is dropped whole
+**Closed 2026-08-10 in #161**, the first way: `TimeoutSetting = number | 'inherit'`
+is the model, both dialect parsers read the word through one shared reader, and both
+consumers answer it with the runner's own default — which is what there is to
+inherit, since Bruno's app inherits an application-level preference
+(`bruno-electron/src/utils/collection.js:860`) and this server has no preference
+layer. No warning is emitted: the value was honoured, not discarded.
+
+Two things the entry did not anticipate. The defect was in **both** dialects, not
+just `.yml` — `bruToJsonV2` reads the bare word out of a `.bru` settings block too,
+and `bru-parser.ts` was discarding it identically; the oracle test now records that
+measurement. And widening the type broke `mergeRequestSettings`, whose generic was
+constrained to the *input* shape — the shape a caller may author is now stated
+separately from the shape a file may hold, because the MCP schema still accepts only
+a number.
+
+### A13. An unrecognised `settings.tls` shape is dropped whole — CLOSED (#161)
 
 **Evidence.** Found while writing a fixture for A2: `settings: {tls: {enabled:
 true}}` round-trips to nothing at all. `tls` is a modelled key, so it never reaches
@@ -419,6 +441,18 @@ nested, and it applies to every kind.
 
 **Done when:** unmodelled keys inside `tls` survive a write, or the parser refuses
 a `tls` block it cannot read rather than deleting it.
+
+**Closed 2026-08-10 in #161**, the first way: the block carries a bag of its own,
+keyed by `YAML_TLS_KEYS`, and the generator flattens it back the way the top level
+already did — otherwise the bag itself reaches the file as a literal `extra:` key.
+
+Worth recording for whoever meets this class next: a unit test asserted the
+defect as the contract (*"omits settings.tls when no recognized tls fields are
+present"*), so the suite was green over a data-loss bug and the round-trip fixture
+that would have caught it did not exist. `settings.tls` is also **ours** rather than
+Bruno's — upstream's `.yml` reader and writer name no TLS fields at all, taking that
+configuration from app preferences and CLI flags — so nothing upstream would have
+flagged it either.
 
 ---
 

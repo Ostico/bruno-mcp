@@ -16,6 +16,10 @@ export const DEFAULT_SCRIPT_TIMEOUT_MS = 5000;
  * The script did not run and the result read `Script error`, which points at the
  * user's code rather than at a settings block they may not have written.
  *
+ * An authored `inherit` lands in the same place, and for the same reason the
+ * request deadline does: there is no preference layer here to inherit from, so
+ * the default is what inheriting means.
+ *
  * A script cannot be given an unbounded budget — the worker has no encoding for
  * it — so "no limit" collapses to the same default an undeclared timeout gets.
  * A negative or non-finite value is treated the same way, since neither is a
