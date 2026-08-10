@@ -31,9 +31,18 @@ interface Harness {
   closes: number;
 }
 
-/** A server whose behaviour on connect is supplied per test. */
-async function startServer(onConnect: (socket: WebSocket, harness: Harness) => void): Promise<Harness> {
-  const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+/**
+ * A server whose behaviour on connect is supplied per test.
+ *
+ * `extra` reaches the server constructor, which is the only way to answer a
+ * subprotocol: agreeing to one is the server's decision, taken at the handshake and
+ * before any connection event.
+ */
+async function startServer(
+  onConnect: (socket: WebSocket, harness: Harness) => void,
+  extra: { handleProtocols?: (protocols: Set<string>) => string | false } = {},
+): Promise<Harness> {
+  const server = new WebSocketServer({ host: '127.0.0.1', port: 0, ...extra });
   const harness: Harness = { server, port: 0, received: [], closes: 0 };
   server.on('connection', (socket) => {
     socket.on('message', (data) => harness.received.push(data.toString()));
@@ -798,6 +807,150 @@ ${entry}
       );
 
       expect(results[0].warnings?.join(' ') ?? '').toMatch(/at index 1 carries no payload/);
+    } finally {
+      await stop(harness);
+    }
+  }, 10000);
+});
+
+/**
+ * A server that agrees to a subprotocol, which is the case an authored header could
+ * not survive.
+ *
+ * `ws` validates the 101's `Sec-WebSocket-Protocol` against the list given to its
+ * constructor, so a request that wrote the header and nothing else had its handshake
+ * aborted the moment the server did what the header asked for — the failure this
+ * proves is gone, and it needs a real handshake to prove.
+ */
+describe('a subprotocol the server agrees to', () => {
+  const withProtocol = (host: string, port: number, value: string) => `info:
+  name: Subprotocol
+  type: websocket
+  seq: 1
+websocket:
+  url: ws://${host}:${port}
+  headers:
+    - name: Sec-WebSocket-Protocol
+      value: "${value}"
+  message:
+    - title: first
+      selected: true
+      message:
+        type: text
+        data: hello
+`;
+
+  it('completes the handshake and reports the protocol that was agreed', async () => {
+    // Picks the SECOND name, which only works if the whole list was requested rather
+    // than the header string treated as one protocol.
+    const harness = await startServer(
+      (socket) => { socket.on('message', (data) => socket.send(`echo:${data.toString()}`)); },
+      { handleProtocols: (protocols) => (protocols.has('superchat') ? 'superchat' : false) },
+    );
+    try {
+      const results = await run(
+        await collection({
+          'sub.yml': withProtocol('127.0.0.1', harness.port, 'chat, superchat'),
+        }),
+        { maxMessages: 1, maxDurationMs: 2000 },
+      );
+
+      const [result] = results;
+      expect(result.error).toBeUndefined();
+      expect(result.response_headers?.['sec-websocket-protocol']).toBe('superchat');
+      expect(harness.received).toEqual(['hello']);
+    } finally {
+      await stop(harness);
+    }
+  }, 10000);
+
+  it('is refused, naming the mismatch, when the server picks nothing', async () => {
+    const harness = await startServer(() => {}, { handleProtocols: () => false });
+    try {
+      const results = await run(
+        await collection({ 'sub.yml': withProtocol('127.0.0.1', harness.port, 'chat') }),
+        { maxDurationMs: 2000 },
+      );
+
+      // The refusal a caller wants: the request asked for `chat`, the server would
+      // not have it. Before the protocol reached the constructor this same server
+      // completed a handshake that had negotiated nothing.
+      expect(results[0].error).toMatch(/subprotocol/i);
+    } finally {
+      await stop(harness);
+    }
+  }, 10000);
+});
+
+/**
+ * Pacing, against a peer that answers.
+ *
+ * The interleaving is the whole point and cannot be seen in a unit test: with every
+ * message leaving in one tick, all three replies arrive after the last send, so a
+ * send-wait-send exchange has no observable order to assert on.
+ */
+describe('a paced sequence against a peer that answers', () => {
+  const three = (host: string, port: number) => `info:
+  name: Paced
+  type: websocket
+  seq: 1
+websocket:
+  url: ws://${host}:${port}
+  message:
+    - title: one
+      selected: true
+      message:
+        type: text
+        data: one
+    - title: two
+      selected: true
+      message:
+        type: text
+        data: two
+    - title: three
+      selected: true
+      message:
+        type: text
+        data: three
+`;
+
+  it('records each reply between the sends it belongs to', async () => {
+    const harness = await startServer((socket) => {
+      socket.on('message', (data) => socket.send(`echo:${data.toString()}`));
+    });
+    try {
+      const results = await run(
+        await collection({ 'paced.yml': three('127.0.0.1', harness.port) }),
+        { maxMessages: 3, maxDurationMs: 4000, sendIntervalMs: 120, includePayloads: true },
+      );
+
+      const [result] = results;
+      expect(result.websocket?.transcript.map((entry) => entry.direction)).toEqual([
+        'sent', 'received', 'sent', 'received', 'sent', 'received',
+      ]);
+      expect(result.websocket?.transcript.map((entry) => entry.payload)).toEqual([
+        'one', 'echo:one', 'two', 'echo:two', 'three', 'echo:three',
+      ]);
+      expect(harness.received).toEqual(['one', 'two', 'three']);
+    } finally {
+      await stop(harness);
+    }
+  }, 15000);
+
+  it('names the messages a clock too short for the sequence left unsent', async () => {
+    const harness = await startServer((socket) => {
+      socket.on('message', (data) => socket.send(`echo:${data.toString()}`));
+    });
+    try {
+      const results = await run(
+        await collection({ 'paced.yml': three('127.0.0.1', harness.port) }),
+        { maxMessages: 10, maxDurationMs: 300, sendIntervalMs: 250 },
+      );
+
+      const [result] = results;
+      expect(result.websocket?.stop_reason).toBe('timeout');
+      expect(harness.received).toEqual(['one', 'two']);
+      expect(result.warnings?.join(' ') ?? '').toMatch(/1 of 3 messages unsent: "three"/);
     } finally {
       await stop(harness);
     }

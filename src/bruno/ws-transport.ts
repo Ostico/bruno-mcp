@@ -71,6 +71,16 @@ export const DEFAULT_MAX_DURATION_MS = 5000;
  * volunteer something — on the full wall-clock budget it asked for.
  */
 export const DEFAULT_IDLE_TIMEOUT_MS = 1500;
+/**
+ * How long to wait between the session's own messages, in milliseconds.
+ *
+ * Zero, which is what every session did before the option existed: all of a
+ * request's messages left in one tick, three sends all recorded at the same
+ * millisecond. That is right for a fire-and-forget stream and useless for anything
+ * that answers, so the default preserves it and a caller driving a send-wait-send
+ * protocol asks for the gap it needs.
+ */
+export const DEFAULT_SEND_INTERVAL_MS = 0;
 /** How long to wait for a close handshake before pulling the socket down. */
 const CLOSE_GRACE_MS = 250;
 
@@ -110,6 +120,11 @@ export interface WebsocketRunOptions extends TranscriptOptions {
    * between frames wants.
    */
   idleTimeoutMs?: number;
+  /**
+   * Wait this long between the session's own messages, in ms. Defaults to 0, which
+   * sends them all in one tick, as every session did before this existed.
+   */
+  sendIntervalMs?: number;
   /**
    * Answer an engine.io PING with a PONG, so a socket.io session survives past
    * its `pingTimeout`. Off unless asked for: it puts a frame on the wire the
@@ -193,6 +208,14 @@ interface PlannedFrame {
   payload: string;
   /** Absent when the message authored no name; an index is not a name. */
   title?: string;
+  /**
+   * How a warning refers to this message: its quoted name, or its position in the
+   * file's message list. Carried rather than derived, so a message the session never
+   * managed to send is named the same way as one that was refused before sending —
+   * and by its authored position, not by its position among the frames that
+   * survived selection.
+   */
+  label: string;
 }
 
 interface PlannedFrames {
@@ -251,7 +274,7 @@ function framesToSend(request: YamlRequest, subst: (value: string) => string): P
       return;
     }
 
-    frames.push({ payload, ...(named ? { title: message.name } : {}) });
+    frames.push({ payload, label, ...(named ? { title: message.name } : {}) });
   });
 
   return { frames, warnings };
@@ -269,6 +292,75 @@ function handshakeHeaders(
     headers[subst(header.name)] = subst(header.value);
   }
   return { ...headers, ...authHeaders };
+}
+
+/**
+ * Every value authored for one header name, whatever case it was written in.
+ *
+ * Header names are case-insensitive on the wire, and a request that wrote
+ * `Sec-Websocket-Protocol` means the same thing as one that wrote
+ * `Sec-WebSocket-Protocol`. Upstream reads exactly two spellings of each name; this
+ * reads all of them, because the failure for a third spelling is not a header that
+ * quietly does nothing — see `handshakeTerms` — and no file that works upstream
+ * negotiates differently here.
+ */
+function headerValues(headers: Record<string, string>, name: string): string[] {
+  const wanted = name.toLowerCase();
+  return Object.entries(headers)
+    .filter(([key]) => key.toLowerCase() === wanted)
+    .map(([, value]) => value);
+}
+
+/** What the handshake must be told at the constructor, not merely in a header. */
+interface HandshakeTerms {
+  protocols: string[];
+  protocolVersion?: number;
+}
+
+/**
+ * The two handshake terms a header alone cannot express.
+ *
+ * A subprotocol is authored as a `Sec-WebSocket-Protocol` header — that is
+ * upstream's only surface for it either — but `ws` validates the server's answer
+ * against the list given to its CONSTRUCTOR rather than against whatever went out in
+ * the headers. So a request that wrote only the header, talking to a server that
+ * dutifully echoed it, had its handshake aborted with `Server sent a subprotocol but
+ * none was requested`: writing the header was worse than leaving it out. Extracting
+ * it here is what makes the header mean what it reads as.
+ *
+ * Comma-split and trimmed, as `bruno-requests/src/ws/ws-client.js` does it, so one
+ * file negotiates the same protocols in Bruno and here. `ws` then writes the
+ * outgoing header from this list, so the wire and the validation cannot disagree.
+ * An empty entry — the trailing comma in `chat,` — is left in on purpose: `ws`
+ * refuses it as an invalid subprotocol, which is what the same file does upstream,
+ * and silently dropping it would negotiate something Bruno would not.
+ *
+ * `Sec-WebSocket-Version` is the same shape of problem. `ws` overwrites the header
+ * with whatever its own `protocolVersion` option says, so an authored version was
+ * ignored outright. It accepts 8 and 13 and throws on anything else, which the
+ * caller sees as a refusal naming the version it asked for; a value that is not a
+ * number at all is reported as a warning instead, since passing `NaN` on would
+ * refuse the request without saying why.
+ */
+function handshakeTerms(headers: Record<string, string>, warnings: string[]): HandshakeTerms {
+  const protocols = headerValues(headers, 'Sec-WebSocket-Protocol')
+    .flatMap((value) => value.split(','))
+    .map((value) => value.trim());
+
+  const [version] = headerValues(headers, 'Sec-WebSocket-Version');
+  if (version === undefined) return { protocols };
+
+  const asNumber = Number(version);
+  if (!Number.isFinite(asNumber)) {
+    warnings.push(
+      `Header Sec-WebSocket-Version carries "${version}", which is not a number, so it was `
+        + 'ignored and the session negotiated version 13. The header cannot set the version on '
+        + 'its own: the library writes that header itself from the version it was given.',
+    );
+    return { protocols };
+  }
+
+  return { protocols, protocolVersion: asNumber };
 }
 
 /**
@@ -338,6 +430,7 @@ export async function executeWebsocketRequest(
   const maxMessages = options.maxMessages ?? DEFAULT_MAX_MESSAGES;
   const maxDurationMs = options.maxDurationMs ?? DEFAULT_MAX_DURATION_MS;
   const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+  const sendIntervalMs = options.sendIntervalMs ?? DEFAULT_SEND_INTERVAL_MS;
 
   // A session that sends nothing is almost never what the file meant, and it is
   // indistinguishable from a healthy one in the result: it connects, records
@@ -431,10 +524,13 @@ export async function executeWebsocketRequest(
   // target it refused; this now does too.
   let upgradeHeaders: ResponseHeaders | undefined;
   let socket: InstanceType<typeof WebSocket>;
+  const headers = handshakeHeaders(request, subst, authHeaders);
+  const terms = handshakeTerms(headers, warnings);
   try {
-    socket = new WebSocket(dialUrl, {
-      headers: handshakeHeaders(request, subst, authHeaders),
+    socket = new WebSocket(dialUrl, terms.protocols, {
+      headers,
       handshakeTimeout: maxDurationMs,
+      ...(terms.protocolVersion !== undefined ? { protocolVersion: terms.protocolVersion } : {}),
       // Both branches are load-bearing. `pinnedLookup([])` fails closed with
       // ENOTFOUND by design, and the allowlisted-hostname path returns no addresses
       // at all — so passing it unconditionally would make every such request fail
@@ -459,6 +555,17 @@ export async function executeWebsocketRequest(
   // still recorded every frame in flight — 200 of them where the cap said 50.
   let stopped = false;
 
+  // True from the first send until the last one, so the idle bound cannot mistake
+  // the gap this session is deliberately leaving between its own messages for a peer
+  // that has stopped talking. Without it any `sendIntervalMs` above the idle timeout
+  // would end the session after its first message, every time.
+  let sending = planned.frames.length > 0;
+
+  // How far the sequence actually got. Read after the session rather than reported
+  // from inside the loop: the loop learns it was stopped one microtask after the
+  // bound fired, and the teardown it is racing against is what builds the result.
+  let sent = 0;
+
   await new Promise<void>((resolve) => {
     const finish = (reason: WebsocketResultDetail['stop_reason'], error?: string) => {
       if (stopped) return;
@@ -467,6 +574,11 @@ export async function executeWebsocketRequest(
       failure = error;
       clearTimeout(deadline);
       clearTimeout(idle);
+      // Woken rather than left to expire. A pending pause holds the process open for
+      // the rest of the interval, and the send it would resume is a write to a socket
+      // this call has already closed.
+      for (const wake of waiting) wake();
+      waiting.clear();
       // close(), not close(code): `ws` reads a second argument as a close code,
       // and upstream's own client takes exactly one argument here for the same
       // reason. The grace timer is what guarantees teardown if the peer never
@@ -494,10 +606,24 @@ export async function executeWebsocketRequest(
     // than its answers.
     let idle: NodeJS.Timeout | undefined;
     touchIdle = () => {
-      if (idleTimeoutMs <= 0) return;
+      if (stopped || sending || idleTimeoutMs <= 0) return;
       clearTimeout(idle);
       idle = setTimeout(() => finish('idle'), idleTimeoutMs);
     };
+
+    // Every pause a paced send is currently sitting in, so `finish` can cut it short.
+    const waiting = new Set<() => void>();
+    const pause = (ms: number) => new Promise<void>((resume) => {
+      const timer = setTimeout(() => {
+        waiting.delete(wake);
+        resume();
+      }, ms);
+      const wake = () => {
+        clearTimeout(timer);
+        resume();
+      };
+      waiting.add(wake);
+    });
 
     // Fires on the 101 before `open`, and is the only place the server's own
     // headers are visible: a WebSocket has no per-message headers to fall back on.
@@ -505,8 +631,22 @@ export async function executeWebsocketRequest(
       upgradeHeaders = collectIncomingHeaders(response.headers);
     });
 
-    socket.on('open', () => {
-      for (const frame of planned.frames) {
+    // Paced, and unawaited on purpose: the session's bounds run against the socket,
+    // not against this loop, so a sequence that outlasts `maxDurationMs` is stopped
+    // where it stands rather than allowed to finish sending first.
+    const sendPlanned = async () => {
+      // A session with nothing to send leaves the idle clock unarmed, since arming it
+      // is what the last send does and there is no send. A listen-only request keeps
+      // the whole wall-clock budget to wait for a peer that may yet speak.
+      if (planned.frames.length === 0) return;
+
+      for (const [index, frame] of planned.frames.entries()) {
+        // A bound can bite between two paced sends, and it can already have bitten
+        // before the first one — the handshake and the wall-clock ceiling share a
+        // deadline. Either way the rest of the sequence stays unsent, and what was
+        // left is reported once the session is over.
+        if (stopped) break;
+
         socket.send(frame.payload);
         record({
           direction: 'sent',
@@ -514,7 +654,25 @@ export async function executeWebsocketRequest(
           type: 'text',
           title: frame.title,
         });
+        sent += 1;
+
+        // No trailing pause: waiting after the last message would spend the interval
+        // on nothing, and with a one-message request the whole option would be a delay
+        // before the session could end.
+        if (sendIntervalMs > 0 && index < planned.frames.length - 1) {
+          await pause(sendIntervalMs);
+        }
       }
+
+      // The idle bound starts here, from the last thing this session said, rather
+      // than from the first — which is where it would have started had every send
+      // touched it while the sequence was still going out.
+      sending = false;
+      touchIdle();
+    };
+
+    socket.on('open', () => {
+      void sendPlanned();
     });
 
     socket.on('message', (data: Buffer | ArrayBuffer | Buffer[], isBinary?: boolean) => {
@@ -608,6 +766,20 @@ export async function executeWebsocketRequest(
   // resolved through the grace timer: a socket left open outlives the tool call
   // that made it, and nothing else would ever close it.
   socket.terminate();
+
+  // A half-driven request/response protocol looks exactly like a peer that stopped
+  // answering, so the messages that never went out are named rather than left to be
+  // inferred from a transcript that is one send short.
+  if (sent < planned.frames.length) {
+    const unsent = planned.frames.slice(sent);
+    warnings.push(
+      `The session ended (stop_reason "${stopReason}") with ${unsent.length} of `
+        + `${planned.frames.length} messages unsent: ${
+          unsent.map((pending) => pending.label).join(', ')
+        }. A paced sequence spends wall-clock time between sends, so maxDurationMs has to cover `
+        + 'the whole of it.',
+    );
+  }
 
   const durationMs = Date.now() - startedAt;
 

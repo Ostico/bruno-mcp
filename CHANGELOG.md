@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A WebSocket request can pace the messages it sends**, via `sendIntervalMs` on the
+  run's `websocket` options. Every message previously left in one tick — three sends
+  all recorded at the same millisecond — which put any send-wait-send protocol out of
+  reach: all the replies arrived after the last send, so the exchange had no order to
+  assert on. With a gap set, the transcript carries each answer between the sends it
+  belongs to. The default of `0` keeps the old behaviour. `maxDurationMs` has to cover
+  the whole paced sequence; a session stopped part way through now names the messages
+  that never went out, by their authored name, instead of leaving a transcript one
+  send short to be misread as a peer that stopped answering. The idle bound is not
+  armed while the sequence is still going out, so a `sendIntervalMs` longer than
+  `idleTimeoutMs` is safe.
+
+- **An authored `Sec-WebSocket-Protocol` header now negotiates a subprotocol.** Bruno
+  has no separate field for one either, but the header alone reached the wire without
+  ever reaching the connection, and the library validates the server's answer against
+  the list it was given there — so a server that did exactly what the header asked for
+  had its handshake aborted for offering a subprotocol nobody had requested. Writing
+  the header was worse than leaving it out. The value is comma-split and trimmed as
+  upstream does it, read in any case it was written in, and the protocol the server
+  agreed to comes back in that result's `response_headers`. An authored
+  `Sec-WebSocket-Version` is honoured the same way; a value that is not a number is
+  reported as a warning rather than refusing the request without explanation.
+
 - **A WebSocket transcript now says what each frame was.** An entry carries its
   `type` — `text`, `binary`, `ping`, `pong` or `close` — the authored `title` of a
   message the session sent, and, on a close frame, the `close_code` the peer gave

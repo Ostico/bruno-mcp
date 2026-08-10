@@ -12,7 +12,12 @@ import { executeWebsocketRequest } from '../../../src/bruno/ws-transport.js';
 import { resetAllowlistCache } from '../../../src/bruno/url-validator.js';
 import type { YamlRequest } from '../../../src/bruno/types.js';
 
-const dials: Array<{ url: string; options: Record<string, unknown> }> = [];
+const dials: Array<{
+  url: string;
+  /** The constructor's second argument, which is where a subprotocol is requested. */
+  protocols: string[];
+  options: Record<string, unknown>;
+}> = [];
 
 /** Headers the next handshake answers with, or none for a socket that never upgrades. */
 let upgradeResponse: Record<string, string | string[] | undefined> | undefined;
@@ -24,9 +29,9 @@ let upgradeResponse: Record<string, string | string[] | undefined> | undefined;
 let drive: ((socket: FakeSocket) => void) | undefined;
 
 class FakeSocket extends EventEmitter {
-  constructor(url: string, options: Record<string, unknown>) {
+  constructor(url: string, protocols: string[], options: Record<string, unknown>) {
     super();
-    dials.push({ url, options });
+    dials.push({ url, protocols, options });
     // Open, then close immediately: these tests are about the handshake, and a
     // session that never ends would just be the integration test again.
     setImmediate(() => {
@@ -400,5 +405,161 @@ describe('the idle bound', () => {
     const result = await call(undefined, new Map(), { maxDurationMs: 200, idleTimeoutMs: 0 });
 
     expect(result.websocket?.stop_reason).toBe('timeout');
+  });
+});
+
+describe('the subprotocol a header asks for', () => {
+  // `ws` validates the server's answer against the list it was given at the
+  // CONSTRUCTOR, not against the headers. A request that wrote only the header, to a
+  // server that echoed it, had its handshake aborted with "Server sent a subprotocol
+  // but none was requested" — so these assertions are about the second argument.
+  it('requests what the header names', async () => {
+    await call({ headers: [{ name: 'Sec-WebSocket-Protocol', value: 'chat' }] });
+    expect(dials[0].protocols).toEqual(['chat']);
+  });
+
+  it('splits a list and trims it', async () => {
+    await call({ headers: [{ name: 'Sec-WebSocket-Protocol', value: 'chat, superchat' }] });
+    expect(dials[0].protocols).toEqual(['chat', 'superchat']);
+  });
+
+  it('reads the header in any case it was written in', async () => {
+    // Header names are case-insensitive on the wire, and the failure for a spelling
+    // that goes unread is an aborted handshake rather than a header that does nothing.
+    await call({ headers: [{ name: 'sec-websocket-protocol', value: 'chat' }] });
+    expect(dials[0].protocols).toEqual(['chat']);
+  });
+
+  it('still sends the header, so the wire says what was requested', async () => {
+    await call({ headers: [{ name: 'Sec-WebSocket-Protocol', value: 'chat' }] });
+    expect(dials[0].options.headers).toEqual({ 'Sec-WebSocket-Protocol': 'chat' });
+  });
+
+  it('requests none when the request authored none', async () => {
+    await call();
+    expect(dials[0].protocols).toEqual([]);
+  });
+
+  it('honours an authored protocol version, as a number', async () => {
+    // The library writes the Sec-WebSocket-Version header itself from this option, so
+    // an authored header alone was overwritten and ignored.
+    const result = await call({ headers: [{ name: 'Sec-WebSocket-Version', value: '8' }] });
+    expect(dials[0].options.protocolVersion).toBe(8);
+    expect(result.warnings ?? []).not.toContainEqual(
+      expect.stringContaining('Sec-WebSocket-Version'),
+    );
+  });
+
+  it('omits the version when the request authored none', async () => {
+    await call();
+    expect(dials[0].options.protocolVersion).toBeUndefined();
+  });
+
+  it('reports a version that is not a number instead of passing it on', async () => {
+    const result = await call({
+      headers: [{ name: 'Sec-WebSocket-Version', value: 'thirteen' }],
+    });
+    expect(dials[0].options.protocolVersion).toBeUndefined();
+    expect(result.warnings).toContainEqual(
+      expect.stringContaining('Sec-WebSocket-Version carries "thirteen"'),
+    );
+  });
+});
+
+describe('pacing the messages a session sends', () => {
+  const three = [
+    { name: 'first', content: 'a' },
+    { name: 'second', content: 'b' },
+    { name: 'third', content: 'c' },
+  ];
+  const sentOffsets = (result: Awaited<ReturnType<typeof call>>) =>
+    result.websocket!.transcript.filter((e) => e.direction === 'sent').map((e) => e.offset_ms);
+
+  it('sends everything in one tick by default', async () => {
+    const result = await call({ messages: three });
+
+    const offsets = sentOffsets(result);
+    expect(offsets).toHaveLength(3);
+    // The behaviour every session had before the option existed, kept as the default:
+    // three sends at the same millisecond.
+    expect(Math.max(...offsets) - Math.min(...offsets)).toBeLessThan(20);
+  });
+
+  it('leaves the asked-for gap between sends', async () => {
+    drive = (socket) => { setTimeout(() => socket.emit('close'), 400); };
+
+    const result = await call({ messages: three }, new Map(), {
+      maxDurationMs: 2000,
+      sendIntervalMs: 60,
+    });
+
+    const offsets = sentOffsets(result);
+    expect(offsets).toHaveLength(3);
+    // Two gaps of 60 ms before the third message, which is what makes a
+    // send-wait-send exchange drivable at all.
+    expect(offsets[2]).toBeGreaterThanOrEqual(110);
+  });
+
+  it('waits after the last message for nothing', async () => {
+    drive = () => {};
+
+    const result = await call({ messages: [{ name: 'only', content: 'a' }] }, new Map(), {
+      maxDurationMs: 2000,
+      sendIntervalMs: 400,
+      idleTimeoutMs: 50,
+    });
+
+    // A trailing pause would spend the interval on nothing, and with one message the
+    // whole option would be a delay before the session could end.
+    expect(result.websocket?.stop_reason).toBe('idle');
+    expect(result.duration_ms).toBeLessThan(300);
+  });
+
+  it('names the messages a bound stopped it from sending', async () => {
+    drive = () => {};
+
+    const result = await call({ messages: three }, new Map(), {
+      maxDurationMs: 250,
+      sendIntervalMs: 200,
+    });
+
+    expect(result.websocket?.stop_reason).toBe('timeout');
+    expect(sentOffsets(result)).toHaveLength(2);
+    // Named, not counted: a request/response protocol driven half way through looks
+    // exactly like a peer that stopped answering.
+    expect(result.warnings).toContainEqual(expect.stringContaining('1 of 3 messages unsent'));
+    expect(result.warnings).toContainEqual(expect.stringContaining('"third"'));
+  });
+
+  it('does not let the idle bound end a sequence that is still going out', async () => {
+    drive = () => {};
+
+    const result = await call({ messages: three }, new Map(), {
+      maxDurationMs: 2000,
+      sendIntervalMs: 60,
+      // Shorter than the gap this session is deliberately leaving between its own
+      // messages. Armed per send, the first one would end the session 20 ms in with
+      // two messages unsent — the gap this session leaves is not the peer's silence.
+      idleTimeoutMs: 20,
+    });
+
+    expect(sentOffsets(result)).toHaveLength(3);
+    expect(result.duration_ms).toBeGreaterThanOrEqual(110);
+    expect(result.warnings).toBeUndefined();
+  });
+
+  it('arms the idle bound from the last send', async () => {
+    drive = () => {};
+
+    const result = await call({ messages: three }, new Map(), {
+      maxDurationMs: 3000,
+      sendIntervalMs: 40,
+      idleTimeoutMs: 60,
+    });
+
+    expect(sentOffsets(result)).toHaveLength(3);
+    expect(result.websocket?.stop_reason).toBe('idle');
+    // Two gaps of 40 ms, then 60 ms of silence — not the whole 3000 ms ceiling.
+    expect(result.duration_ms).toBeLessThan(1000);
   });
 });
