@@ -13,6 +13,7 @@
  */
 
 import type {
+  WebsocketFrameType,
   WebsocketTranscriptEntry,
   WebsocketResultDetail,
 } from './transport-results.js';
@@ -93,8 +94,23 @@ export function redactMetadata(
 export interface TranscriptEntryInput {
   direction: 'sent' | 'received';
   offset_ms: number;
-  /** The frame as it went on or came off the wire, already interpolated. */
+  /**
+   * The frame as it went on or came off the wire, already interpolated — and, for
+   * a binary frame, already base64-encoded, which is why `bytes` can be supplied
+   * separately.
+   */
   payload: string;
+  /** Defaults to `text`, the only kind a caller that predates this had. */
+  type?: WebsocketFrameType;
+  /** The authored name of an outbound message. */
+  title?: string;
+  /** The code carried by a close frame. */
+  closeCode?: number;
+  /**
+   * The frame's true size on the wire, when the payload is an encoding of it
+   * rather than the bytes themselves. Derived from the payload when omitted.
+   */
+  bytes?: number;
 }
 
 export interface TranscriptOptions {
@@ -120,12 +136,15 @@ export function toTranscriptEntry(
   // records a single entry, and every existing test, needs no change.
   recordedBytes = 0,
 ): WebsocketTranscriptEntry {
-  const bytes = Buffer.byteLength(input.payload, 'utf8');
+  const bytes = input.bytes ?? Buffer.byteLength(input.payload, 'utf8');
   const entry: WebsocketTranscriptEntry = {
     direction: input.direction,
     offset_ms: input.offset_ms,
     bytes,
+    type: input.type ?? 'text',
   };
+  if (input.title !== undefined) entry.title = input.title;
+  if (input.closeCode !== undefined) entry.close_code = input.closeCode;
   if (options.includePayloads) {
     // Two ceilings, and the smaller wins. The per-frame one bounds any single
     // frame; the cumulative one bounds the whole tool response, and it is the
@@ -143,7 +162,11 @@ export function toTranscriptEntry(
     const transcriptCap = options.maxTranscriptBytes ?? DEFAULT_MAX_TRANSCRIPT_BYTES;
     const remaining = Math.max(0, transcriptCap - recordedBytes);
     const cap = Math.min(frameCap, remaining);
-    entry.payload = bytes > cap ? input.payload.slice(0, cap) : input.payload;
+    // Measured against the payload as recorded, not against the wire size, so a
+    // binary frame's base64 — a third longer than the bytes it stands for — is
+    // held to the same budget as text. The two are equal for a text frame.
+    const recorded = Buffer.byteLength(input.payload, 'utf8');
+    entry.payload = recorded > cap ? input.payload.slice(0, cap) : input.payload;
   }
   return entry;
 }
@@ -180,6 +203,10 @@ export function toWebsocketDetail(
   return {
     transcript,
     stop_reason: stopReason,
+    // `idle` is deliberately absent: a cap bit in the other three cases, whereas an
+    // idle stop means the wall-clock budget was NOT spent and the peer had gone
+    // quiet. Marking it truncated would put the flag on almost every session that
+    // finished early and normally, which is how a warning stops being read.
     truncated: stopReason === 'count' || stopReason === 'timeout' || stopReason === 'bytes',
   };
 }

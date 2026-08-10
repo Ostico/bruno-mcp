@@ -43,6 +43,13 @@ missing format feature, so B8 is withdrawn — see both entries. **Every defect 
 section A is now closed.** What remains in this document is sections B onward, plus
 the A-policy question below, which was never a defect.
 
+**Section B is being worked through in order of what unblocks the rest**: B2 in
+#163, then B5 and B9 together in #164 — both being about how a session ends and how
+what happened in it is read. B6 (pacing) comes next, since a send-wait-send protocol
+is only worth driving once the transcript can show what the waiting achieved, and B7
+(subprotocol) is likely already reachable through an authored header, now that the
+handshake response is visible.
+
 ---
 
 ## A. Defects
@@ -596,7 +603,7 @@ distinguishable in the output.
 
 ---
 
-### B5. The WebSocket transcript is missing most of what a diagnosis needs
+### B5. The WebSocket transcript is missing most of what a diagnosis needs — CLOSED (#164)
 
 Surfaced by the live probe. Each of these is small on its own; together they are
 why a failed session is hard to read.
@@ -611,6 +618,21 @@ why a failed session is hard to read.
 
 **Done when:** a transcript entry carries its frame type and its authored title,
 and close frames appear with their code and reason.
+
+**Closed.** An entry now carries `type` (`text`, `binary`, `ping`, `pong`,
+`close`), the authored `title` on frames the session sent, and `close_code` on a
+close frame with the peer's reason as that entry's payload. Two things only came
+out of doing it. Control frames must NOT count toward `maxMessages`: a peer that
+pings once a second would otherwise reach the bound on its own and report `count`
+for a session that received no answer at all. And a binary frame's payload is
+recorded as base64, because the UTF-8 decode it used to get replaced every invalid
+sequence and reported a size that never went over the wire — `bytes` is now the
+true wire size for every kind of frame, which is what a display cap and a
+cumulative ceiling are both counted from.
+
+A post-response script sees the same fields, since the transcript is what
+`res.body` is on this transport, so an assertion can now name a frame kind or a
+close code instead of matching payloads by hand.
 
 ### B6. No inter-message pacing
 
@@ -671,7 +693,7 @@ credential out of a request body.
 **Left open by this:** nothing in `.bru`. B1 still covers authoring either
 transport through the tool surface, in either dialect.
 
-### B9. A WebSocket request always burns its full duration budget
+### B9. A WebSocket request always burns its full duration budget — CLOSED (#164)
 
 **Evidence.** Eight requests at `maxDurationMs: 2500` took `22058 ms` in total,
 strictly sequential. Sessions end early only on `count` or `bytes`; there is no
@@ -682,6 +704,20 @@ takes about 100 seconds even when every peer answers in 200 ms. That is a
 usability cliff for exactly the mixed collections this feature was built for.
 
 **Done when:** a session can end on idle, or the default is reconsidered.
+
+**Closed.** A session now ends after 1500 ms of silence and reports
+`stop_reason: "idle"`; `idleTimeoutMs: 0` waits for the wall-clock ceiling, which
+is what a protocol whose gaps are longer than its answers needs. The integration
+test that proves it ends a session with an 8000 ms ceiling in about 200 ms.
+
+Two decisions worth not re-deriving. The clock is armed by the first recorded
+frame rather than at open, so a listen-only request — one that authors no messages
+and waits for the peer to volunteer something — still gets the whole budget it
+asked for; silence *after* activity is the signal, silence before it is the point
+of the request. And an idle stop is NOT reported as `truncated`, unlike `count`,
+`timeout` and `bytes`: no cap bit, and the clock budget went unspent. Flagging it
+would put the warning on nearly every healthy session, which is how a warning stops
+being read.
 
 ### B10. No binary WebSocket frame can be sent, by anyone
 

@@ -447,10 +447,15 @@ A WebSocket session has no natural end, so it is bounded, and every bound is set
 |---|---|---|
 | `maxMessages` | 50 | Inbound frames recorded before stopping |
 | `maxDurationMs` | 5000 | Wall-clock ceiling for one session |
+| `idleTimeoutMs` | 1500 | Silence that ends a session; `0` waits for the ceiling |
 | `includePayloads` | `false` | Record frame contents, not just size and timing |
 | `maxFrameBytes` | 65536 | Per-frame ceiling on recorded payload |
 | `maxTranscriptBytes` | 1048576 | Cumulative ceiling, counted from wire size |
 | `engineIoKeepalive` | `false` | Answer an engine.io `2` with a `3` |
+
+The wall-clock ceiling is a safety bound rather than a schedule, so `idleTimeoutMs` is what usually ends a session: once nothing has arrived for 1500 ms it stops and reports `stop_reason: "idle"`, which is not counted as truncation because no cap bit and the ceiling went unspent. The clock is armed by the first frame, not at connect, so a listen-only request that authors no messages still waits out `maxDurationMs` for a peer that may yet speak. Set it to `0` for a protocol whose gaps are longer than its answers.
+
+Each transcript entry says what kind of frame it was — `text`, `binary`, `ping`, `pong` or `close` — carries the authored `title` of a message the session sent, and, on a close frame, the `close_code` the peer gave, with its reason as that entry's payload: `1000` is an ordinary goodbye, `1006` a peer that vanished without one, `1008` a refusal, `1011` a server error. Control frames do not count toward `maxMessages`, or a peer that pings once a second would end a session by itself and report `count` for one that received no answer. A binary frame's payload is base64 and `bytes` is the true wire size for every kind. A post-response script sees the same fields, because the transcript is what `res.body` is on this transport.
 
 `includePayloads` is off by default as a security property, not a preference: outbound frames are recorded **after** `{{var}}` substitution, so recording them by default would write every secret passed in `variables` into a result that is returned by default. `engineIoKeepalive` is off for a related reason — it puts a frame on the wire the request did not author — and even when on it replies only after an OPEN frame has actually been seen.
 

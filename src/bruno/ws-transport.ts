@@ -28,11 +28,16 @@ import {
   transcriptBytes,
   transcriptCapReached,
   toWebsocketDetail,
+  type TranscriptEntryInput,
   type TranscriptOptions,
 } from './transport-redaction.js';
 import { websocketResponse, type TransportOutcome } from './transport-verification.js';
 import type { RootChain } from './collection-roots.js';
-import type { WebsocketResultDetail, WebsocketTranscriptEntry } from './transport-results.js';
+import type {
+  WebsocketFrameType,
+  WebsocketResultDetail,
+  WebsocketTranscriptEntry,
+} from './transport-results.js';
 import type { IncomingMessage } from 'node:http';
 
 import { collectIncomingHeaders, type ResponseHeaders } from './response-headers.js';
@@ -52,6 +57,20 @@ const TLS_SCHEMES = new Set(['wss:', 'https:']);
 export const DEFAULT_MAX_MESSAGES = 50;
 /** How long a session records before stopping, in milliseconds. */
 export const DEFAULT_MAX_DURATION_MS = 5000;
+/**
+ * How long a silence ends a session, in milliseconds.
+ *
+ * The wall-clock ceiling is a safety bound, not a schedule, and before this every
+ * session spent all of it: eight WebSocket requests with a 2500 ms ceiling took
+ * 22 seconds, almost all of it waiting on a peer that had already answered. Silence
+ * after activity is the signal that nothing more is coming, so it ends the session
+ * and reports `idle`.
+ *
+ * The clock only starts once a frame has been recorded, which is what keeps a
+ * listen-only session — one that authors no messages and waits for the peer to
+ * volunteer something — on the full wall-clock budget it asked for.
+ */
+export const DEFAULT_IDLE_TIMEOUT_MS = 1500;
 /** How long to wait for a close handshake before pulling the socket down. */
 const CLOSE_GRACE_MS = 250;
 
@@ -85,6 +104,12 @@ export interface WebsocketRunOptions extends TranscriptOptions {
   maxMessages?: number;
   /** Wall-clock ceiling for the whole session, in ms. Defaults to 5000. */
   maxDurationMs?: number;
+  /**
+   * End the session after this much silence, in ms. Defaults to 1500; 0 waits for
+   * the wall-clock ceiling instead, which is what a protocol with long gaps
+   * between frames wants.
+   */
+  idleTimeoutMs?: number;
   /**
    * Answer an engine.io PING with a PONG, so a socket.io session survives past
    * its `pingTimeout`. Off unless asked for: it puts a frame on the wire the
@@ -143,8 +168,35 @@ function refuse(
 const HONOURED_MESSAGE_TYPES = new Set(['text', 'json', 'xml']);
 
 /** What a session will put on the wire, and what it would not. */
+/**
+ * A frame to record, as the session's handlers describe one.
+ *
+ * `type` is required here even though the entry builder defaults it, because every
+ * handler in this file knows exactly which kind it caught and a default would only
+ * be a way to forget.
+ */
+type RecordedFrame = Omit<TranscriptEntryInput, 'offset_ms' | 'type'> & {
+  type: WebsocketFrameType;
+};
+
+/**
+ * The frames that carry an application payload.
+ *
+ * `maxMessages` counts these and not control frames: a keepalive is not an answer,
+ * and a peer that pings once a second would otherwise reach the message bound on
+ * its own and report `count` for a session that received nothing.
+ */
+const DATA_FRAME_TYPES = new Set<WebsocketFrameType>(['text', 'binary']);
+
+/** One frame this session will send, with the name the file gave it. */
+interface PlannedFrame {
+  payload: string;
+  /** Absent when the message authored no name; an index is not a name. */
+  title?: string;
+}
+
 interface PlannedFrames {
-  payloads: string[];
+  frames: PlannedFrame[];
   warnings: string[];
 }
 
@@ -167,15 +219,14 @@ interface PlannedFrames {
  * queue-everything-on-connect path does not, so this follows the deliberate one.
  */
 function framesToSend(request: YamlRequest, subst: (value: string) => string): PlannedFrames {
-  const payloads: string[] = [];
+  const frames: PlannedFrame[] = [];
   const warnings: string[] = [];
 
   (request.websocket?.messages ?? []).forEach((message, index) => {
     if (message.selected === false) return;
 
-    const label = message.name && message.name.length > 0
-      ? `"${message.name}"`
-      : `at index ${index}`;
+    const named = message.name !== undefined && message.name.length > 0;
+    const label = named ? `"${message.name}"` : `at index ${index}`;
 
     const declared = message.type ?? 'text';
     if (!HONOURED_MESSAGE_TYPES.has(declared)) {
@@ -200,10 +251,10 @@ function framesToSend(request: YamlRequest, subst: (value: string) => string): P
       return;
     }
 
-    payloads.push(payload);
+    frames.push({ payload, ...(named ? { title: message.name } : {}) });
   });
 
-  return { payloads, warnings };
+  return { frames, warnings };
 }
 
 /** The handshake headers: the request's own, plus whatever auth placed. */
@@ -286,6 +337,7 @@ export async function executeWebsocketRequest(
 
   const maxMessages = options.maxMessages ?? DEFAULT_MAX_MESSAGES;
   const maxDurationMs = options.maxDurationMs ?? DEFAULT_MAX_DURATION_MS;
+  const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
 
   // A session that sends nothing is almost never what the file meant, and it is
   // indistinguishable from a healthy one in the result: it connects, records
@@ -304,7 +356,7 @@ export async function executeWebsocketRequest(
   const planned = framesToSend(request, subst);
   warnings.push(...planned.warnings);
 
-  if (planned.payloads.length === 0) {
+  if (planned.frames.length === 0) {
     warnings.push(
       'This WebSocket request sends no messages, so the session only records what the peer '
         + 'volunteers. Sending nothing is not a pass. The usual cause is selection: set '
@@ -338,24 +390,37 @@ export async function executeWebsocketRequest(
 
   const startedAt = Date.now();
   const offset = () => Date.now() - startedAt;
-  const record = (direction: 'sent' | 'received', payload: string) => {
+
+  // Assigned once the promise below has a `finish` to restart the clock against.
+  // Held out here so `record` is the single place a frame touches the idle bound:
+  // a handler that recorded a frame without restarting it would let the session
+  // end while the peer was still talking.
+  let touchIdle: () => void = () => {};
+
+  const record = (frame: RecordedFrame) => {
     const offset_ms = offset();
     // The running total is what lets the entry clip itself to the cumulative
     // ceiling. Computed from the transcript rather than carried in a counter so
     // there is one source of truth for it.
     transcript.push(
-      toTranscriptEntry(
-        { direction, offset_ms, payload },
-        options,
-        transcriptBytes(transcript),
-      ),
+      toTranscriptEntry({ ...frame, offset_ms }, options, transcriptBytes(transcript)),
     );
 
-    const bytes = Buffer.byteLength(payload, 'utf8');
+    const bytes = frame.bytes ?? Buffer.byteLength(frame.payload, 'utf8');
     if (scriptBytes + bytes <= MAX_SCRIPT_TRANSCRIPT_BYTES) {
       scriptBytes += bytes;
-      scriptFrames.push({ direction, offset_ms, bytes, payload });
+      scriptFrames.push({
+        direction: frame.direction,
+        offset_ms,
+        bytes,
+        type: frame.type,
+        ...(frame.title !== undefined ? { title: frame.title } : {}),
+        ...(frame.closeCode !== undefined ? { close_code: frame.closeCode } : {}),
+        payload: frame.payload,
+      });
     }
+
+    touchIdle();
   };
 
   // Wrapped because the constructor validates the handshake headers and throws
@@ -401,6 +466,7 @@ export async function executeWebsocketRequest(
       stopReason = reason;
       failure = error;
       clearTimeout(deadline);
+      clearTimeout(idle);
       // close(), not close(code): `ws` reads a second argument as a close code,
       // and upstream's own client takes exactly one argument here for the same
       // reason. The grace timer is what guarantees teardown if the peer never
@@ -422,6 +488,17 @@ export async function executeWebsocketRequest(
 
     const deadline = setTimeout(() => finish('timeout'), maxDurationMs);
 
+    // Armed by the first recorded frame rather than at open, so a session that
+    // authors no messages keeps the whole wall-clock budget to wait for a peer that
+    // may yet speak. `0` turns the bound off, for a protocol whose gaps are longer
+    // than its answers.
+    let idle: NodeJS.Timeout | undefined;
+    touchIdle = () => {
+      if (idleTimeoutMs <= 0) return;
+      clearTimeout(idle);
+      idle = setTimeout(() => finish('idle'), idleTimeoutMs);
+    };
+
     // Fires on the 101 before `open`, and is the only place the server's own
     // headers are visible: a WebSocket has no per-message headers to fall back on.
     socket.on('upgrade', (response: IncomingMessage) => {
@@ -429,33 +506,51 @@ export async function executeWebsocketRequest(
     });
 
     socket.on('open', () => {
-      for (const frame of planned.payloads) {
-        socket.send(frame);
-        record('sent', frame);
+      for (const frame of planned.frames) {
+        socket.send(frame.payload);
+        record({
+          direction: 'sent',
+          payload: frame.payload,
+          type: 'text',
+          title: frame.title,
+        });
       }
     });
 
-    socket.on('message', (data: Buffer | ArrayBuffer | Buffer[]) => {
+    socket.on('message', (data: Buffer | ArrayBuffer | Buffer[], isBinary?: boolean) => {
       // Frames that were already queued when the bound was reached are dropped
       // rather than recorded: the transcript has to mean "this is what the bound
       // allowed", or the cap is not a cap.
       if (stopped) return;
-      const payload = Buffer.isBuffer(data)
-        ? data.toString('utf8')
-        : Buffer.from(data as ArrayBuffer).toString('utf8');
-      record('received', payload);
+      const raw = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
+      // Base64 for a binary frame. Decoding those bytes as UTF-8 replaces every
+      // invalid sequence, so the payload could not be read back and its length no
+      // longer matched what arrived — `bytes` is the wire size in both cases.
+      const payload = isBinary === true ? raw.toString('base64') : raw.toString('utf8');
+      record({
+        direction: 'received',
+        payload,
+        type: isBinary === true ? 'binary' : 'text',
+        bytes: raw.length,
+      });
 
-      if (payload.startsWith(ENGINE_IO_OPEN)) {
-        // Only an OPEN frame proves the peer speaks engine.io. Without this a
-        // server that happens to send "2" would be answered with a "3" it never
-        // asked for.
-        engineIoSeen = true;
-      } else if (options.engineIoKeepalive && engineIoSeen && payload === ENGINE_IO_PING) {
-        socket.send(ENGINE_IO_PONG);
-        record('sent', ENGINE_IO_PONG);
+      // Only against a text frame: engine.io is a text protocol, and base64 of
+      // arbitrary bytes can begin with "0" without meaning anything by it.
+      if (isBinary !== true) {
+        if (payload.startsWith(ENGINE_IO_OPEN)) {
+          // Only an OPEN frame proves the peer speaks engine.io. Without this a
+          // server that happens to send "2" would be answered with a "3" it never
+          // asked for.
+          engineIoSeen = true;
+        } else if (options.engineIoKeepalive && engineIoSeen && payload === ENGINE_IO_PING) {
+          socket.send(ENGINE_IO_PONG);
+          record({ direction: 'sent', payload: ENGINE_IO_PONG, type: 'text' });
+        }
       }
 
-      const received = transcript.filter((entry) => entry.direction === 'received').length;
+      const received = transcript.filter(
+        (entry) => entry.direction === 'received' && DATA_FRAME_TYPES.has(entry.type),
+      ).length;
       if (received >= maxMessages) {
         finish('count');
       } else if (transcriptCapReached(transcript, options)) {
@@ -463,8 +558,50 @@ export async function executeWebsocketRequest(
       }
     });
 
+    // Control frames, recorded so a silent-looking session can be told apart from
+    // one the peer was keeping alive all along. `ws` answers a ping with a pong
+    // itself, below this code, so that reply is not in the transcript.
+    // A control frame's own payload is opaque application data and is almost always
+    // empty; it is recorded as text, and `bytes` is what actually arrived.
+    socket.on('ping', (data: Buffer) => {
+      if (stopped) return;
+      record({
+        direction: 'received',
+        payload: data.toString('utf8'),
+        type: 'ping',
+        bytes: data.length,
+      });
+    });
+
+    socket.on('pong', (data: Buffer) => {
+      if (stopped) return;
+      record({
+        direction: 'received',
+        payload: data.toString('utf8'),
+        type: 'pong',
+        bytes: data.length,
+      });
+    });
+
     socket.on('error', (error: Error) => finish('error', error.message));
-    socket.on('close', () => finish('closed'));
+
+    socket.on('close', (code: number, reason: Buffer) => {
+      // The close frame is the session's last word, and until now it was thrown
+      // away: `stop_reason: "closed"` said the peer hung up without saying whether
+      // it was an ordinary goodbye (1000), a policy refusal (1008) or a server
+      // error (1011). Not recorded when a bound already stopped us, because then
+      // this is the peer answering our own close rather than ending the session.
+      if (!stopped) {
+        record({
+          direction: 'received',
+          payload: reason === undefined ? '' : reason.toString('utf8'),
+          type: 'close',
+          bytes: reason === undefined ? 0 : reason.length,
+          closeCode: code,
+        });
+      }
+      finish('closed');
+    });
   });
 
   // Belt and braces on every exit path, including one where the promise above

@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A WebSocket transcript now says what each frame was.** An entry carries its
+  `type` — `text`, `binary`, `ping`, `pong` or `close` — the authored `title` of a
+  message the session sent, and, on a close frame, the `close_code` the peer gave
+  with its reason as that entry's payload. A close code is frequently the entire
+  diagnosis of a failed session (`1008` a refusal, `1011` a server error, `1006` a
+  peer that vanished) and was previously discarded, along with every ping and pong.
+  Control frames do not count toward `maxMessages`: a peer that pings once a second
+  would otherwise reach the bound by itself and report `count` for a session that
+  received no answer. A binary frame's payload is recorded as base64 rather than
+  decoded as UTF-8, which replaced every invalid sequence and reported a size that
+  never went over the wire; `bytes` is now the true wire size for every kind of
+  frame. A post-response script sees the same fields, since the transcript is what
+  `res.body` is on this transport.
+
+- **A WebSocket session ends when it goes quiet**, after 1500 ms of silence,
+  reporting `stop_reason: "idle"`. Sessions previously spent every millisecond of
+  the wall-clock ceiling waiting on a peer that had already answered — eight
+  requests at `maxDurationMs: 2500` took 22 seconds — because that ceiling was the
+  only thing that could end a request/response session. The new `idleTimeoutMs`
+  bound is settable per run and `0` restores waiting for the ceiling, which is what
+  a protocol whose gaps are longer than its answers needs. The clock is armed by the
+  first frame rather than at connect, so a listen-only request that authors no
+  messages still gets the full budget. An idle stop is **not** reported as
+  `truncated`, unlike `count`, `timeout` and `bytes`: no cap bit, and the budget went
+  unspent.
+
 - **Response headers on every result, as `response_headers`.** Previously they were
   reachable only by authoring a test script to capture them, which meant writing a
   script to see something the runner already had. No flag gates them, and
