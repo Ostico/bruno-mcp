@@ -43,6 +43,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An authored `timeout: inherit` was deleted on the next write.** Both dialects
+  accept the word — `bruToJsonV2` reads it out of a `.bru` settings block, and
+  Bruno's `.yml` writer carries it through rather than flattening it — but both
+  parsers here took `timeout` only as a number. A modelled key never reaches the
+  passthrough bag, so the value reached neither the model nor the file it came
+  from, and the request came back with no timeout at all: a silent change to how
+  somebody's request runs, not just a lost string. The word is now modelled, and
+  both the request deadline and the script budget answer it with the runner's own
+  default. That is what there is to inherit: Bruno's app inherits an
+  application-level preference here, and this server has no preference layer. The
+  MCP schema still accepts only a number, so `inherit` is a value this server
+  preserves rather than one it can author.
+
+- **An unrecognised `settings.tls` block was dropped whole.** `tls` is a modelled
+  settings key, so a field inside it that the model does not name reached neither
+  the TLS fields nor the settings passthrough bag: a partially-recognised block
+  lost its unknown fields, and a block made entirely of them parsed to nothing and
+  took the key with it. The block now carries a bag of its own, so `tls` survives a
+  read-modify-write whether or not this server understands what is in it.
+
 - **A gRPC or WebSocket request was written with HTTP's `settings:` block.** Every
   `.yml` request got `encodeUrl`, `followRedirects` and `maxRedirects` — keys that
   describe redirect-following and URL encoding, which neither transport does, and

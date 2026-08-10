@@ -38,6 +38,7 @@ import {
   YAML_REQUEST_KEYS,
   YAML_RUNTIME_KEYS,
   YAML_SETTINGS_KEYS,
+  YAML_TLS_KEYS,
   YAML_WEBSOCKET_KEYS,
 } from './extra-keys.js';
 import {
@@ -465,6 +466,19 @@ export function generateYamlRequest(request: YamlRequest): string {
   // otherwise be written to the file as a literal `extra:` key.
   const { extra: settingsExtra, ...modelledSettings } = request.settings ?? {};
   const settings = (stripEmpty(modelledSettings) ?? {}) as Record<string, unknown>;
+
+  // `tls` carries a bag of its own, for the same reason and with the same hazard:
+  // passed through verbatim above, the bag would reach the file as a literal
+  // `extra:` key nested inside the block. Reassigning `settings.tls` keeps the
+  // block where the source had it, since assigning to an existing property does
+  // not move it. A block that rebuilds to nothing needs no special case: the
+  // document-wide `stripEmpty` below drops an empty mapping.
+  if (modelledSettings.tls) {
+    const { extra: tlsExtra, ...modelledTls } = modelledSettings.tls;
+    const tls = (stripEmpty(modelledTls) ?? {}) as Record<string, unknown>;
+    applyExtraKeys(tls, tlsExtra, YAML_TLS_KEYS);
+    settings.tls = tls;
+  }
 
   // Assigned onto whatever the source already had, never rebuilt from the
   // defaults alone: `settings` also carries `tls` and `proxy`, and a first cut

@@ -48,8 +48,10 @@ import {
   YAML_REQUEST_KEYS,
   YAML_RUNTIME_KEYS,
   YAML_SETTINGS_KEYS,
+  YAML_TLS_KEYS,
   YAML_WEBSOCKET_KEYS,
 } from './extra-keys.js';
+import { readTimeoutSetting } from './timeout-setting.js';
 import { graphqlBodyFromYaml, YAML_GRAPHQL_KEYS } from './yaml-graphql-block.js';
 
 function safeParse(content: string, label: string): Record<string, unknown> {
@@ -431,6 +433,14 @@ function parseTlsSettings(raw: unknown): TlsSettings | undefined {
   if (typeof obj.ca === 'string') tls.ca = obj.ca;
   if (typeof obj.cert === 'string') tls.cert = obj.cert;
   if (typeof obj.key === 'string') tls.key = obj.key;
+
+  // The block gets its own bag rather than relying on the settings one: `tls` is
+  // a modelled settings key, so nothing inside it ever reaches that bag. Without
+  // this, a block of fields we do not name parsed to `undefined` and the whole
+  // key was deleted on the next write.
+  const extra = collectExtraKeys(obj, YAML_TLS_KEYS);
+  if (extra) tls.extra = extra;
+
   return Object.keys(tls).length > 0 ? tls : undefined;
 }
 
@@ -440,7 +450,7 @@ function parseSettings(raw: unknown): YamlSettings | undefined {
   const settings: YamlSettings = {
     encodeUrl:
       typeof obj.encodeUrl === 'boolean' ? obj.encodeUrl : undefined,
-    timeout: typeof obj.timeout === 'number' ? obj.timeout : undefined,
+    timeout: readTimeoutSetting(obj.timeout),
     followRedirects:
       typeof obj.followRedirects === 'boolean'
         ? obj.followRedirects

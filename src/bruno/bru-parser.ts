@@ -32,6 +32,7 @@ import {
 } from './types.js';
 import { toHttpMethod, normalizeBodyType } from './parse-guards.js';
 import { normalizeTags } from './meta-tags.js';
+import { readTimeoutSetting } from './timeout-setting.js';
 import { applyExtraKeys, BRU_META_KEYS, collectExtraKeys } from './extra-keys.js';
 import { toFormUrlEncodedEntries } from './request-inputs.js';
 
@@ -620,7 +621,8 @@ function readRequestSettings(value: unknown): BruRequestSettings | undefined {
   };
   const settings: BruRequestSettings = {};
   if (typeof raw.encodeUrl === 'boolean') settings.encodeUrl = raw.encodeUrl;
-  if (typeof raw.timeout === 'number') settings.timeout = raw.timeout;
+  const timeout = readTimeoutSetting(raw.timeout);
+  if (timeout !== undefined) settings.timeout = timeout;
   // Typechecked rather than truthiness-checked: `followRedirects: false` and
   // `maxRedirects: 0` are the values worth writing down, and both are falsy.
   if (typeof raw.followRedirects === 'boolean') {

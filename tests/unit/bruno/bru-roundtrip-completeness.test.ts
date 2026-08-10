@@ -136,6 +136,23 @@ settings {
 `,
   },
   {
+    // `inherit` is a legal timeout in this dialect too — `bruToJsonV2` passes the
+    // bare word through where it parses digits into a number — and a parser that
+    // took only the number deleted it on the next write.
+    name: 'settings: an authored timeout of inherit',
+    src: `${META}
+get {
+  url: https://api.example.test/slow
+  body: none
+  auth: none
+}
+
+settings {
+  timeout: inherit
+}
+`,
+  },
+  {
     name: 'vars: pre-request and post-response, local and disabled',
     src: `${META}
 get {

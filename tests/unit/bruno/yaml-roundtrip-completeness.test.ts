@@ -203,6 +203,47 @@ settings:
 `,
   },
   {
+    // The parser used to take `timeout` only as a number, and a modelled key
+    // never reaches the passthrough bag — so the word was deleted on the next
+    // write and the request came back with no timeout at all. Both dialects
+    // accept it: `bruToJsonV2` reads the same word out of a `.bru` block.
+    name: 'settings: an authored timeout of inherit',
+    src: `${INFO}http:
+  method: GET
+  url: https://api.example.test/slow
+settings:
+  timeout: inherit
+`,
+  },
+  {
+    // The `tls` block needs a bag of its own. It is a modelled settings key, so a
+    // field inside it that the model does not name reaches neither the tls
+    // fields nor the settings bag; a block made only of such fields parsed to
+    // `undefined` and took the whole key with it.
+    name: 'settings: tls fields the model does not name',
+    src: `${INFO}http:
+  method: GET
+  url: https://api.example.test/slow
+settings:
+  tls:
+    enabled: true
+    pfx: bundle.p12
+    passphrase: hunter2
+`,
+  },
+  {
+    name: 'settings: tls mixing named and unnamed fields',
+    src: `${INFO}http:
+  method: GET
+  url: https://api.example.test/slow
+settings:
+  tls:
+    rejectUnauthorized: false
+    ca: ca.pem
+    enabled: true
+`,
+  },
+  {
     name: 'auth: object form',
     src: `${INFO}http:
   method: GET

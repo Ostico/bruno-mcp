@@ -163,6 +163,21 @@ export const YAML_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   'extra',
 ]);
 
+/**
+ * Fields of `TlsSettings` that generateYamlRequest writes itself.
+ *
+ * The `tls` block needs its own list because it is nested inside a modelled
+ * settings key: an unrecognised field inside it is invisible to
+ * `YAML_SETTINGS_KEYS`, which only ever sees `tls` as a whole.
+ */
+export const YAML_TLS_KEYS: ReadonlySet<string> = new Set([
+  'rejectUnauthorized',
+  'ca',
+  'cert',
+  'key',
+  'extra',
+]);
+
 /** Fields of `YamlHeader` that generateYamlRequest writes itself. */
 export const YAML_HEADER_KEYS: ReadonlySet<string> = new Set([
   'name',

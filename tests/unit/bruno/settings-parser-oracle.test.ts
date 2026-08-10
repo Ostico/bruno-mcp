@@ -48,6 +48,25 @@ describe('what the parser reports for a settings block', () => {
     });
   });
 
+  it('reports the word inherit as a timeout, rather than a number or nothing', () => {
+    // Why `BruRequestSettings.timeout` is a union rather than a number. Our
+    // reader used to take only the number, and a modelled key never reaches the
+    // passthrough bag, so the word arrived and was deleted on the next write.
+    expect(bruToJsonV2(request('\nsettings {\n  timeout: inherit\n}\n')).settings).toEqual({
+      encodeUrl: false,
+      timeout: 'inherit',
+    });
+  });
+
+  it('drops a timeout it cannot read, rather than refusing the file', () => {
+    // Which is why our reader drops one too: refusing here would reject a file
+    // Bruno itself opens.
+    expect(bruToJsonV2(request('\nsettings {\n  timeout: soon\n}\n')).settings).toEqual({
+      encodeUrl: false,
+      timeout: 0,
+    });
+  });
+
   it('keeps an explicit encodeUrl: true', () => {
     expect(bruToJsonV2(request('\nsettings {\n  encodeUrl: true\n}\n')).settings).toEqual({
       encodeUrl: true,

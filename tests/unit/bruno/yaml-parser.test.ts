@@ -266,7 +266,12 @@ settings:
       expect(result.settings!.proxy).toBe('http://proxy.example.com:8080');
     });
 
-    it('omits settings.tls when no recognized tls fields are present', () => {
+    it('carries a tls field the model does not name rather than dropping the block', () => {
+      // This used to assert the opposite, and the opposite was a data-loss bug: a
+      // `tls` block made only of fields we do not name parsed to `undefined`, so
+      // the next write deleted the block the author had put there. `tls` is a
+      // modelled settings key, so nothing inside it reaches the settings bag —
+      // the block needs one of its own.
       const NO_TLS_FIELDS_YAML = `
 info:
   name: Empty TLS
@@ -281,8 +286,25 @@ settings:
 `;
       const result = parseYamlRequest(NO_TLS_FIELDS_YAML);
       expect(result.settings).toBeDefined();
-      expect(result.settings!.tls).toBeUndefined();
+      expect(result.settings!.tls).toEqual({ extra: { unknownField: 'value' } });
       expect(result.settings!.proxy).toBeUndefined();
+    });
+
+    it('omits settings.tls when the block holds nothing at all', () => {
+      const EMPTY_TLS_YAML = `
+info:
+  name: Empty TLS
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://example.com/api"
+settings:
+  tls: {}
+`;
+      const result = parseYamlRequest(EMPTY_TLS_YAML);
+      expect(result.settings).toBeDefined();
+      expect(result.settings!.tls).toBeUndefined();
     });
 
     it('parses docs string', () => {
