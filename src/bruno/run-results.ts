@@ -13,6 +13,17 @@ import type { ResponseHeaders } from './response-headers.js';
 
 export interface RequestExecutionResult {
   name: string;
+  /**
+   * Absolute path of the request file this result came from, in the same shape
+   * `list_requests` and `ParseFailure.file` report, so it can be handed straight
+   * back to `read_request` or named in a later run.
+   *
+   * Optional because a result can be produced without one — `executeRequest`
+   * runs a request it was handed rather than one it discovered — but every
+   * result from a collection run carries it: a run of twelve requests otherwise
+   * reports twelve names and nothing locating any of them on disk.
+   */
+  path?: string;
   method: string;
   url: string;
   /**
@@ -139,6 +150,20 @@ export interface GroupRunResult {
   error?: string;
 }
 
+/**
+ * A report file a run wrote, named so the caller can collect it.
+ *
+ * `bytes` is here because the whole reason a report is a file rather than part
+ * of this result is its size, and a caller deciding whether to read it back
+ * should not have to stat it to find out.
+ */
+export interface RunReportFile {
+  format: 'junit' | 'html';
+  /** Absolute, inside the collection. */
+  path: string;
+  bytes: number;
+}
+
 export interface CollectionRunResult {
   summary: CollectionRunSummary;
   /**
@@ -165,4 +190,10 @@ export interface CollectionRunResult {
    * nothing to say.
    */
   warnings?: string[];
+  /**
+   * Report files this run wrote, one per format asked for and written. Absent
+   * when none were asked for, and absent rather than empty when every one of
+   * them failed — the reason for each failure is a run-level warning.
+   */
+  reports?: RunReportFile[];
 }

@@ -79,4 +79,26 @@ export interface ExecutionOptions {
    * to wait.
    */
   websocket?: WebsocketRunOptions;
+  /**
+   * Report files to write for this run. Omit and nothing is written.
+   *
+   * A report is a file rather than part of the result because the two consumers
+   * that want one — a CI system and a person — read files, and the HTML page is
+   * around 30 KB. Paths are confined to the collection; see `run-reports.ts` for
+   * why that boundary is not negotiable, and why a report that cannot be written
+   * is a warning rather than a failed run.
+   */
+  report?: RunReportRequest;
+}
+
+/**
+ * Which report files a run should write, each naming its own path.
+ *
+ * Relative to the collection, or absolute and inside it. Two keys rather than a
+ * format list plus a directory: a caller that wants `junit.xml` where its
+ * pipeline already looks for one should not have to accept a name we invented.
+ */
+export interface RunReportRequest {
+  junit?: string;
+  html?: string;
 }
