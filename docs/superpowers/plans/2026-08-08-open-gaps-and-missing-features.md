@@ -13,19 +13,22 @@ and are recorded at the bottom so they are not re-litigated.
 first; section C is deliberate and should generally not be started at all until
 its stated trigger fires.
 
-**Updated 2026-08-10.** Ten of the eleven defects are closed: A5, A6, A8, A9 and
-A10 in #154, A4 and A7 in #155, A3 in #157, A2 in #158, A1 in #159, and the two
-found while measuring them in #161. Their entries are kept in
+**Updated 2026-08-10.** All eleven defects are closed, plus the two found while
+measuring them: A5, A6, A8, A9 and A10 in #154, A4 and A7 in #155, A3 in #157, A2
+in #158, A1 in #159, A12 and A13 in #161, and A11 last. Their entries are kept in
 place, marked CLOSED, rather than moved to the bottom — the evidence in them is
 why they were found, and a reader who meets the same symptom again should land on
-it. Two also have their classification corrected: A4 was filed as "binary frames
+it. Three also have their classification corrected: A4 was filed as "binary frames
 are broken", and the upstream source says there is no binary path to break; A2 was
 filed as "the writer injects a block the source never had", and upstream injects
-the same block — the real fault was narrower and elsewhere in the same code.
+the same block — the real fault was narrower and elsewhere in the same code; and
+A11 was cleared as an evidence artefact when it was the defect it looked like.
 
-A11 could not be reproduced and is reclassified as an evidence problem rather than
-a defect; the reasoning is in its entry. Two new defects were found while measuring
-A2 and are filed as A12 and A13.
+A11 was reclassified as an evidence problem rather than a defect, and that was
+wrong: it is a defect, closed 2026-08-10. The probe that cleared it read the layer
+that throws a parse error and not the layer that reports one, where the truncation
+it went looking for actually lived. Two new defects were found while measuring A2
+and are filed as A12 and A13.
 
 **A1 closed 2026-08-09 in #159**, in the permissive direction: a request whose
 extension its collection's dialect does not read is now operated on and warned
@@ -35,8 +38,14 @@ what only surfaced by doing it.
 **A12 and A13 closed 2026-08-10 in #161**, together, both being settings-parser
 fidelity: an authored `timeout: inherit` is now modelled and honoured in both
 dialects, and an unrecognised `settings.tls` block survives a write instead of being
-deleted. **Every defect in section A is now closed.** What remains in this document
-is sections B onward, plus the A-policy question below, which was never a defect.
+deleted.
+
+**A11 closed 2026-08-10**, after being reopened: a `.bru` parse failure reported its
+position and no reason, because the report kept the first line of an error whose
+reason is on its last. That is also what caused B8 to be filed as a missing format
+feature, so B8 is withdrawn — see both entries. **Every defect in section A is now
+closed.** What remains in this document is sections B onward, plus the A-policy
+question below, which was never a defect.
 
 ---
 
@@ -365,7 +374,7 @@ out-of-range *known* keys are properly rejected by the schema.
 **Why it matters.** A typo such as `maxMessage` for `maxMessages` silently falls
 back to the default, and the run looks fine.
 
-### A11. Parse errors end at a dangling colon — NOT REPRODUCED
+### A11. Parse errors end at a dangling colon — CLOSED; the NOT REPRODUCED verdict was wrong
 
 **Evidence as filed.** `"Failed to parse .bru file: Line 7, col 1:"` — the message
 stops where the offending content should follow. Cosmetic, but it reads as
@@ -384,11 +393,20 @@ whole, and there is no first-line slice anywhere in the tree. The reported sympt
 is therefore an artefact of how the message was recorded or displayed, not of what
 the server produced — the newlines were lost somewhere after the throw.
 
-**Left open as a question, not a defect.** Worth one more datum: the `ws.bru` file
-that produced it (see B8). Note the probe also showed that `bruToJsonV2` **accepts**
-a `ws { url: … }` block, which makes B8's headline — "`.bru` cannot express a
-WebSocket request" — suspect for the same reason A4's was. Whatever failed in that
-file, it was not the `ws` block itself.
+**That verdict was wrong, and this is a defect. Closed 2026-08-10.** The probe
+checked the thrower and stopped there. The first-line slice it reported finding
+nowhere is `parse-failure.ts:22`, `raw.split('\n', 1)[0]`, one layer above — the
+run result never carried what `bru-parser.ts` threw. Reading only the layer that
+produces a value says nothing about the layer that reports it, and that gap is why
+the recorded evidence looked like a display artefact.
+
+The slice was deliberate and half right: `yaml` puts its reason in the first line
+and a source-echoing code frame under it. The ohm grammar behind `.bru` inverts
+that — position first, `Expected …` last — so the rule that kept `.yml` diagnostics
+whole reduced every `.bru` one to a coordinate. The report now carries the
+expected-token list too, with families collapsed to fit the message cap, and still
+drops the frame. Details and the cost of the missing diagnosis are in B8, which was
+filed *because* of this defect.
 
 ### A12. An authored `timeout: inherit` is dropped on the next write — CLOSED (#161)
 
@@ -591,20 +609,50 @@ asserted on.
 There appears to be no way to express `Sec-WebSocket-Protocol`. Untested — the
 probe had no server requiring one — so confirm before building.
 
-### B8. `.bru` cannot express a WebSocket request
+### B8. `.bru` cannot express a WebSocket request — WITHDRAWN; the parse report that hid it is fixed
 
-**Evidence.** A hand-written `.bru` WebSocket request is rejected, and reported
-honestly:
+**The headline was wrong.** `.bru` expresses a WebSocket request fully, and this
+server already reads and writes one. Measured against the grammar rather than
+inferred from the failure:
 
-```
-"parseErrors": 1,
-"parseFailures": [{"file": ".../bru/ws.bru", "message": "Failed to parse .bru file: Line 7, col 1:"}]
-```
+- `ws = "ws" dictionary` (`bruno-lang/v2/src/bruToJson.js:125`) carries `url`,
+  `body` and `auth`, exactly as `http` does.
+- `bodyws = "body:ws" dictionary` (`:178`) carries one message per block, with
+  `name`, `content`, `type` and `selected`; repeated blocks accumulate in order.
+- Headers use the same `headers { … }` block every request kind uses.
+- A round-trip fixture for that shape already existed here, at
+  `tests/unit/bruno/bru-roundtrip-completeness.test.ts:586`, which is the second
+  reason the headline should not have survived being written.
 
-It fails loudly rather than silently, so this is a gap and not a defect. But
-combined with the per-collection format rule, it means a `.bru` collection cannot
-contain WebSocket requests at all — the dialect choice silently decides which
-transports are available.
+Two details worth keeping. Upstream's own reader drops `selected`, so a message
+deselected in Bruno's UI comes back selected from disk; our transport treats an
+absent `selected` as selected (`ws-transport.ts:170`), which agrees. And
+`body:ws { greeting: hello }` — the name used as the key, which is the natural
+mistake — parses to one message with an empty name and empty content, then runs
+and warns that nothing was sent (`ws-transport.ts:306`). It is legal `.bru` and
+does nothing.
+
+**What actually failed** in the file behind the evidence was the block name:
+`websocket {` where the grammar says `ws {`. Re-running it reproduces the recorded
+message to the character, `Line 7, col 1:` included.
+
+**The real defect is that message.** `describeParseFailure` kept the first line of
+a parse error only, on the reasoning that `yaml` puts the reason there and a code
+frame under it echoes the source back. The ohm grammar behind `.bru` is the other
+way around: the first line is a position and nothing else, and the `Expected …`
+list that names `ws` is last. So every `.bru` parse failure reported a coordinate
+with no diagnosis — and the one time that happened, the conclusion drawn from it
+was that the format lacked a feature it has.
+
+**Fixed 2026-08-10.** The report now carries the expected-token list as well as
+the position, with the token families collapsed (`auth:basic`, `auth:bearer`, … to
+`auth:*`) because the raw list runs past a thousand characters and `ws` sits near
+the end of it, where the message cap would have cut it off. Code-frame lines are
+still dropped: a token list is grammar text, an echoed source line can carry a
+credential out of a request body.
+
+**Left open by this:** nothing in `.bru`. B1 still covers authoring either
+transport through the tool surface, in either dialect.
 
 ### B9. A WebSocket request always burns its full duration budget
 
