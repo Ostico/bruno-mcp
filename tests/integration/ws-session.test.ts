@@ -956,3 +956,84 @@ websocket:
     }
   }, 10000);
 });
+
+describe('a binary frame the peer sends', () => {
+  it('is recorded as binary and base64, with the wire length beside it', async () => {
+    // Outbound binary is refused for the reason A4 recorded — upstream has no
+    // binary send path — but a peer can still send one, and nothing proved what
+    // happened to it. Decoding these bytes as UTF-8 would replace the invalid
+    // sequences, so the payload has to come back base64 or it cannot be read at
+    // all. 0x00 and 0xff are both invalid UTF-8 continuations, which is the point
+    // of choosing them.
+    const bytes = Buffer.from([0x00, 0x01, 0xff, 0xfe]);
+    const harness = await startServer((socket) => {
+      socket.on('message', () => socket.send(bytes, { binary: true }));
+    });
+    try {
+      const [result] = await run(
+        await collection({ 'bru.bru': bruWs('127.0.0.1', harness.port) }),
+        { maxMessages: 1, includePayloads: true },
+      );
+
+      const received = result.websocket?.transcript.find((entry) => entry.direction === 'received');
+      expect(received?.type).toBe('binary');
+      expect(received?.payload).toBe(bytes.toString('base64'));
+      expect(Buffer.from(received?.payload ?? '', 'base64')).toEqual(bytes);
+      expect(received?.bytes).toBe(bytes.length);
+    } finally {
+      await stop(harness);
+    }
+  }, 10000);
+});
+
+describe('two WebSocket sessions in parallel groups', () => {
+  it('hold their sockets open at the same time, and each keeps its own transcript', async () => {
+    // Sequential behaviour was measured; parallel was not. A session that reads
+    // from a socket for as long as its bounds allow is exactly the shape that
+    // would serialise unnoticed, because both groups still finish and both
+    // transcripts still look right. So the proof is the server's view: it must
+    // have held two sockets open at once, which a serial run cannot produce.
+    let open = 0;
+    let peak = 0;
+    const harness = await startServer((socket) => {
+      open += 1;
+      peak = Math.max(peak, open);
+      socket.on('close', () => { open -= 1; });
+      socket.on('message', (data) => {
+        // Long enough that a serial run could not overlap the two sessions.
+        setTimeout(() => socket.send(`echo:${data.toString()}`), 250);
+      });
+    });
+    try {
+      const root = await collection({
+        'alpha.bru': bruWs('127.0.0.1', harness.port, 'from-alpha'),
+        'beta.bru': bruWs('127.0.0.1', harness.port, 'from-beta').replace(
+          'name: BruSocket',
+          'name: BruSocketTwo',
+        ),
+      });
+      const result = await RequestExecutor.executeCollection(root, {
+        scriptRunner: TestRunner,
+        parallel: true,
+        groups: [
+          { name: 'alice', requests: ['alpha.bru'] },
+          { name: 'bob', requests: ['beta.bru'] },
+        ],
+        websocket: { maxMessages: 1, maxDurationMs: 4000, includePayloads: true },
+      });
+
+      expect(peak).toBe(2);
+      expect(result.groups.map((group) => group.name)).toEqual(['alice', 'bob']);
+      const payloads = result.groups.map(
+        (group) => group.results[0]?.websocket?.transcript.map((entry) => entry.payload),
+      );
+      expect(payloads).toEqual([
+        ['from-alpha', 'echo:from-alpha'],
+        ['from-beta', 'echo:from-beta'],
+      ]);
+      expect(harness.closes).toBe(2);
+    } finally {
+      await stop(harness);
+    }
+  }, 15000);
+});
