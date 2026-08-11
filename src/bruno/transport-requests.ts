@@ -14,7 +14,8 @@
  *   has a `metadata` block. They are the same shape but not the same key, so a
  *   shared field would have to be written under two names anyway.
  * - Only WebSocket messages carry a `type` (`text` / `binary`) and a `selected`
- *   flag. gRPC has neither, in either dialect.
+ *   flag. gRPC has neither, in either dialect. `.bru` expresses `selected` only
+ *   in its true form — see `BruTransportMessage.selected`.
  * - A `.yml` gRPC message variant holds its payload as a bare string under
  *   `message`; a WebSocket variant nests it one level deeper as
  *   `message: { type, data }`.
@@ -31,12 +32,11 @@ import type { YamlAuth, YamlHeader } from './types.js';
  * One message of a `.bru` gRPC or WebSocket request.
  *
  * `type` is WebSocket-only and absent on a gRPC message, because this dialect
- * has no type for one. There is no `selected` in `.bru` at all — neither block
- * carries it, and inventing one would put a field in the file Bruno drops.
+ * has no type for one.
  *
- * Both fields are required rather than optional because the grammar always
- * produces them: a `body:grpc` block written in the bare-text form parses to
- * `{name: '', content: ''}` with the content destroyed and no error raised, so
+ * `name` and `content` are required rather than optional because the grammar
+ * always produces them: a `body:grpc` block written in the bare-text form parses
+ * to `{name: '', content: ''}` with the content destroyed and no error raised, so
  * the keys are present even when the data is gone.
  */
 export interface BruTransportMessage {
@@ -44,6 +44,23 @@ export interface BruTransportMessage {
   /** WebSocket only: `text` or `binary`. */
   type?: string;
   content: string;
+  /**
+   * WebSocket only, and **only ever `true`**.
+   *
+   * `.bru` does carry the flag — `jsonToBru` writes `selected: true` for a
+   * selected message and writes nothing for a deselected one, and `bruToJson`
+   * reads it back. What it cannot carry is the false case: its parser resolves a
+   * missing pair to `false`, so an absent line and a deliberate `selected: false`
+   * arrive here as the same value and cannot be told apart.
+   *
+   * So this field is populated only when the file said `selected: true`, and is
+   * left absent otherwise. Absent means "not stated", which the WebSocket
+   * transport still sends — the alternative would silently stop sending every
+   * message of every hand-written `.bru` WebSocket request. For the same reason
+   * the authoring path refuses to author a deselected message in this dialect
+   * rather than write a file whose behaviour disagrees with the request.
+   */
+  selected?: boolean;
 }
 
 /**

@@ -23,7 +23,10 @@
  * `filestore` needs `nanoid` at runtime but declares only `@types/nanoid`, so
  * `nanoid` is a devDependency too, pinned to v3 because the published build is
  * CommonJS. Its own `@usebruno/lang` is pinned exactly (0.38.0) and installs
- * nested, so the oracle reads with upstream's grammar version rather than ours.
+ * nested, so the oracle reads with the grammar version upstream chose whatever
+ * range we declare. Ours currently resolves to the same version — it was raised
+ * to `^0.38.0` because 0.36 cannot write a WebSocket message's `selected` flag
+ * at all — but nothing here depends on the two agreeing, which is the point.
  */
 
 import { promises as fs } from 'fs';

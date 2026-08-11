@@ -171,3 +171,32 @@ export const requestBodySchema = z.object({
     ),
 }).optional();
 
+/**
+ * The WebSocket-only half of an authoring input, shared by the tools that write
+ * requests.
+ *
+ * A nested object rather than more flat arguments, matching `run_collection`:
+ * a caller who never authors a WebSocket request never sees a WebSocket field.
+ */
+export const websocketAuthoringSchema = z.object({
+  messages: z.array(z.object({
+    title: z.string().optional()
+      .describe('Name of the message. Defaults to "message N" by position, as Bruno does.'),
+    type: z.string().optional()
+      .describe(
+        'How Bruno\'s editor should treat the payload: text, json or xml. Nothing validates ' +
+        'it, and every frame is sent as text — there is no binary send path.',
+      ),
+    content: z.string()
+      .describe('The payload, sent verbatim after variable substitution.'),
+    selected: z.boolean().optional()
+      .describe(
+        'Whether the message is sent. Defaults to true, and is always written, because a ' +
+        '.yml message without it is one Bruno will not send. A false is refused in a .bru ' +
+        'collection, which cannot record it.',
+      ),
+  })).optional()
+    .describe('Messages sent in order once the socket is open.'),
+}).optional()
+  .describe('WebSocket-only fields. Applies to kind "websocket" and is refused otherwise.');
+

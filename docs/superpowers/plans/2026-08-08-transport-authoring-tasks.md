@@ -3,9 +3,9 @@
 **Goal:** an agent working only through this server can create and edit gRPC and
 WebSocket requests, not merely run and preserve ones a human authored in Bruno.
 
-**Status:** not started. This document is the task list, not a plan — each task
-names its files and acceptance criteria, but the implementation approach for the
-larger ones is still open and is called out where it is.
+**Status:** Tasks 1 and 2 are done. This document is the task list, not a plan —
+each task names its files and acceptance criteria, but the implementation approach
+for the larger ones is still open and is called out where it is.
 
 ## Why this exists
 
@@ -74,7 +74,11 @@ source.
 
 ---
 
-## Task 1: Decide the tool surface
+## Task 1: Decide the tool surface — DONE
+
+Settled in `docs/superpowers/specs/2026-08-11-transport-authoring-tool-surface-decision.md`:
+one `create_request`, an explicit `kind` defaulting to `http`, and one optional
+nested object per transport. No new tools, so the registration order is untouched.
 
 **Blocking.** Tasks 2 and 3 cannot start until this is settled, and it is a
 product decision rather than an implementation one.
@@ -99,7 +103,29 @@ added, that test tells you where they may go.
 
 ---
 
-## Task 2: Author WebSocket requests
+## Task 2: Author WebSocket requests — DONE
+
+Both acceptance halves met: byte parity with `stringifyRequest` in `.bru` and
+`.yml`, and a live run of an unedited authored request in both formats. Three
+things measurement caught that inference would not have:
+
+- `.bru` does carry a message's `selected`, but only its true half. Our model said
+  the field did not exist there. Upstream's writer emits it when truthy and its
+  reader resolves an absent pair to `false`, so absent and deliberate-false are
+  indistinguishable after parsing — which is why authoring `selected: false` into
+  a `.bru` collection is refused rather than written.
+- Our pinned `@usebruno/lang` (0.36.0) could not write the flag at all. Raised to
+  `^0.38.0`.
+- Our `.yml` websocket key order was url, auth, headers, message; upstream writes
+  url, headers, message, auth. Reordered.
+
+**Follow-up gap, deliberately not closed here.** Our `.bru` reader treats a
+message with no `selected` line as one to send; upstream treats it as deselected.
+Adopting upstream's reading would silently stop sending frames for every
+hand-written `.bru` file that omits the flag, so it needs its own decision rather
+than being folded into an authoring change.
+
+## Task 2 (original text)
 
 **Depends on:** Task 1.
 

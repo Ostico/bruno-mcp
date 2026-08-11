@@ -1,7 +1,9 @@
 # Tool surface for authoring gRPC and WebSocket requests
 
-**Status:** proposed, awaiting confirmation. Task 1 of
-`../plans/2026-08-08-transport-authoring-tasks.md`, which blocks Tasks 2 and 3.
+**Status:** accepted. Option C was chosen, unblocking Tasks 2 and 3 of
+`../plans/2026-08-08-transport-authoring-tasks.md`. Task 2 implemented it for
+WebSocket; the surface is one `create_request` with an explicit `kind` defaulting
+to `http`, plus one optional nested object per transport.
 
 **Question.** `create_request` is HTTP-shaped throughout — `method` is a required
 enum of HTTP verbs — and there is no way to author a gRPC or WebSocket request

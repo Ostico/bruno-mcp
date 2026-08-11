@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`create_request` authors WebSocket requests**, via `kind: "websocket"` with a url and
+  `websocket.messages`. Each message carries `content` and, optionally, a `title` and a
+  `type` of `text` or `binary`; an untitled one is named by position — `message 1`,
+  `message 2` — as Bruno names it. Headers, auth, `assert`, `vars`, `settings` and
+  scripts work as they do for an HTTP request, and the fields the transport has no place
+  for are refused by name rather than written and ignored: an HTTP method, a body, query
+  parameters, path params. Running a request authored this way against a live endpoint
+  needed no hand-editing, in either format.
+
+  The file is byte-identical to what Bruno writes for the same request, in both `.bru`
+  and `.yml`, checked against upstream's own writer rather than against a round-trip
+  through our parser — which is how the `.yml` key order turned out to be wrong: ours
+  was url, auth, headers, message where upstream writes url, headers, message, auth.
+
+  One field cannot cross both formats. `selected: false` marks a message as authored but
+  not sent; `.yml` records it and `.bru` cannot, because upstream's `.bru` writer emits
+  the flag only when true and its reader resolves an absent flag to `false` — so a
+  deselected message and an unmarked one are indistinguishable after parsing. Authoring
+  one into a `.bru` collection is refused, naming the message, rather than written as a
+  message that would then be sent.
+
 - **A run can write report files**, via `report` on `run_collection`: `junit` for a CI
   system, `html` for a person, either or both, each naming its own path. The results
   are still returned as JSON — reports exist because the two consumers that are not an
@@ -129,6 +150,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   machinery, since `req.setUrl`/`setHeader`/`setBody` have no target here.
 
 ### Fixed
+
+- **A WebSocket message's `selected` flag is now written and read in `.bru`.** The model
+  behind both dialects treated the flag as `.yml`-only, so the true case was dropped on
+  the way out and never recognised on the way in. It is carried now, in the one
+  direction the format can express. The direct dependency on `@usebruno/lang` moved from
+  `^0.36.0` to `^0.38.0` for it: 0.36 has no `selected` support in a `body:ws` block at
+  all, so our writer emitted the line and upstream's grammar discarded it.
 
 - **A `.bru` file that would not parse was reported with its position and no
   reason.** `parseFailures[].message` kept the first line of the parse error, which

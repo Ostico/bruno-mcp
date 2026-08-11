@@ -205,7 +205,7 @@ See [INTEGRATION.md](./INTEGRATION.md) for worked examples, Docker, and troubles
 | `create_collection` | New collection. `format: "yaml"` (default) or `"bru"` |
 | `list_collections` | Find collections from Bruno's `workspace.yml` |
 | `get_collection_stats` | Counts by method, folders, environments, request list |
-| `create_request` | Write a request: method, url, headers, query, body, auth, scripts, settings |
+| `create_request` | Write a request: method, url, headers, query, body, auth, scripts, settings. `kind: "websocket"` for a WebSocket request |
 | `modify_request` | Partial-merge edit — only the fields you pass change |
 | `read_request` | Read one request back as JSON, same shape for `.bru` and `.yml` |
 | `list_requests` | Every request file in the collection, as absolute paths |
@@ -489,7 +489,11 @@ Each transcript entry says what kind of frame it was — `text`, `binary`, `ping
 
 `includePayloads` is off by default as a security property, not a preference: outbound frames are recorded **after** `{{var}}` substitution, so recording them by default would write every secret passed in `variables` into a result that is returned by default. `engineIoKeepalive` is off for a related reason — it puts a frame on the wire the request did not author — and even when on it replies only after an OPEN frame has actually been seen.
 
-**Authoring them is still not supported.** `modify_request` refuses an edit naming an HTTP-shaped field — method, url, headers, body, auth, query, path params — on a kind that has no HTTP block, and leaves the file byte-unchanged; `name` and `sequence` still apply. `create_request` does not author these kinds: copy a file Bruno wrote.
+A WebSocket request can now be authored rather than copied. `create_request` takes `kind: "websocket"` with a url and `websocket.messages`, and refuses the fields that transport has no place for: an HTTP method, a body, query parameters, path params. Each message carries `content` and, optionally, a `title` and a `type` of `text` or `binary`; an untitled message is named `message 1`, `message 2` by position, exactly as Bruno names one. Headers, auth, `assert`, `vars`, `settings` and scripts work as they do for an HTTP request, and the written file is byte-identical to what Bruno writes for the same request in both formats — proven against upstream's own writer, not against a round-trip through our parser.
+
+One field does not survive both formats. `selected: false` marks a message as authored but not sent; `.yml` records it, and `.bru` cannot — upstream's `.bru` writer emits the flag only when it is true, and its reader resolves an absent flag to `false`, so a deselected message and an unmarked one arrive as the same value. Authoring one into a `.bru` collection is therefore refused by name rather than written as a message that would be sent anyway. Leave it out, or use a `.yml` collection.
+
+**gRPC authoring is still not supported.** `modify_request` refuses an edit naming an HTTP-shaped field — method, url, headers, body, auth, query, path params — on a kind that has no HTTP block, and leaves the file byte-unchanged; `name` and `sequence` still apply. For a gRPC request, copy a file Bruno wrote.
 
 Both transports are loaded lazily, and that is enforced rather than asserted: a test records every module the real server resolves and fails if an HTTP-only run names `@grpc/grpc-js` or `ws`. Measured, an HTTP-only run loads `undici` and neither of them.
 
