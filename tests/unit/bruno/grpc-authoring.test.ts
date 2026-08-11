@@ -34,9 +34,12 @@ message HelloReply { string message = 1; }
 async function collection(format: 'bru' | 'yaml'): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), `grpc-author-${format}-`));
   await writeFile(
-    join(root, format === 'yaml' ? 'collection.yml' : 'bruno.json'),
+    // `opencollection.yml` is the name that declares a yaml collection, both here
+    // and in `bru run`. A differently named file declares nothing, and the writer
+    // then falls back to yaml — which passes for the wrong reason.
+    join(root, format === 'yaml' ? 'opencollection.yml' : 'bruno.json'),
     format === 'yaml'
-      ? 'name: Authored\ntype: collection\nversion: "1"\n'
+      ? 'opencollection: "1.0"\ninfo:\n  name: Authored\n'
       : JSON.stringify({ version: '1', name: 'Authored', type: 'collection' }),
   );
   await mkdir(join(root, 'protos'));

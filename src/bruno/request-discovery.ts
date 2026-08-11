@@ -105,8 +105,12 @@ async function walkInExecutionOrder(
  * which is the right default for writing but the wrong basis for a warning:
  * with no marker there is no collection for a file's extension to disagree
  * with. Walking for the marker first is what makes that absence visible.
+ *
+ * Exported because the tools that only enumerate requests need the same answer:
+ * a file Bruno will never see should be reported wherever it is listed, not just
+ * where it is read.
  */
-async function declaredFormat(dirPath: string): Promise<CollectionFormat | null> {
+export async function declaredFormat(dirPath: string): Promise<CollectionFormat | null> {
   const collectionRoot = await findCollectionRootFromDirectory(dirPath);
   return collectionRoot ? (await detectFormat(collectionRoot)).format : null;
 }

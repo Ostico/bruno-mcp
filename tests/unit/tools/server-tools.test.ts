@@ -40,6 +40,11 @@ jest.mock('../../../src/bruno/request-executor', () => ({
 jest.mock('../../../src/bruno/format-detector', () => ({
   findCollectionRoot: jest.fn(),
   detectFormat: jest.fn(),
+  // The listing tools ask which dialect a collection declares, so they can warn
+  // about a request Bruno will not read. Resolving to null is "nothing declared
+  // one", which is the honest answer for the fabricated `/col` these tests use
+  // and suppresses the warning rather than inventing a dialect for it.
+  findCollectionRootFromDirectory: jest.fn().mockResolvedValue(null),
 }));
 jest.mock('../../../src/bruno/format-factory', () => ({
   createWriter: jest.fn(),

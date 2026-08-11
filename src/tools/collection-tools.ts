@@ -7,6 +7,8 @@
 import { z } from 'zod';
 import { listCollectionsHandler } from '../bruno/list-collections-handler.js';
 import { getCollectionStats } from '../bruno/collection-stats.js';
+import { collectionDialectWarnings } from '../bruno/request-extensions.js';
+import { declaredFormat } from '../bruno/request-discovery.js';
 import {
   CreateCollectionInput,
 } from '../bruno/types.js';
@@ -172,12 +174,22 @@ export function registerGetCollectionStatsTool(ctx: ToolContext): void {
 
         const stats = await getCollectionStats(args.collectionPath);
 
+        // Counting a file Bruno never reads makes the totals disagree with what
+        // Bruno itself would report, so the same warning the reading tools give
+        // belongs on the counts. It goes in its own block: the first one is a
+        // JSON document.
+        const warnings = collectionDialectWarnings(
+          stats.requests.map((request) => request.filePath).filter((p): p is string => !!p),
+          await declaredFormat(args.collectionPath),
+        );
+
         return {
           content: [
             {
               type: 'text',
               text: JSON.stringify(stats, null, 2),
-            }
+            },
+            ...warnings.map((warning) => ({ type: 'text' as const, text: warning })),
           ]
         };
       } catch (error) {

@@ -540,6 +540,8 @@ No. The request pipeline is implemented here — variables, auth, cookies, redir
 
 Both, and it detects which one a collection uses rather than asking you. New collections default to `.yml`; `create_collection` takes `format: "bru"` if you want the legacy dialect. Where the two formats genuinely disagree — and they do — each is written the way Bruno's own writer for that dialect writes it.
 
+A collection is one dialect or the other, though, not a mixture: the root manifest picks it, and Bruno reads only that extension, so a `.yml` request inside a `bruno.json` collection is a file in a directory as far as Bruno is concerned. This server still reads, writes and runs such a file — refusing would leave you unable to perform the fix, which is a rename of that very file — but every tool that touches or lists one tells you Bruno cannot see it, and names it.
+
 ### Can I run this in CI?
 
 The collection it produces is a normal Bruno collection, so CI runs it with `bru run` exactly as if a human had authored it in the app. The MCP server itself is for the authoring and debugging loop, where an agent is in the room. If you want JUnit XML or HTML report files out of an MCP server instead, that is [jcr82/bruno-mcp-server](https://github.com/jcr82/bruno-mcp-server) — see the comparison above.

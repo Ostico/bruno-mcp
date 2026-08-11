@@ -15,6 +15,8 @@ import {
 import { createReader } from '../bruno/format-factory.js';
 import { toRequestView } from '../bruno/request-view.js';
 import { validateToolPath, resolveRequestFile } from './tool-path.js';
+import { collectionDialectWarnings } from '../bruno/request-extensions.js';
+import { declaredFormat } from '../bruno/request-discovery.js';
 import { withPathLock } from '../bruno/path-mutex.js';
 import { topologicalSort } from './topological-sort.js';
 import { inlineScriptsSchema, assertionEntrySchema, requestBodySchema, requestVarsSchema, requestSettingsSchema, websocketAuthoringSchema, grpcAuthoringSchema } from './schemas.js';
@@ -536,12 +538,26 @@ export function registerListRequestsTool(ctx: ToolContext): void {
 
         const requests = await ctx.collectionManager.listRequests(args.collectionPath);
 
+        // The walk accepts both dialects, but Bruno reads only the one its root
+        // manifest declares, so a listing can name files that do not exist as
+        // requests in Bruno at all. Saying so here matters more than anywhere
+        // else: this is where a caller learns which requests there are, and
+        // every other tool's description sends them here to find out.
+        //
+        // A separate block rather than a prefix, because the first block is a
+        // JSON document a caller parses.
+        const warnings = collectionDialectWarnings(
+          requests,
+          await declaredFormat(args.collectionPath),
+        );
+
         return {
           content: [
             {
               type: 'text',
               text: JSON.stringify({ requests }, null, 2)
-            }
+            },
+            ...warnings.map((warning) => ({ type: 'text' as const, text: warning })),
           ]
         };
       } catch (error) {

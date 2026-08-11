@@ -188,6 +188,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`list_requests` and `get_collection_stats` say when a request's extension means Bruno
+  will not see it.** A collection's dialect comes from its root manifest, and Bruno reads
+  only that extension — so a `.yml` request in a `bruno.json` collection is, to Bruno, a
+  file sitting in a directory. Every tool that *reads* a request already warned about
+  this; the two that *enumerate* them did not, which is the surface where it matters most,
+  since every other tool's description sends the caller there to find out which requests
+  exist. Stats counted such a file silently, reporting a total Bruno itself would not
+  agree with. Both now warn, in a content block of their own, and both still list and
+  count the file: the warning is about what Bruno reads, not about what this server will
+  touch.
+
 - **`assert`, `vars` and `settings` now reach a `.bru` WebSocket or gRPC request.** They
   were applied after the http-block path had already returned, and were not in the
   refusal list either, so passing an assertion for a `.bru` transport request neither
