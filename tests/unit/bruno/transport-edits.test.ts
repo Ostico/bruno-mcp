@@ -37,9 +37,12 @@ type Format = 'bru' | 'yaml';
 async function collection(label: string, format: Format): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), `transport-edit-${label}-${format}-`));
   await writeFile(
-    join(root, format === 'yaml' ? 'collection.yml' : 'bruno.json'),
+    // `opencollection.yml` is the name that declares a yaml collection, both here
+    // and in `bru run`. A differently named file declares nothing, and the writer
+    // then falls back to yaml — which passes for the wrong reason.
+    join(root, format === 'yaml' ? 'opencollection.yml' : 'bruno.json'),
     format === 'yaml'
-      ? 'name: Edited\ntype: collection\nversion: "1"\n'
+      ? 'opencollection: "1.0"\ninfo:\n  name: Edited\n'
       : JSON.stringify({ version: '1', name: 'Edited', type: 'collection' }),
   );
   await mkdir(join(root, 'protos'));

@@ -251,6 +251,38 @@ unrelated breakage.
 **Acceptance:** one decision, applied consistently in both directions, with the
 integration fixtures updated to match. Whichever way it goes, a test pins it.
 
+**Done.** The premise above was already stale when this was written: `modify_request`
+stopped refusing in commit `10ac75a`, so reader and writer had been reconciled
+before this task was picked up — and in the opposite direction from the argument
+here. The decision is *operate and warn*, both ways, and the reasoning is recorded
+at the helper (`src/bruno/request-extensions.ts:135-162`): refusing would leave the
+caller no way to repair the very file the warning is about, since the repair is a
+rename of that file. The run path warns at `request-discovery.ts:162`, the write
+path at `tool-path.ts:91-95`, and the dialect warning beats the `.yaml`-extension
+one per file because it is the stronger claim — telling the caller to rename to
+`.yml` inside a `.bru` collection would leave the file just as invisible.
+
+Upstream's behaviour, read rather than inferred: `bruno-cli/src/utils/collection.js`
+maps each dialect to one extension and one manifest name (`opencollection.yml` for
+yaml, `bruno.json` for bru), and its `traverse` skips every entry whose
+`path.extname` differs. So an off-dialect request is invisible to Bruno, which is
+what the warning says, and nothing upstream converts or tolerates it.
+
+What this task actually closed:
+
+- Three fixtures declared their yaml collection with a file named `collection.yml`,
+  which is not a manifest either detector recognises. They were passing through the
+  no-marker path, where the writer defaults to yaml and the dialect warning cannot
+  fire at all — passing for the wrong reason. Now `opencollection.yml`.
+- `list_requests` and `get_collection_stats` were the two surfaces that walked both
+  dialects and said nothing. They now emit the same warning in a block of their own.
+  This is where it matters most: every other tool's description sends the caller to
+  those two to find out which requests exist, and stats reported a count Bruno would
+  not agree with.
+- `tests/unit/tools/dialect-mismatch-warning.test.ts` pins all of it against real
+  manifests on disk. The pre-existing coverage mocked both detectors, which proves
+  the wiring below a detection result but not that a real `bruno.json` produces one.
+
 ---
 
 ## Task 6: Establish whether the injected `settings:` block is correct
@@ -267,6 +299,21 @@ family as `.bru` injecting `seq: 1`.
 `/Volumes/Projects/tools/working_dir/bruno-tool` and compare against a file Bruno
 itself writes. Then either a test pinning the injection as intended, or a fix.
 Do not infer the answer from our own round-trip.
+
+**Done — no code change.** The injection is byte-parity, and it is per-kind, which is
+the part that would have been easy to get wrong. Upstream's `stringifyHttpRequest.ts`
+writes all four keys unconditionally (`encodeUrl` and `followRedirects` default true,
+`maxRedirects` 5, `timeout` through `resolveTimeoutSetting` defaulting to 0);
+`stringifyWebsocketRequest.ts` writes only `timeout` and `keepAliveInterval`, both 0;
+`stringifyGrpcRequest.ts` writes no settings block at all. `src/bruno/yaml-generator.ts:448-527`
+already implements exactly that split, and the reason it must is recorded there: to
+the `.yml` reader an absent block means `encodeUrl: false`, while an omitted key
+inside a present block means true — so the block is not decoration.
+
+Already pinned by `tests/unit/bruno/websocket-authoring.test.ts:200` for the WebSocket
+shape and by `maxRedirects: 5` assertions in three further suites for the HTTP one. This is not the same
+family as `.bru` injecting `seq: 1`: there the value is fabricated, here every value
+is the default the reader would apply anyway.
 
 ---
 
