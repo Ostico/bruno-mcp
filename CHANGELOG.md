@@ -188,6 +188,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Repositioned: this is not "the MCP server for Bruno", and no longer says it is.** In
+  August 2026 Bruno's own team announced an official server, `usebruno/bruno-mcp`, which
+  wraps the `bru` CLI to discover and run requests. The README now says so in its opening
+  paragraph, names what each is good at, and adds it to the comparison table; the npm
+  description and the registry manifest lead with what is actually distinct here —
+  non-destructive authoring, byte parity across both dialects, execution groups,
+  multi-identity authorization testing, gRPC and WebSocket. The "active fork of
+  macarthy/bruno-mcp" banner is out of the lead and the provenance now lives in the FAQ,
+  where it belongs.
+
+  Two stale claims went with it: the README twice pointed readers elsewhere for JUnit and
+  HTML report files, which this server gained earlier in this same unreleased cycle.
+
+- **`LICENSE` names its copyright holders.** It said "Bruno MCP Contributors", which was
+  inherited and identified nobody. It now carries the original project's notice and this
+  one's separately. Added `CONTRIBUTING.md`, which documents the five CI gates, the two
+  traps in trusting a local run, and a DCO sign-off requirement — so that provenance stays
+  traceable while the project still has few enough contributors for that to be cheap.
+
 - **A request whose oauth2 token could not be fetched is refused instead of sent
   unauthenticated.** It used to go out with no credential and a warning attached to the
   result. Against a protected endpoint that produces a 401 that reads like a

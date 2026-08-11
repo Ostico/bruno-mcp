@@ -2,7 +2,7 @@
   "name": "@ostico/bruno-mcp",
   "mcpName": "io.github.Ostico/bruno-mcp-studio",
   "version": "2.2.1",
-  "description": "MCP server for Bruno: an AI agent can author, read and run .bru and .yml (opencollection) API collections — no bru CLI needed, byte-parity with Bruno's own reader.",
+  "description": "Author, edit and run Bruno API collections from an AI agent: non-destructive .bru/.yml editing at byte parity, execution groups, multi-identity auth testing, gRPC and WebSocket. No bru CLI.",
   "main": "dist/index.js",
   "bin": {
     "bruno-mcp": "dist/index.js"
@@ -55,7 +55,10 @@
     "cursor",
     "ai-agent",
     "llm-tools",
-    "postman-alternative"
+    "postman-alternative",
+    "authorization-testing",
+    "api-security-testing",
+    "bru-format"
   ],
   "author": "Ostico (https://github.com/Ostico)",
   "license": "MIT",

@@ -1,17 +1,29 @@
-# Bruno MCP Studio — an MCP server for Bruno API collections
+# Bruno MCP Studio — author, edit and run Bruno collections from an agent
 
 [![npm version](https://img.shields.io/npm/v/@ostico/bruno-mcp)](https://www.npmjs.com/package/@ostico/bruno-mcp)
 [![npm downloads](https://img.shields.io/npm/dw/@ostico/bruno-mcp)](https://www.npmjs.com/package/@ostico/bruno-mcp)
 [![node](https://img.shields.io/node/v/@ostico/bruno-mcp)](https://nodejs.org)
 [![license](https://img.shields.io/npm/l/@ostico/bruno-mcp)](./LICENSE)
 
-**An MCP server that runs and authors Bruno API collections — both `.bru` and `.yml` (opencollection) — with no `bru` binary and byte-parity against Bruno's own reader.**
+**Non-destructive authoring plus a real execution engine for Bruno collections: both
+dialects at byte parity, caller-defined execution groups, multi-identity authorization
+testing, gRPC and WebSocket — and no `bru` binary.**
 
-A [Model Context Protocol](https://modelcontextprotocol.io) server for [Bruno](https://www.usebruno.com), the open-source API client. It gives an AI agent in Claude Code, Claude Desktop, Cursor, Windsurf, VS Code or Codex CLI eighteen tools for API testing against a real Bruno collection: create and edit requests, read them back as structured JSON, manage environments and variables, write assertions and test scripts, then **run** the collection — auth, cookies, redirects, dependency ordering and all — and get the results back in the same turn. No Bruno GUI, no Bruno CLI, no shelling out. The collection it leaves on disk is a normal Bruno collection: your CI runs it with `bru run`, your teammates open it in the Bruno app.
+An independent [Model Context Protocol](https://modelcontextprotocol.io) server for
+[Bruno](https://www.usebruno.com) collections. In August 2026 Bruno's own team announced
+an official one, [`usebruno/bruno-mcp`](https://github.com/usebruno/bruno-mcp), which
+wraps the `bru` CLI to discover and run requests. This server is aimed elsewhere: it
+**writes** collections as well as running them — non-destructively, at byte parity with
+Bruno's own writers — and its runner is in-process rather than a subprocess, which is
+what lets it offer caller-defined execution groups with their own variable store and
+cookie jar, concurrency inside a group, oauth2 and digest exchanged in memory, gRPC and
+WebSocket, and multi-identity authorization testing.
 
-> **Active fork** of [macarthy/bruno-mcp](https://github.com/macarthy/bruno-mcp) (original inactive since Jul 2025).
-> Maintained as **Bruno MCP Studio** at [Ostico/bruno-mcp-studio](https://github.com/Ostico/bruno-mcp-studio) — see [announcement](https://github.com/macarthy/bruno-mcp/issues/4).
-> The npm package name is unchanged: `@ostico/bruno-mcp`.
+If what you need is "list my collections and run one", the official server does that and
+will be the one Bruno supports. If you want an agent to build and maintain the suite,
+that is what this is for.
+
+It gives an AI agent in Claude Code, Claude Desktop, Cursor, Windsurf, VS Code or Codex CLI eighteen tools for API testing against a real Bruno collection: create and edit requests, read them back as structured JSON, manage environments and variables, write assertions and test scripts, then **run** the collection — auth, cookies, redirects, dependency ordering and all — and get the results back in the same turn. No Bruno GUI, no Bruno CLI, no shelling out. The collection it leaves on disk is a normal Bruno collection: your CI runs it with `bru run`, your teammates open it in the Bruno app.
 
 **Your agent already knows HTTP. It does not know your API, and it does not know Bruno's file format.** So it guesses. It writes a `.bru` file from memory, the run fails, it rewrites the file, the run fails differently, and twenty minutes later you have a passing request and no idea which of the six edits mattered. You paid for every one of those turns, and none of that work is on disk in a form your CI or your team's Bruno GUI can use.
 
@@ -64,13 +76,14 @@ There are several, they do genuinely different jobs, and the honest answer is no
 | Server | What it is | Writes | Reads | Runs | `.bru` / `.yml` | Needs `bru` | Tools |
 |---|---|---|---|---|---|---|---|
 | **this one** | Authors, reads and runs collections | Create + partial-merge edit | Structured JSON | Yes, own pipeline | both | no | 18 |
+| [usebruno/bruno-mcp](https://github.com/usebruno/bruno-mcp) | **The official one**, from Bruno's own team — discovers and runs requests. Announced Aug 2026; at the time of writing its first implementation is an open draft | no | Request metadata | Yes, via the CLI | `.bru` | **yes** (bundled) | 3 |
 | [`@dmpv/bruno-mcp`](https://github.com/TheDMPV/bruno-mcp) | Read-only index and search over a collection | no | Ranked search, sanitised contracts, stored examples | no | both | no | 8 |
 | [hungthai1401/bruno-mcp](https://github.com/hungthai1401/bruno-mcp) | Runs a collection | no | no | Yes, via the CLI | `.bru` | **yes** | run only |
 | [jcr82/bruno-mcp-server](https://github.com/jcr82/bruno-mcp-server) | Runs and inspects collections, with report files | no | Yes | Yes, via the CLI | `.bru` | **yes** | 9 |
 | [djkz/bruno-api-mcp](https://github.com/djkz/bruno-api-mcp) | Turns each request into its own MCP tool | no | Exposes them as tools | One at a time | `.bru` | no | one per request |
 | [macarthy/bruno-mcp](https://github.com/macarthy/bruno-mcp) | Generates collection files — the project this forked from, inactive since Jul 2025 | Create only | no | no | `.bru` | n/a | 8 |
 
-Pick one of the others if: you want **JUnit XML or HTML report files** for a CI dashboard (jcr82 — this server returns JSON results only); you want an agent to **understand a large existing collection** without any risk of writing to it, and search it by intent (dmpv, first published July 2026 and at 0.x — new, and interesting); you already have the `bru` CLI in your image and only ever need "run this collection" (hungthai1401); or you want the agent to **call your API through your existing requests** as if each were a native tool (djkz).
+Pick one of the others if: you want **the server Bruno itself maintains**, and whatever support and longevity that implies (usebruno — the official one, and the reasonable default for "discover and run" once it ships); you want an agent to **understand a large existing collection** without any risk of writing to it, and search it by intent (dmpv, first published July 2026 and at 0.x — new, and interesting); you already have the `bru` CLI in your image and only ever need "run this collection" (hungthai1401); or you want the agent to **call your API through your existing requests** as if each were a native tool (djkz).
 
 Pick this one if: you want the agent to **write** the collection and not just read or run it, you are on `.yml` opencollection format, you need the run to happen **without installing the Bruno CLI**, or you care that what lands in your repo is byte-comparable to what the Bruno app writes.
 
@@ -544,7 +557,7 @@ A collection is one dialect or the other, though, not a mixture: the root manife
 
 ### Can I run this in CI?
 
-The collection it produces is a normal Bruno collection, so CI runs it with `bru run` exactly as if a human had authored it in the app. The MCP server itself is for the authoring and debugging loop, where an agent is in the room. If you want JUnit XML or HTML report files out of an MCP server instead, that is [jcr82/bruno-mcp-server](https://github.com/jcr82/bruno-mcp-server) — see the comparison above.
+The collection it produces is a normal Bruno collection, so CI runs it with `bru run` exactly as if a human had authored it in the app. The MCP server itself is for the authoring and debugging loop, where an agent is in the room. It writes JUnit XML and HTML report files as well — see [Report files](#report-files) — so a run an agent drove still leaves the artefact a CI dashboard expects.
 
 ### Will it rewrite files the Bruno app wrote?
 
@@ -560,11 +573,13 @@ Secret environment variables stay in memory for the run and are never written to
 
 ### Is this the same as the original `bruno-mcp`?
 
-It started as a fork of [macarthy/bruno-mcp](https://github.com/macarthy/bruno-mcp), which has been inactive since July 2025 and generated collection files without running them. Everything above — the runner, the readers, both dialects, the parity gate, the sandbox — was built after the fork.
+It started as a fork of [macarthy/bruno-mcp](https://github.com/macarthy/bruno-mcp), which has been inactive since July 2025 and generated collection files without running them. Everything above — the runner, the readers, both dialects, the parity gate, the sandbox — was built after the fork. The repository is now [Ostico/bruno-mcp-studio](https://github.com/Ostico/bruno-mcp-studio) ([announcement](https://github.com/macarthy/bruno-mcp/issues/4)); the npm package name is unchanged, `@ostico/bruno-mcp`.
 
 ### Is it affiliated with Bruno?
 
 No. Bruno is a product of [usebruno](https://www.usebruno.com) and its name and trademarks belong to them. This is a community project that reads Bruno's open-source packages to stay compatible with them; it is not endorsed by or affiliated with usebruno.
+
+Bruno's own team announced an official MCP server, [`usebruno/bruno-mcp`](https://github.com/usebruno/bruno-mcp), in August 2026. This is not it, and does not compete for that role — see [Which Bruno MCP server should I use?](#which-bruno-mcp-server-should-i-use) for what each is good at.
 
 ## Upgrading from 1.x
 
@@ -589,9 +604,13 @@ npm run lint
 
 Use npm, not yarn — the lockfile is npm's and CI runs `npm ci`.
 
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for what CI checks, the commit conventions, and
+the sign-off (DCO) every commit needs.
+
 ## License
 
-MIT
+MIT — see [LICENSE](./LICENSE). Contributions are accepted under the same terms, with a
+[DCO sign-off](./CONTRIBUTING.md#sign-your-work--developer-certificate-of-origin).
 
 ## Links
 
