@@ -17,6 +17,7 @@
  */
 
 import { realpathSync } from 'fs';
+import { readFile } from 'fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'path';
 
 export class ProtoPathError extends Error {
@@ -113,4 +114,51 @@ export function makeProtoImportResolver(realRoot: string) {
     }
     return realTarget;
   };
+}
+
+/**
+ * Imports protobufjs resolves internally, without touching the filesystem.
+ *
+ * The well-known types are compiled into protobufjs, so a proto that imports one
+ * never reads a file — and refusing them for being outside the collection would
+ * reject the timestamp and duration types half the world's protos use.
+ */
+const BUNDLED_IMPORT_PREFIX = 'google/protobuf/';
+
+/** `import "x.proto";`, optionally `public`/`weak`, one per match. */
+const PROTO_IMPORT = /^[ \t]*import[ \t]+(?:public[ \t]+|weak[ \t]+)?"([^"]+)"[ \t]*;/gm;
+
+/**
+ * Refuse a proto whose import graph leaves the collection, before any loader
+ * reads it.
+ *
+ * Transitive, because the escape can be one hop further in: a confined entry file
+ * importing a confined neighbour that imports `/etc/passwd` would otherwise pass.
+ * Throws `ProtoPathError`, which the caller turns into a named refusal.
+ *
+ * A regex scan and not a parse, which is why both the runner and the writer can
+ * afford to call it: the writer needs it because a request whose imports escape is
+ * one no run will ever complete, and telling the author at write time beats telling
+ * them at run time.
+ */
+export async function assertProtoImportsConfined(
+  entryFile: string,
+  realRoot: string,
+): Promise<void> {
+  const resolveImport = makeProtoImportResolver(realRoot);
+  const seen = new Set<string>();
+  const pending = [entryFile];
+
+  while (pending.length > 0) {
+    const file = pending.pop() as string;
+    if (seen.has(file)) continue;
+    seen.add(file);
+
+    const text = await readFile(file, 'utf-8');
+    for (const match of text.matchAll(PROTO_IMPORT)) {
+      const target = match[1];
+      if (target.startsWith(BUNDLED_IMPORT_PREFIX)) continue;
+      pending.push(resolveImport(file, target));
+    }
+  }
 }

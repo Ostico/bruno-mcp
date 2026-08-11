@@ -29,10 +29,10 @@
  * fails; it does not fall back to an insecure channel, which is what upstream's
  * own client does on a credential error.
  */
-import { readFile, realpath } from 'node:fs/promises';
+import { realpath } from 'node:fs/promises';
 import { validateUrl, ssrfRemediation } from './url-validator.js';
 import { gateTls, pinnedLookup } from './transport-trust.js';
-import { confineProtoPath, makeProtoImportResolver, ProtoPathError } from './proto-path.js';
+import { assertProtoImportsConfined, confineProtoPath, ProtoPathError } from './proto-path.js';
 import { redactMetadata } from './transport-redaction.js';
 import { applyAuth } from './auth-apply.js';
 import { substitute } from './env-loader.js';
@@ -102,45 +102,6 @@ function splitMethodPath(path: string): { service: string; method: string } | un
   const match = /^\/?([\w.]+)\/(\w+)$/.exec(path.trim());
   if (!match) return undefined;
   return { service: match[1], method: match[2] };
-}
-
-/**
- * Imports protobufjs resolves internally, without touching the filesystem.
- *
- * The well-known types are compiled into protobufjs, so a proto that imports one
- * never reads a file — and refusing them for being outside the collection would
- * reject the timestamp and duration types half the world's protos use.
- */
-const BUNDLED_IMPORT_PREFIX = 'google/protobuf/';
-
-/** `import "x.proto";`, optionally `public`/`weak`, one per match. */
-const PROTO_IMPORT = /^[ \t]*import[ \t]+(?:public[ \t]+|weak[ \t]+)?"([^"]+)"[ \t]*;/gm;
-
-/**
- * Refuse a proto whose import graph leaves the collection, before the loader
- * reads any of it.
- *
- * Transitive, because the escape can be one hop further in: a confined entry file
- * importing a confined neighbour that imports `/etc/passwd` would otherwise pass.
- * Throws `ProtoPathError`, which the caller turns into a named refusal.
- */
-async function assertProtoImportsConfined(entryFile: string, realRoot: string): Promise<void> {
-  const resolveImport = makeProtoImportResolver(realRoot);
-  const seen = new Set<string>();
-  const pending = [entryFile];
-
-  while (pending.length > 0) {
-    const file = pending.pop() as string;
-    if (seen.has(file)) continue;
-    seen.add(file);
-
-    const text = await readFile(file, 'utf-8');
-    for (const match of text.matchAll(PROTO_IMPORT)) {
-      const target = match[1];
-      if (target.startsWith(BUNDLED_IMPORT_PREFIX)) continue;
-      pending.push(resolveImport(file, target));
-    }
-  }
 }
 
 /**

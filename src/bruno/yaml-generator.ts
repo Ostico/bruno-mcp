@@ -273,17 +273,23 @@ function serialiseTransportMessages(
  * uses, and this is the only place the `.yml` spelling is restored. Emitting the
  * model's name would write a key Bruno's gRPC parser does not read, so the proto
  * file would be silently forgotten on the next open.
+ *
+ * The keys are written in the order upstream's own writer emits them — url,
+ * method, methodType, protoFilePath, metadata, message, auth
+ * (`filestore/src/formats/yml/items/stringifyGrpcRequest.ts`). As with the
+ * `websocket:` block, YAML does not care, but a file this server authors is meant
+ * to be byte-comparable to the one Bruno writes for the same request.
  */
 function serialiseGrpcBlock(grpc: YamlGrpc): Record<string, unknown> {
   const block: Record<string, unknown> = { url: grpc.url };
   if (grpc.method !== undefined) block.method = grpc.method;
-  if (grpc.protoPath !== undefined) block.protoFilePath = grpc.protoPath;
   if (grpc.methodType !== undefined) block.methodType = grpc.methodType;
-  if (grpc.auth !== undefined) block.auth = grpc.auth;
+  if (grpc.protoPath !== undefined) block.protoFilePath = grpc.protoPath;
   const metadata = serialiseHeaderList(grpc.metadata);
   if (metadata) block.metadata = metadata;
   const messages = serialiseTransportMessages(grpc.messages, false);
   if (messages) block.message = messages;
+  if (grpc.auth !== undefined) block.auth = grpc.auth;
   applyExtraKeys(block, grpc.extra, YAML_GRPC_KEYS);
   return block;
 }
