@@ -344,7 +344,7 @@ describe('fields a WebSocket request cannot carry', () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain('applies to kind `ws` only');
+    expect(result.error).toContain('applies to its own kind only, not to kind `http`');
   });
 
   it('still requires a method for an http request', async () => {

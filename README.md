@@ -205,7 +205,7 @@ See [INTEGRATION.md](./INTEGRATION.md) for worked examples, Docker, and troubles
 | `create_collection` | New collection. `format: "yaml"` (default) or `"bru"` |
 | `list_collections` | Find collections from Bruno's `workspace.yml` |
 | `get_collection_stats` | Counts by method, folders, environments, request list |
-| `create_request` | Write a request: method, url, headers, query, body, auth, scripts, settings. `kind: "websocket"` for a WebSocket request |
+| `create_request` | Write a request: method, url, headers, query, body, auth, scripts, settings. `kind: "websocket"` or `kind: "grpc"` for those transports |
 | `modify_request` | Partial-merge edit — only the fields you pass change |
 | `read_request` | Read one request back as JSON, same shape for `.bru` and `.yml` |
 | `list_requests` | Every request file in the collection, as absolute paths |
@@ -493,7 +493,11 @@ A WebSocket request can now be authored rather than copied. `create_request` tak
 
 One field does not survive both formats. `selected: false` marks a message as authored but not sent; `.yml` records it, and `.bru` cannot — upstream's `.bru` writer emits the flag only when it is true, and its reader resolves an absent flag to `false`, so a deselected message and an unmarked one arrive as the same value. Authoring one into a `.bru` collection is therefore refused by name rather than written as a message that would be sent anyway. Leave it out, or use a `.yml` collection.
 
-**gRPC authoring is still not supported.** `modify_request` refuses an edit naming an HTTP-shaped field — method, url, headers, body, auth, query, path params — on a kind that has no HTTP block, and leaves the file byte-unchanged; `name` and `sequence` still apply. For a gRPC request, copy a file Bruno wrote.
+A gRPC request is authored the same way, with `kind: "grpc"`: a url, and under `grpc`, the fully qualified `method`, the `protoPath`, the `methodType` and the `messages`. It too refuses an HTTP method, a body, query parameters and path params. Three things about it are worth knowing before you write one.
+
+Headers become **metadata**, which is that transport's only header surface — a `headers` block on a gRPC request is one Bruno's gRPC reader never looks at, so the `headers` argument is written as `metadata` instead. The `protoPath` must already exist inside the collection and is stored relative to it whichever spelling you give, because an absolute path is the operator's directory layout committed to a shared file; a path resolving outside the collection is refused, symlinks included, as is one whose imports leave it however many hops in (a well-known `google/protobuf/` import is not a file and is not refused). And all four `methodType` values are accepted, because Bruno writes all four — but only `unary` runs here, so the other three author a file Bruno can open and `run_collection` will refuse by name. As with WebSocket, the bytes are identical to Bruno's own writer in both formats, including the two dialects' disagreement about spelling: `.bru` writes `protoPath` inside the `grpc` block, `.yml` writes `protoFilePath`.
+
+`modify_request` still refuses an edit naming an HTTP-shaped field — method, url, headers, body, auth, query, path params — on a kind that has no HTTP block, and leaves the file byte-unchanged; `name` and `sequence` still apply.
 
 Both transports are loaded lazily, and that is enforced rather than asserted: a test records every module the real server resolves and fails if an HTTP-only run names `@grpc/grpc-js` or `ws`. Measured, an HTTP-only run loads `undici` and neither of them.
 

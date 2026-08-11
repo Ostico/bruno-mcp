@@ -8,7 +8,9 @@ import { writeFileAtomic } from './atomic-write.js';
 import { withPathLock } from './path-mutex.js';
 import { nextRequestSequence } from './request-sequence.js';
 import { isYamlRequestFile, isBruRequestFile } from './request-extensions.js';
-import { join, dirname, isAbsolute } from 'path';
+import { join, dirname, isAbsolute, relative } from 'path';
+import { realpathSync } from 'fs';
+import { assertProtoImportsConfined, confineProtoPath } from './proto-path.js';
 import { validatePath } from './path-validator.js';
 import {
   BruFile,
@@ -18,6 +20,7 @@ import {
   YamlAuth,
   CreateRequestInput,
   CreateWebsocketMessageInput,
+  CreateGrpcMessageInput,
   FileOperationResult,
   BrunoError,
   BruFileError,
@@ -29,6 +32,7 @@ import type {
   BruTransportMessage,
   YamlRequestMessage,
   YamlWebsocket,
+  YamlGrpc,
 } from './transport-requests.js';
 import { detectFormat } from './format-detector.js';
 import type { CollectionFormat } from './format-detector.js';
@@ -73,6 +77,9 @@ export class RequestBuilder {
       const detection = await detectFormat(input.collectionPath);
       const isYaml = detection.format === 'yaml';
       const filePath = this.getRequestFilePath(input, isYaml ? '.yml' : '.bru');
+      // After format detection, so a collection that does not exist is reported as
+      // that rather than as an unreadable proto root.
+      const confined = await this.confineAuthoredProtoPath(input);
 
       // Creation takes the same per-file lock updateRequest takes, for two
       // reasons. With `scripts`, this is itself a read-modify-write: the file is
@@ -90,9 +97,9 @@ export class RequestBuilder {
         // all, which the run order treats as last — every such request tied with
         // every other, ordered by nothing. Default to after the folder's others.
         const sequenced = input.sequence !== undefined
-          ? input
+          ? confined
           : {
-            ...input,
+            ...confined,
             sequence: await nextRequestSequence(dirname(filePath), input.collectionPath),
           };
         const content = isYaml
@@ -490,7 +497,7 @@ export class RequestBuilder {
         // graphql one. Hardcoding 'http' produced a file whose body block was
         // right and whose identity was wrong. The `.yml` side needs no
         // equivalent: its generator already settles `info.type` from the body.
-        type: kind === 'ws' ? 'ws' : input.body?.type === 'graphql' ? 'graphql' : 'http',
+        type: kind !== 'http' ? kind : input.body?.type === 'graphql' ? 'graphql' : 'http',
         // Absent has to mean an absent KEY, not a key holding undefined:
         // upstream's serializer writes `${key}: ${meta[key]}` for everything
         // present, so leaving it here emits the literal text "seq: undefined".
@@ -511,6 +518,21 @@ export class RequestBuilder {
       };
       const messages = this.buildBruWebsocketMessages(input.websocket?.messages);
       if (messages) bruFile.ws.messages = messages;
+    } else if (kind === 'grpc') {
+      // Same shape as the `ws` branch: no `http` block, and `body: grpc` names the
+      // mode that owns the `body:grpc` blocks. `protoPath` keeps the model's name
+      // here because `.bru` spells it that way; only the `.yml` writer restores
+      // `protoFilePath`.
+      bruFile.grpc = {
+        url: input.url,
+        body: 'grpc',
+        auth: toBrunoAuthMode(input.auth?.type),
+      };
+      if (input.grpc?.method !== undefined) bruFile.grpc.method = input.grpc.method;
+      if (input.grpc?.protoPath !== undefined) bruFile.grpc.protoPath = input.grpc.protoPath;
+      if (input.grpc?.methodType !== undefined) bruFile.grpc.methodType = input.grpc.methodType;
+      const messages = this.buildGrpcMessages(input.grpc?.messages);
+      if (messages) bruFile.grpc.messages = messages;
     } else {
       bruFile.http = {
         // Present on this path: `validateRequestInput` refuses an http request
@@ -524,9 +546,22 @@ export class RequestBuilder {
       };
     }
 
-    // Add headers if provided
+    // Add headers if provided.
+    //
+    // A gRPC request has no `headers` block — the transport's header surface is
+    // metadata, and Bruno's gRPC parser reads a `metadata` block and nothing else.
+    // Writing `headers` for this kind would produce a file whose credentials are
+    // on disk and invisible to both Bruno and our own runner.
     if (input.headers && Object.keys(input.headers).length > 0) {
-      bruFile.headers = input.headers;
+      if (kind === 'grpc') {
+        bruFile.metadata = Object.entries(input.headers).map(([name, value]) => ({
+          name,
+          value,
+          enabled: true,
+        }));
+      } else {
+        bruFile.headers = input.headers;
+      }
     }
 
     // Add query parameters if provided.
@@ -614,9 +649,68 @@ export class RequestBuilder {
    * message keeps both dialects on the one shape both writers agree about,
    * instead of making the file's structure depend on how many messages there are.
    */
-  private websocketMessageTitle(title: string | undefined, index: number): string {
+  /**
+   * Check an authored `protoPath` against the collection, and return the input
+   * with it rewritten to the collection-relative form.
+   *
+   * The same boundary the run path applies (`confineProtoPath`), applied when the
+   * file is written rather than only when it is run: a request naming a proto
+   * outside the collection is one this server will refuse to run, so authoring it
+   * silently would hand back a path and a request that cannot work. It also
+   * rejects a proto that does not exist yet, which means the `.proto` has to be in
+   * the collection before the request that names it — the right order anyway,
+   * since the alternative is a request whose method nothing can check.
+   *
+   * The stored form is relative to the collection whichever spelling arrives.
+   * Absolute is not portable: a committed request naming `/Users/someone/...`
+   * breaks on clone, and it writes the operator's directory layout into a file
+   * meant to be shared. Relative is also what our own loader resolves against.
+   *
+   * The import graph is checked too, not just the entry file, because the escape
+   * can be one hop further in: a confined proto importing a confined neighbour
+   * that imports `/etc/passwd` names an entry file with nothing wrong with it. The
+   * run path checks the same graph again — the file can change between authoring
+   * and running, so neither check makes the other redundant. It is affordable in
+   * both places because it is a regex scan for `import` lines, not a parse.
+   */
+  private async confineAuthoredProtoPath(input: CreateRequestInput): Promise<CreateRequestInput> {
+    const protoPath = input.grpc?.protoPath;
+    if (protoPath === undefined) return input;
+
+    const realTarget = confineProtoPath(protoPath, input.collectionPath);
+    await assertProtoImportsConfined(realTarget, realpathSync(input.collectionPath));
+    return {
+      ...input,
+      grpc: { ...input.grpc, protoPath: relative(realpathSync(input.collectionPath), realTarget) },
+    };
+  }
+
+  private transportMessageTitle(title: string | undefined, index: number): string {
     const trimmed = title?.trim();
     return trimmed && trimmed.length > 0 ? title as string : `message ${index + 1}`;
+  }
+
+  /**
+   * Build the gRPC messages both dialects write, from an authoring input.
+   *
+   * One builder for both, unlike WebSocket, because the two gRPC writers agree:
+   * neither carries a type or a selection flag, and upstream's `.yml` writer emits
+   * a titled variant list unconditionally rather than switching shape on a lone
+   * untitled message. `message N` is still the default title, which is upstream's
+   * own in both places.
+   *
+   * Empty content becomes `{}`. That is what upstream's `.bru` writer substitutes
+   * (`jsonToBru` writes `content: '''{}'''` for a falsy content), so writing the
+   * empty string would put a byte upstream would not.
+   */
+  private buildGrpcMessages(
+    messages: CreateGrpcMessageInput[] | undefined,
+  ): BruTransportMessage[] | undefined {
+    if (!messages || messages.length === 0) return undefined;
+    return messages.map((message, index) => ({
+      name: this.transportMessageTitle(message.title, index),
+      content: message.content.length > 0 ? message.content : '{}',
+    }));
   }
 
   /**
@@ -638,7 +732,7 @@ export class RequestBuilder {
     return messages.map((message, index) => {
       if (message.selected === false) {
         throw new BrunoError(
-          `Cannot author a deselected WebSocket message ("${this.websocketMessageTitle(message.title, index)}") `
+          `Cannot author a deselected WebSocket message ("${this.transportMessageTitle(message.title, index)}") `
             + 'in a .bru collection: the dialect has no way to record it, and the message would be sent. '
             + 'Leave it out of the request, or use a .yml collection, which carries the flag',
           'VALIDATION_ERROR',
@@ -646,7 +740,7 @@ export class RequestBuilder {
       }
 
       const out: BruTransportMessage = {
-        name: this.websocketMessageTitle(message.title, index),
+        name: this.transportMessageTitle(message.title, index),
         content: message.content,
         // Every authored message is one to send, and `.bru` says so only by
         // writing the line: Bruno's own reader treats its absence as deselected,
@@ -672,7 +766,7 @@ export class RequestBuilder {
 
     return messages.map((message, index) => {
       const out: YamlRequestMessage = {
-        name: this.websocketMessageTitle(message.title, index),
+        name: this.transportMessageTitle(message.title, index),
         content: message.content,
         selected: message.selected ?? true,
       };
@@ -710,6 +804,23 @@ export class RequestBuilder {
       const auth = this.buildYamlAuth(input);
       if (auth !== undefined) websocket.auth = auth;
       yamlRequest.websocket = websocket;
+      return this.applyYamlRequestExtras(yamlRequest, input);
+    }
+
+    if (kind === 'grpc') {
+      // Headers become `metadata` here, which is where Bruno's gRPC parser reads
+      // them from — `.yml` nests them in the block rather than keeping a top-level
+      // one as `.bru` does. `url` and `method` are always written, empty or not,
+      // because upstream's writer writes them unconditionally.
+      const grpc: YamlGrpc = { url: input.url, method: input.grpc?.method ?? '' };
+      if (input.grpc?.methodType !== undefined) grpc.methodType = input.grpc.methodType;
+      if (input.grpc?.protoPath !== undefined) grpc.protoPath = input.grpc.protoPath;
+      if (headerList) grpc.metadata = headerList;
+      const messages = this.buildGrpcMessages(input.grpc?.messages);
+      if (messages) grpc.messages = messages;
+      const auth = this.buildYamlAuth(input);
+      if (auth !== undefined) grpc.auth = auth;
+      yamlRequest.grpc = grpc;
       return this.applyYamlRequestExtras(yamlRequest, input);
     }
 
@@ -1019,10 +1130,12 @@ export class RequestBuilder {
     // carrying a method and a JSON body would silently drop both, and the caller
     // would have no way to tell that from a request that did not ask for them.
     const kind = input.kind ?? 'http';
-    if (kind === 'ws') {
+    if (kind !== 'http') {
+      const transport = kind === 'ws' ? 'WebSocket' : 'gRPC';
       if (input.method !== undefined) {
         throw new BrunoError(
-          'A WebSocket request has no HTTP method: remove `method`, or use kind `http`',
+          `A ${transport} request has no HTTP method: remove \`method\`, or use kind \`http\``
+            + (kind === 'grpc' ? '. For the RPC method, use `grpc.method`' : ''),
           'VALIDATION_ERROR',
         );
       }
@@ -1030,16 +1143,30 @@ export class RequestBuilder {
         (field) => input[field] !== undefined,
       );
       if (httpOnly.length > 0) {
+        const payload = kind === 'ws' ? '`websocket.messages`' : '`grpc.messages`';
         throw new BrunoError(
-          `A WebSocket request cannot carry ${httpOnly.join(', ')}: its payload is `
-            + '`websocket.messages`, and it has no query or path parameters',
+          `A ${transport} request cannot carry ${httpOnly.join(', ')}: its payload is `
+            + `${payload}, and it has no query or path parameters`,
+          'VALIDATION_ERROR',
+        );
+      }
+      // Each transport refuses the other's object, so naming the wrong one is an
+      // error rather than a field that writes nothing.
+      const otherKey = kind === 'ws' ? 'grpc' : 'websocket';
+      if (input[otherKey] !== undefined) {
+        throw new BrunoError(
+          `The \`${otherKey}\` object does not apply to kind \`${kind}\``,
           'VALIDATION_ERROR',
         );
       }
     } else {
-      if (input.websocket !== undefined) {
+      const transportOnly = (['websocket', 'grpc'] as const).filter(
+        (field) => input[field] !== undefined,
+      );
+      if (transportOnly.length > 0) {
         throw new BrunoError(
-          'The `websocket` object applies to kind `ws` only',
+          `The \`${transportOnly.join('` and `')}\` object applies to its own kind only, `
+            + 'not to kind `http`',
           'VALIDATION_ERROR',
         );
       }

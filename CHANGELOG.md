@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`create_request` authors gRPC requests**, via `kind: "grpc"` with a url and, under
+  `grpc`, the fully qualified `method`, the `protoPath`, the `methodType` and the
+  `messages`. All four RPC shapes are accepted because Bruno writes all four, though only
+  `unary` runs here — the other three author a file Bruno can open and `run_collection`
+  refuses by name. As for WebSocket, an HTTP method, a body, query parameters and path
+  params are refused by name rather than written and ignored.
+
+  Headers given for a gRPC request are written as **metadata**, that transport's only
+  header surface: a `headers` block on a gRPC request is one Bruno's gRPC reader never
+  looks at. The `protoPath` must already exist inside the collection and is stored
+  relative to it whichever spelling is given, since an absolute path commits the
+  operator's directory layout to a shared file; one resolving outside the collection is
+  refused, symlinks included — and so is one whose *imports* leave the collection, however
+  many hops in, since a confined proto importing a confined neighbour that imports
+  `/etc/passwd` names an entry file with nothing wrong with it. The run path checks the
+  same graph again, because the file can change between being authored and being run.
+
+  The bytes match upstream's own writer in both formats, including where the two dialects
+  disagree: `.bru` writes `protoPath` inside the `grpc` block, `.yml` writes
+  `protoFilePath` and nests metadata in the block. Checking against that writer rather
+  than a round-trip through our own parser is how the `.yml` key order turned out to be
+  wrong here too — ours was url, method, protoFilePath, methodType, auth, metadata,
+  message where upstream writes url, method, methodType, protoFilePath, metadata,
+  message, auth.
+
 - **`create_request` authors WebSocket requests**, via `kind: "websocket"` with a url and
   `websocket.messages`. Each message carries `content` and, optionally, a `title` and a
   `type` of `text` or `binary`; an untitled one is named by position — `message 1`,

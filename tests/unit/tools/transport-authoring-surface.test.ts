@@ -1,19 +1,19 @@
 /**
- * The WebSocket half of `create_request`, checked at the layer the caller sees.
+ * The non-HTTP halves of `create_request`, checked at the layer the caller sees.
  *
  * The writer-level tests call `createRequest` directly, so they never touch the
  * zod schemas or the handler in front of them. Two things can only go wrong
  * here: the schema can refuse a shape the writer supports — `method` was a hard
- * requirement before this, so no WebSocket request could be spelled at all — and
- * the handler can drop or rename a field on the way through. `kind` is renamed
- * deliberately (`websocket` on the wire, `ws` on disk), which is precisely the
- * kind of translation that silently stops happening.
+ * requirement before this, so no WebSocket or gRPC request could be spelled at
+ * all — and the handler can drop or rename a field on the way through. `kind` is
+ * renamed deliberately (`websocket` on the wire, `ws` on disk), which is
+ * precisely the kind of translation that silently stops happening.
  *
  * The cross-key refusals themselves (a method on a WebSocket request, a
- * `websocket` object on an HTTP one) live in the builder and are tested against
- * the real builder in tests/unit/bruno/websocket-authoring.test.ts. A zod
- * `.refine()` would have hidden the whole object from the tool-surface snapshot,
- * so they are not schema rules.
+ * `websocket` object on a gRPC one) live in the builder and are tested against
+ * the real builder in tests/unit/bruno/websocket-authoring.test.ts and
+ * tests/unit/bruno/grpc-authoring.test.ts. A zod `.refine()` would have hidden
+ * the whole object from the tool-surface snapshot, so they are not schema rules.
  */
 jest.mock('../../../src/bruno/request', () => ({
   createRequestBuilder: () => ({
@@ -71,12 +71,13 @@ describe('the create_request schema for a WebSocket request', () => {
     server = new BrunoMcpServer();
   });
 
-  it('offers both transports and refuses a third', () => {
+  it('offers all three transports and refuses a fourth', () => {
     const kind = inputSchema(server, 'create_request').kind as z.ZodTypeAny;
 
     expect(kind.safeParse('http').success).toBe(true);
     expect(kind.safeParse('websocket').success).toBe(true);
-    expect(kind.safeParse('grpc').success).toBe(false);
+    expect(kind.safeParse('grpc').success).toBe(true);
+    expect(kind.safeParse('socketio').success).toBe(false);
   });
 
   it('lets a request omit the method, which it could not before', () => {
@@ -109,6 +110,50 @@ describe('the create_request schema for a WebSocket request', () => {
     const websocket = inputSchema(server, 'create_request').websocket as z.ZodTypeAny;
 
     expect(websocket.safeParse({ messages: [{ title: 'first' }] }).success).toBe(false);
+  });
+});
+
+describe('the create_request schema for a gRPC request', () => {
+  let server: BrunoMcpServer;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    server = new BrunoMcpServer();
+  });
+
+  it('accepts all four RPC shapes and refuses an invented one', () => {
+    // Only unary runs here, but Bruno writes all four, so authoring must be able
+    // to spell a file Bruno can open.
+    const grpc = inputSchema(server, 'create_request').grpc as z.ZodTypeAny;
+
+    for (const methodType of ['unary', 'client-streaming', 'server-streaming', 'bidi-streaming']) {
+      expect(grpc.safeParse({ methodType }).success).toBe(true);
+    }
+    expect(grpc.safeParse({ methodType: 'duplex' }).success).toBe(false);
+  });
+
+  it('accepts a message described by content alone', () => {
+    const grpc = inputSchema(server, 'create_request').grpc as z.ZodTypeAny;
+
+    expect(grpc.safeParse({ messages: [{ content: '{}' }] }).success).toBe(true);
+  });
+
+  it('refuses a message with no content', () => {
+    const grpc = inputSchema(server, 'create_request').grpc as z.ZodTypeAny;
+
+    expect(grpc.safeParse({ messages: [{ title: 'first' }] }).success).toBe(false);
+  });
+
+  it('offers no `selected` or `type` on a message, which gRPC has no place for', () => {
+    // A caller who passes one would otherwise believe it reached the file.
+    const grpc = inputSchema(server, 'create_request').grpc as z.ZodTypeAny;
+
+    const parsed = grpc.safeParse({
+      messages: [{ content: '{}', selected: false, type: 'json' }],
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.messages[0]).toEqual({ content: '{}' });
   });
 });
 
@@ -190,5 +235,89 @@ describe('what the create_request handler forwards for a WebSocket request', () 
 
     expect(response.isError).toBe(true);
     expect(response.content[0].text).toContain('A WebSocket request has no HTTP method');
+  });
+});
+
+describe('what the create_request handler forwards for a gRPC request', () => {
+  let server: BrunoMcpServer;
+  let createRequest: jest.Mock;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    server = new BrunoMcpServer();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    createRequest = (server as any).requestBuilder.createRequest as jest.Mock;
+    createRequest.mockResolvedValue({ success: true, path: '/col/greet.bru' });
+  });
+
+  it('passes the kind through unrenamed, unlike websocket', async () => {
+    await toolHandler(server, 'create_request')({
+      collectionPath: '/col',
+      name: 'Greet',
+      kind: 'grpc',
+      url: 'grpc://127.0.0.1:50051',
+    });
+
+    expect(createRequest).toHaveBeenCalledWith(expect.objectContaining({ kind: 'grpc' }));
+  });
+
+  it('forwards every gRPC field, including every field of every message', async () => {
+    await toolHandler(server, 'create_request')({
+      collectionPath: '/col',
+      name: 'Greet',
+      kind: 'grpc',
+      url: 'grpc://127.0.0.1:50051',
+      grpc: {
+        method: '/greet.Greeter/SayHello',
+        protoPath: 'protos/greet.proto',
+        methodType: 'server-streaming',
+        messages: [{ title: 'first', content: '{"name":"world"}' }, { content: '{}' }],
+      },
+    });
+
+    expect(createRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        grpc: {
+          method: '/greet.Greeter/SayHello',
+          protoPath: 'protos/greet.proto',
+          methodType: 'server-streaming',
+          messages: [{ title: 'first', content: '{"name":"world"}' }, { content: '{}' }],
+        },
+      }),
+    );
+  });
+
+  it('forwards headers unchanged, leaving the builder to make them metadata', async () => {
+    // The rename to metadata is a dialect concern, so it belongs where the dialect
+    // is known; doing it here would write a metadata block for HTTP too.
+    await toolHandler(server, 'create_request')({
+      collectionPath: '/col',
+      name: 'Greet',
+      kind: 'grpc',
+      url: 'grpc://127.0.0.1:50051',
+      headers: { 'X-Authored': 'yes' },
+    });
+
+    expect(createRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ headers: { 'X-Authored': 'yes' } }),
+    );
+  });
+
+  it('reports a refused proto path to the caller as an error', async () => {
+    createRequest.mockResolvedValue({
+      success: false,
+      error: 'protoPath resolves outside the collection',
+    });
+
+    const response = await toolHandler(server, 'create_request')({
+      collectionPath: '/col',
+      name: 'Greet',
+      kind: 'grpc',
+      url: 'grpc://127.0.0.1:50051',
+      grpc: { protoPath: '../../etc/passwd' },
+    });
+
+    expect(response.isError).toBe(true);
+    expect(response.content[0].text).toContain('outside the collection');
   });
 });

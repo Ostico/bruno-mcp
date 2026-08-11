@@ -148,7 +148,31 @@ The flag is not optional detail — for a streaming request the difference betwe
 
 ---
 
-## Task 3: Author gRPC requests
+## Task 3: Author gRPC requests — DONE
+
+Landed with every acceptance criterion met. Three things worth recording:
+
+The `.yml` key order was wrong here too, in the same way and for the same reason as
+WebSocket's: ours was url, method, protoFilePath, methodType, auth, metadata, message
+where upstream writes url, method, methodType, protoFilePath, metadata, message, auth.
+Measuring against upstream's writer rather than round-tripping through our own parser is
+the only thing that would have found it. Everything else in the gRPC model was already
+right — the `protoPath`/`protoFilePath` split between dialects, the `.bru` block order,
+metadata as the header surface.
+
+Unlike WebSocket, `.yml` writes gRPC messages as a titled variant list unconditionally,
+so there is no shape switch to reproduce, and it writes no `settings` block for a gRPC
+request at all — which is why the byte-parity test needed no injected-settings workaround.
+
+The transitive import check moved rather than being duplicated. It lived in
+`grpc-transport.ts`, which pulls in grpc-js; the writer needs the same rule, and importing
+the transport from the writer would drag grpc-js into every authoring path. It is now
+`assertProtoImportsConfined` in `proto-path.ts`, which is where the confinement rules
+belong and has no transport dependency. Both ends call it: the writer so an escaping
+import is refused when the request is written, the runner because the proto can change
+between then and the run, and because a hand-written request never passed the writer.
+
+## Task 3 (original text)
 
 **Depends on:** Task 1. Larger than Task 2 and worth sequencing after it.
 

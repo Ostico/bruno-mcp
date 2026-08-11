@@ -17,7 +17,7 @@ import { toRequestView } from '../bruno/request-view.js';
 import { validateToolPath, resolveRequestFile } from './tool-path.js';
 import { withPathLock } from '../bruno/path-mutex.js';
 import { topologicalSort } from './topological-sort.js';
-import { inlineScriptsSchema, assertionEntrySchema, requestBodySchema, requestVarsSchema, requestSettingsSchema, websocketAuthoringSchema } from './schemas.js';
+import { inlineScriptsSchema, assertionEntrySchema, requestBodySchema, requestVarsSchema, requestSettingsSchema, websocketAuthoringSchema, grpcAuthoringSchema } from './schemas.js';
 import type { ToolContext } from './context.js';
 
 export function registerCreateRequestTool(ctx: ToolContext): void {
@@ -25,14 +25,14 @@ export function registerCreateRequestTool(ctx: ToolContext): void {
     'create_request',
     {
       title: 'Create Bruno Request',
-      description: 'Generate request files for API testing (supports .bru and .yml formats). Authors HTTP requests by default and WebSocket requests with kind "websocket" (url plus websocket.messages; no method and no body). Supports multipart/form-data with file uploads and per-part contentType (body.type "form-data" with formData entries of type "file"), and inline scripts (pre-request/post-response/tests) so no separate add_test_script call is needed. Scripts run as async functions: top-level await works, and bru.sleep(ms)/setTimeout/setInterval are available, spending the script timeout (settings.timeout, default 5000ms) — raise it via the settings argument.',
+      description: 'Generate request files for API testing (supports .bru and .yml formats). Authors HTTP requests by default, WebSocket requests with kind "websocket" (url plus websocket.messages) and gRPC requests with kind "grpc" (url plus grpc.method, grpc.protoPath and grpc.messages); neither takes an HTTP method or a body. Supports multipart/form-data with file uploads and per-part contentType (body.type "form-data" with formData entries of type "file"), and inline scripts (pre-request/post-response/tests) so no separate add_test_script call is needed. Scripts run as async functions: top-level await works, and bru.sleep(ms)/setTimeout/setInterval are available, spending the script timeout (settings.timeout, default 5000ms) — raise it via the settings argument.',
       inputSchema: {
         collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to existing collection directory.'),
         name: z.string().min(1, 'Request name is required'),
-        kind: z.enum(['http', 'websocket']).optional()
-          .describe('Transport. Defaults to "http". "websocket" takes no method and no body, and its payload is websocket.messages.'),
+        kind: z.enum(['http', 'websocket', 'grpc']).optional()
+          .describe('Transport. Defaults to "http". "websocket" and "grpc" take no method and no body; their payloads are websocket.messages and grpc.messages.'),
         method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']).optional()
-          .describe('Required for kind "http", refused for "websocket", which has no method.'),
+          .describe('Required for kind "http", refused for "websocket" and "grpc", which have no HTTP method. A gRPC request names its RPC method in grpc.method.'),
         url: z.string().min(1, 'URL is required'),
         headers: z.record(z.string()).optional(),
         body: requestBodySchema,
@@ -49,6 +49,7 @@ export function registerCreateRequestTool(ctx: ToolContext): void {
         vars: requestVarsSchema,
         settings: requestSettingsSchema,
         websocket: websocketAuthoringSchema,
+        grpc: grpcAuthoringSchema,
         folder: z.string().optional(),
         sequence: z.number().optional(),
         scripts: inlineScriptsSchema
@@ -71,6 +72,7 @@ export function registerCreateRequestTool(ctx: ToolContext): void {
           // both dialects' parsers resolve to. Mapped here so the wire name and
           // the on-disk kind can differ without either leaking into the other.
           kind: args.kind === 'websocket' ? 'ws' : args.kind,
+          grpc: args.grpc,
           method: args.method as HttpMethod | undefined,
           url: args.url,
           headers: args.headers,

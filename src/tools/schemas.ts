@@ -200,3 +200,36 @@ export const websocketAuthoringSchema = z.object({
 }).optional()
   .describe('WebSocket-only fields. Applies to kind "websocket" and is refused otherwise.');
 
+export const grpcAuthoringSchema = z.object({
+  method: z.string().optional()
+    .describe(
+      'The fully qualified RPC method, e.g. "/greet.Greeter/SayHello". Not an HTTP verb, ' +
+      'which is why it is here and not in the top-level method argument.',
+    ),
+  protoPath: z.string().optional()
+    .describe(
+      'The .proto file describing the service, relative to the collection. Must already ' +
+      'exist inside the collection: a path resolving outside it is refused, symlinks ' +
+      'included, as is one whose imports leave it however many hops in. Stored relative ' +
+      'to the collection whichever spelling is given, so the request survives being ' +
+      'cloned elsewhere.',
+    ),
+  methodType: z.enum(['unary', 'client-streaming', 'server-streaming', 'bidi-streaming']).optional()
+    .describe(
+      'The RPC shape. All four are written, because Bruno writes all four; note that this ' +
+      'server can only run "unary" today, so the others author a request Bruno can send ' +
+      'and run_collection will refuse.',
+    ),
+  messages: z.array(z.object({
+    title: z.string().optional()
+      .describe('Name of the message. Defaults to "message N" by position, as Bruno does.'),
+    content: z.string()
+      .describe('The payload as JSON text. Empty content is written as {}, as Bruno writes it.'),
+  })).optional()
+    .describe('Request messages. A unary call uses the first.'),
+}).optional()
+  .describe(
+    'gRPC-only fields. Applies to kind "grpc" and is refused otherwise. Headers given for a ' +
+    'gRPC request are written as metadata, which is that transport\'s only header surface.',
+  );
+

@@ -539,15 +539,41 @@ export interface CreateWebsocketInput {
   messages?: CreateWebsocketMessageInput[];
 }
 
+/** One gRPC message. No type and no selection — the format carries neither. */
+export interface CreateGrpcMessageInput {
+  /** The message's title. Defaults to `message N` by position, as Bruno names it. */
+  title?: string;
+  /** The payload, as JSON text. Empty content is written as `{}`, which is what Bruno writes. */
+  content: string;
+}
+
+/** The gRPC-only half of a create/modify input. */
+export interface CreateGrpcInput {
+  /**
+   * The fully qualified RPC method, e.g. `/greet.Greeter/SayHello`. Not an HTTP
+   * verb, which is why it lives here rather than reusing `method`.
+   */
+  method?: string;
+  /**
+   * The `.proto` file, relative to the collection. Confined to the collection at
+   * author time by the same rule the run path applies, and stored relative to it
+   * whichever spelling arrives, so the file survives being cloned somewhere else.
+   */
+  protoPath?: string;
+  /**
+   * `unary`, `client-streaming`, `server-streaming` or `bidi-streaming`. Not
+   * narrowed to what this server can run: Bruno writes all four, and refusing to
+   * author one would make a collection this server cannot round-trip.
+   */
+  methodType?: string;
+  messages?: CreateGrpcMessageInput[];
+}
+
 /**
  * What kind of request to author. Absent means `http`, so every call written
  * before this existed still means what it meant.
- *
- * Only `http` and `ws` are accepted today. gRPC authoring needs a proto path
- * carrying the run path's transitive confinement, which is its own task, and
- * accepting `grpc` here before then would take a call this builder cannot honour.
  */
-export type CreateRequestKind = 'http' | 'ws';
+export type CreateRequestKind = 'http' | 'ws' | 'grpc';
 
 export interface CreateRequestInput {
   collectionPath: string;
@@ -565,6 +591,17 @@ export interface CreateRequestInput {
    * quietly do nothing.
    */
   websocket?: CreateWebsocketInput;
+  /**
+   * The gRPC method, proto file and messages. Refused unless `kind` is `grpc`, so
+   * a stray key cannot quietly do nothing.
+   */
+  grpc?: CreateGrpcInput;
+  /**
+   * For a gRPC request these are written as metadata, which is the only header
+   * surface that transport has: `.bru` puts them in a `metadata` block and `.yml`
+   * inside `grpc.metadata`. A `headers` block on a gRPC request is a block
+   * Bruno's gRPC parser does not read.
+   */
   headers?: Record<string, string>;
   body?: {
     type: BodyType;
