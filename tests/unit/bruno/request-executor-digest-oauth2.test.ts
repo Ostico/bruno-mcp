@@ -217,17 +217,41 @@ http:
     expect(warnings.join(' ')).toContain('authorization_code');
   });
 
-  it('reports why the request went out unauthenticated when the token fetch fails', async () => {
-    mockFetch
-      .mockResolvedValueOnce(ok({ error: 'invalid_client' }))
-      .mockResolvedValueOnce(ok());
+  it('refuses the request instead of sending it as nobody when the token fetch fails', async () => {
+    // One queued response, not two: a second would survive this test unconsumed
+    // (`clearAllMocks` clears calls, not queues) and answer the next test's token
+    // fetch with a failure.
+    mockFetch.mockResolvedValueOnce(ok({ error: 'invalid_client' }));
     const root = await collection({ 'r.yml': oauthRequest('client_credentials') });
 
     const result = await run(root, { client_secret: 'wrong' });
 
-    expect(sent(1).Authorization).toBeUndefined();
-    const warnings = (result.groups[0]!.results?.[0] as { warnings?: string[] }).warnings ?? [];
-    expect(warnings.join(' ')).toContain('invalid_client');
+    // One call, the token endpoint. The request itself never went out: sending it
+    // unauthenticated would have exercised an identity the file never asked for.
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const refused = result.groups[0]!.results![0]!;
+    expect(refused.status).toBe(0);
+    expect(refused.url).toBe('https://api.test/data');
+    expect(refused.method).toBe('GET');
+    expect(refused.error).toContain('invalid_client');
+    expect(refused.error).toContain('was not sent');
+    expect(result.summary.failed).toBe(1);
+  });
+
+  it('redacts a secret in the url of the refusal it reports', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ error: 'invalid_client' }));
+    const root = await collection({
+      'r.yml': oauthRequest('client_credentials').replace(
+        'url: "https://api.test/data"',
+        'url: "https://api.test/data?token={{client_secret}}"',
+      ),
+    });
+
+    const result = await run(root, { client_secret: 'sesame' });
+
+    // The url is substituted by the time it reaches the refusal, so the value it
+    // carries is the one the environment supplied.
+    expect(result.groups[0]!.results![0]!.url).not.toContain('sesame');
   });
 
   it('fetches one token for a run of several requests sharing a config', async () => {
