@@ -209,6 +209,25 @@ does not model.
   request that has none.
 - A test that edits one field and asserts every other field survives byte-for-byte.
 
+**Done.** `src/bruno/transport-writes.ts` holds the shared builders; `request.ts` was at
+its 1300-line eslint ceiling, so the message, auth and update logic moved there and both
+dialect paths now call the same functions the create path does. Refusals narrowed to
+`method`, `body`, `query`, `pathParams` and the other kind's nested object — `url`,
+`headers` and `auth` exist on both transports and were the reason a WebSocket target was
+unchangeable. `tests/unit/bruno/transport-edits.test.ts` authors a request with something
+in every block, edits one field, and asserts the line-level delta is exactly that field.
+
+Two defects found while implementing it and fixed here: `.bru` transport requests silently
+dropped `assert`/`vars`/`settings` (applied after the http path had returned, and absent
+from the refusal list), and the `.yml` auth-edit path wrote `type: api-key` where Bruno
+writes `apikey` — a mode its reader does not match, on a request just told to
+authenticate. Both now share the create path's builder, and a test compares the bytes.
+
+One guard is deliberately unreachable from any file: both parsers reject a `meta.type`
+they do not know, so `transportKindToEdit` is tested directly rather than through a file.
+It stays because the alternative is a writer guessing a kind and grafting the wrong
+transport block onto a request.
+
 ---
 
 ## Task 5: Reconcile the reader and the writer on collection dialect

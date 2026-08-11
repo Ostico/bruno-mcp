@@ -264,11 +264,11 @@ describe('no entry point throws on any of the four', () => {
     expect(() => viewOf(filePath, content)).not.toThrow();
   });
 
-  it.each(FILES)('refuses an http-shaped edit to %s as a result, not a throw', async (_label, fileName) => {
+  it.each(FILES)('refuses an http-only edit to %s as a result, not a throw', async (_label, fileName) => {
     const dir = await collection(`refuse-${fileName}`);
-    const result = await builder.updateRequest(join(dir, fileName), { url: 'http://evil.example' });
+    const result = await builder.updateRequest(join(dir, fileName), { method: 'POST' });
     expect(result.success).toBe(false);
-    expect(result.error).toMatch(/request: it has no http block/);
+    expect(result.error).toMatch(/has no http block/);
   });
 
   it('lists all four without a parse failure', async () => {

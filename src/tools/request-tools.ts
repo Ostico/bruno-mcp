@@ -154,6 +154,8 @@ export function registerModifyRequestTool(ctx: ToolContext): void {
           .describe('Replaces the whole assert block. Omit to leave existing assertions untouched.'),
         vars: requestVarsSchema,
         settings: requestSettingsSchema,
+        websocket: websocketAuthoringSchema,
+        grpc: grpcAuthoringSchema,
         scripts: inlineScriptsSchema,
         scriptMode: z.enum(['replace', 'append']).optional().default('replace').describe(
           'How to write the scripts field. "replace" (default) overwrites the existing script ' +
@@ -209,6 +211,8 @@ export function registerModifyRequestTool(ctx: ToolContext): void {
         if (args.assert !== undefined) updates.assert = args.assert;
         if (args.vars !== undefined) updates.vars = args.vars;
         if (args.settings !== undefined) updates.settings = args.settings;
+        if (args.websocket !== undefined) updates.websocket = args.websocket;
+        if (args.grpc !== undefined) updates.grpc = args.grpc;
         if (args.scripts !== undefined) {
           updates.scripts = args.scripts as Record<string, string>;
           // Default explicitly: the zod default only applies when the SDK

@@ -19,8 +19,6 @@ import {
   YamlHeader,
   YamlAuth,
   CreateRequestInput,
-  CreateWebsocketMessageInput,
-  CreateGrpcMessageInput,
   FileOperationResult,
   BrunoError,
   BruFileError,
@@ -29,11 +27,20 @@ import {
   BodyType
 } from './types.js';
 import type {
-  BruTransportMessage,
-  YamlRequestMessage,
   YamlWebsocket,
   YamlGrpc,
 } from './transport-requests.js';
+import {
+  applyBruTransportUpdates,
+  applyKindAgnosticUpdates,
+  applyYamlTransportUpdates,
+  buildBruAuthBlock,
+  transportKindToEdit,
+  buildBruWebsocketMessages,
+  buildGrpcMessages,
+  buildYamlAuthValue,
+  buildYamlWebsocketMessages,
+} from './transport-writes.js';
 import { detectFormat } from './format-detector.js';
 import type { CollectionFormat } from './format-detector.js';
 import { createWriter, normalizeScriptType } from './format-factory.js';
@@ -56,7 +63,6 @@ import {
   toBruApiKeyPlacement,
   toBruBody,
   toBrunoAuthMode,
-  toYamlApiKeyPlacement,
   toYamlBody,
   varsToBruVarSets,
   varsToYamlVars,
@@ -215,22 +221,13 @@ export class RequestBuilder {
         if (updates.name) yamlReq.info.name = updates.name;
         if (updates.sequence !== undefined) yamlReq.info.seq = updates.sequence;
 
-        // Everything below reshapes the http block. A kind that has none cannot
-        // accept these, and writing them would either crash or silently graft an
-        // http block onto a grpc request. Refused by name instead.
+        // Everything below reshapes the http block. A kind that has none has its
+        // own block instead, and writing an http one onto a grpc request would
+        // graft a second target onto it. The fields that have no equivalent there
+        // are refused by name.
         const yamlHttp = yamlReq.http;
         if (!yamlHttp) {
-          const httpOnly = (
-            ['method', 'url', 'headers', 'body', 'auth', 'query', 'pathParams'] as const
-          ).filter((field) => updates[field] !== undefined);
-          if (httpOnly.length > 0) {
-            return {
-              success: false,
-              path: filePath,
-              error: `Cannot set ${httpOnly.join(', ')} on a "${yamlReq.info.type ?? 'unknown'}" `
-                + 'request: it has no http block. Only name and sequence can be changed.',
-            };
-          }
+          applyYamlTransportUpdates(yamlReq, transportKindToEdit(yamlReq.info.type), updates);
         }
 
         if (yamlHttp) {
@@ -246,9 +243,12 @@ export class RequestBuilder {
             // The bare token, not a mapping: see the same branch on the create path.
             yamlHttp.auth = 'inherit';
           } else if (updates.auth && updates.auth.type !== 'none') {
-            const authObj: Record<string, unknown> = { type: updates.auth.type };
-            if (updates.auth.config) Object.assign(authObj, updates.auth.config);
-            yamlHttp.auth = authObj as YamlAuth;
+            // The same builder the create path uses. It used to copy the whole
+            // config across under the caller's own spelling of the type, so an
+            // edit setting api-key auth wrote `type: api-key` where Bruno writes
+            // `apikey` — a mode its reader does not match, on a request that had
+            // just been told to authenticate.
+            yamlHttp.auth = buildYamlAuthValue(updates.auth.type, updates.auth.config || {});
           }
           if (updates.query) {
             yamlHttp.params = replaceQueryParams(
@@ -516,7 +516,7 @@ export class RequestBuilder {
         body: 'ws',
         auth: toBrunoAuthMode(input.auth?.type),
       };
-      const messages = this.buildBruWebsocketMessages(input.websocket?.messages);
+      const messages = buildBruWebsocketMessages(input.websocket?.messages);
       if (messages) bruFile.ws.messages = messages;
     } else if (kind === 'grpc') {
       // Same shape as the `ws` branch: no `http` block, and `body: grpc` names the
@@ -531,7 +531,7 @@ export class RequestBuilder {
       if (input.grpc?.method !== undefined) bruFile.grpc.method = input.grpc.method;
       if (input.grpc?.protoPath !== undefined) bruFile.grpc.protoPath = input.grpc.protoPath;
       if (input.grpc?.methodType !== undefined) bruFile.grpc.methodType = input.grpc.methodType;
-      const messages = this.buildGrpcMessages(input.grpc?.messages);
+      const messages = buildGrpcMessages(input.grpc?.messages);
       if (messages) bruFile.grpc.messages = messages;
     } else {
       bruFile.http = {
@@ -640,16 +640,6 @@ export class RequestBuilder {
   }
 
   /**
-   * The title an authored WebSocket message is written under.
-   *
-   * Defaulted rather than left empty because upstream's `.yml` writer switches
-   * shape on it: one message with no title and some content is written as a flat
-   * `message: {type, data}`, anything else as a titled variant list. `message N`
-   * is upstream's own default for the variant form, so naming every authored
-   * message keeps both dialects on the one shape both writers agree about,
-   * instead of making the file's structure depend on how many messages there are.
-   */
-  /**
    * Check an authored `protoPath` against the collection, and return the input
    * with it rewritten to the collection-relative form.
    *
@@ -685,96 +675,6 @@ export class RequestBuilder {
     };
   }
 
-  private transportMessageTitle(title: string | undefined, index: number): string {
-    const trimmed = title?.trim();
-    return trimmed && trimmed.length > 0 ? title as string : `message ${index + 1}`;
-  }
-
-  /**
-   * Build the gRPC messages both dialects write, from an authoring input.
-   *
-   * One builder for both, unlike WebSocket, because the two gRPC writers agree:
-   * neither carries a type or a selection flag, and upstream's `.yml` writer emits
-   * a titled variant list unconditionally rather than switching shape on a lone
-   * untitled message. `message N` is still the default title, which is upstream's
-   * own in both places.
-   *
-   * Empty content becomes `{}`. That is what upstream's `.bru` writer substitutes
-   * (`jsonToBru` writes `content: '''{}'''` for a falsy content), so writing the
-   * empty string would put a byte upstream would not.
-   */
-  private buildGrpcMessages(
-    messages: CreateGrpcMessageInput[] | undefined,
-  ): BruTransportMessage[] | undefined {
-    if (!messages || messages.length === 0) return undefined;
-    return messages.map((message, index) => ({
-      name: this.transportMessageTitle(message.title, index),
-      content: message.content.length > 0 ? message.content : '{}',
-    }));
-  }
-
-  /**
-   * Build the `.bru` `body:ws` messages from an authoring input.
-   *
-   * A deselected message is refused instead of written. `.bru` expresses only the
-   * true half of the flag — upstream writes no line for a deselected message and
-   * its reader resolves the absence to `false`, so nothing this writer emits can
-   * tell "deselected" apart from "not stated". Since the WebSocket transport
-   * sends a message that says nothing, writing the request as asked would produce
-   * a file whose run sends a frame the caller excluded. `.yml` carries the false
-   * explicitly and has no such limit.
-   */
-  private buildBruWebsocketMessages(
-    messages: CreateWebsocketMessageInput[] | undefined,
-  ): BruTransportMessage[] | undefined {
-    if (!messages || messages.length === 0) return undefined;
-
-    return messages.map((message, index) => {
-      if (message.selected === false) {
-        throw new BrunoError(
-          `Cannot author a deselected WebSocket message ("${this.transportMessageTitle(message.title, index)}") `
-            + 'in a .bru collection: the dialect has no way to record it, and the message would be sent. '
-            + 'Leave it out of the request, or use a .yml collection, which carries the flag',
-          'VALIDATION_ERROR',
-        );
-      }
-
-      const out: BruTransportMessage = {
-        name: this.transportMessageTitle(message.title, index),
-        content: message.content,
-        // Every authored message is one to send, and `.bru` says so only by
-        // writing the line: Bruno's own reader treats its absence as deselected,
-        // so a file authored without it would open in Bruno with nothing to send.
-        selected: true,
-      };
-      if (message.type !== undefined) out.type = message.type;
-      return out;
-    });
-  }
-
-  /**
-   * Build the `.yml` `websocket.message` variants from an authoring input.
-   *
-   * `selected` is always written, including the false: this dialect records it,
-   * and for a streaming request the difference between "not selected" and "not
-   * stated" decides what gets sent.
-   */
-  private buildYamlWebsocketMessages(
-    messages: CreateWebsocketMessageInput[] | undefined,
-  ): YamlRequestMessage[] | undefined {
-    if (!messages || messages.length === 0) return undefined;
-
-    return messages.map((message, index) => {
-      const out: YamlRequestMessage = {
-        name: this.transportMessageTitle(message.title, index),
-        content: message.content,
-        selected: message.selected ?? true,
-      };
-      if (message.type !== undefined) out.type = message.type;
-      return out;
-    });
-  }
-
   /**
    * Build a YamlRequest from CreateRequestInput
    */
@@ -799,7 +699,7 @@ export class RequestBuilder {
       // live in its own block, and an empty `http:` key is one no Bruno file has.
       const websocket: YamlWebsocket = { url: input.url };
       if (headerList) websocket.headers = headerList;
-      const messages = this.buildYamlWebsocketMessages(input.websocket?.messages);
+      const messages = buildYamlWebsocketMessages(input.websocket?.messages);
       if (messages) websocket.messages = messages;
       const auth = this.buildYamlAuth(input);
       if (auth !== undefined) websocket.auth = auth;
@@ -816,7 +716,7 @@ export class RequestBuilder {
       if (input.grpc?.methodType !== undefined) grpc.methodType = input.grpc.methodType;
       if (input.grpc?.protoPath !== undefined) grpc.protoPath = input.grpc.protoPath;
       if (headerList) grpc.metadata = headerList;
-      const messages = this.buildGrpcMessages(input.grpc?.messages);
+      const messages = buildGrpcMessages(input.grpc?.messages);
       if (messages) grpc.messages = messages;
       const auth = this.buildYamlAuth(input);
       if (auth !== undefined) grpc.auth = auth;
@@ -902,22 +802,7 @@ export class RequestBuilder {
     }
     if (!input.auth || input.auth.type === 'none') return undefined;
 
-    const authObj: Record<string, unknown> = { type: toBrunoAuthMode(input.auth.type) };
-    if (input.auth.type === 'bearer' && input.auth.config.token) {
-      authObj.token = input.auth.config.token;
-    } else if (input.auth.type === 'basic') {
-      if (input.auth.config.username) authObj.username = input.auth.config.username;
-      if (input.auth.config.password) authObj.password = input.auth.config.password;
-    } else if (input.auth.type === 'api-key') {
-      if (input.auth.config.key) authObj.key = input.auth.config.key;
-      if (input.auth.config.value) authObj.value = input.auth.config.value;
-      // Bruno omits the key entirely when no placement was expressed, so only
-      // write it when the caller actually asked for one.
-      if (input.auth.config.placement ?? input.auth.config.in) {
-        authObj.placement = toYamlApiKeyPlacement(input.auth.config);
-      }
-    }
-    return authObj as YamlAuth;
+    return buildYamlAuthValue(input.auth.type, input.auth.config);
   }
 
   /**
@@ -1009,21 +894,13 @@ export class RequestBuilder {
       updated.meta.seq = updates.sequence;
     }
 
-    // The rest reshape the http block. A kind that has none — grpc, ws — cannot
-    // accept them, and grafting an http block onto such a request would make it
-    // unopenable in Bruno and change which host it contacts.
+    // The rest reshape the http block. A kind that has none — grpc, ws — has its
+    // own, and grafting an http block onto such a request would make it unopenable
+    // in Bruno and change which host it contacts.
     const httpBlock = updated.http;
     if (!httpBlock) {
-      const httpOnly = (
-        ['method', 'url', 'headers', 'body', 'auth', 'query', 'pathParams'] as const
-      ).filter((field) => updates[field] !== undefined);
-      if (httpOnly.length > 0) {
-        throw new BrunoError(
-          `Cannot set ${httpOnly.join(', ')} on a "${updated.meta.type}" request: `
-            + 'it has no http block. Only name and sequence can be changed.',
-          'VALIDATION_ERROR',
-        );
-      }
+      applyBruTransportUpdates(updated, transportKindToEdit(updated.meta.type), updates);
+      applyKindAgnosticUpdates(updated, updates);
       return updated;
     }
 
@@ -1051,17 +928,7 @@ export class RequestBuilder {
       );
     }
 
-    if (updates.assert) {
-      updated.assertions = assertionsToBru(updates.assert);
-    }
-
-    if (updates.vars) {
-      updated.varSets = varsToBruVarSets(updates.vars, updated.varSets);
-    }
-
-    if (updates.settings) {
-      updated.settings = mergeRequestSettings(updated.settings, updates.settings);
-    }
+    applyKindAgnosticUpdates(updated, updates);
 
     if (updates.body) {
       httpBlock.body = updates.body.type;
@@ -1075,35 +942,12 @@ export class RequestBuilder {
       httpBlock.auth = 'inherit';
       delete updated.auth;
     } else if (updates.auth) {
+      // The credential comes over from updates.auth.config so a modify that
+      // touches auth updates the secret instead of wiping it, and it is built by
+      // the same function the creation path uses so the persisted shape is
+      // identical either way.
       httpBlock.auth = toBrunoAuthMode(updates.auth.type);
-      updated.auth = {
-        type: updates.auth.type
-      };
-
-      // Carry the credential fields over from updates.auth.config so a modify
-      // that touches auth updates the secret instead of wiping it. Mirror the
-      // creation path (buildBruFile) so the persisted shape stays identical.
-      const config = updates.auth.config || {};
-      switch (updates.auth.type) {
-        case 'bearer':
-          updated.auth.bearer = {
-            token: config.token || '{{token}}'
-          };
-          break;
-        case 'basic':
-          updated.auth.basic = {
-            username: config.username || '{{username}}',
-            password: config.password || '{{password}}'
-          };
-          break;
-        case 'api-key':
-          updated.auth.apikey = {
-            key: config.key || 'X-API-Key',
-            value: config.value || '{{apiKey}}',
-            placement: toBruApiKeyPlacement(config)
-          };
-          break;
-      }
+      updated.auth = buildBruAuthBlock(updates.auth.type, updates.auth.config || {});
     }
 
     return updated;

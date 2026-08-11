@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`modify_request` edits WebSocket and gRPC requests.** A url, headers, auth and the
+  nested `websocket`/`grpc` object all apply, each written where that transport keeps it:
+  a gRPC header edit lands in `metadata`, a WebSocket one in `headers`. gRPC also takes
+  `method`, `protoPath` and `methodType`. An edited credential is written by the same
+  builder as an authored one, so the two produce identical bytes.
+
+  Previously every HTTP-shaped field was refused on a request with no http block, which
+  put url, headers and auth out of reach — a WebSocket request's target could not be
+  changed for the life of the file. What is refused now is only what the transport has no
+  place for: an HTTP method, a body, query parameters, path params, and the other
+  transport's nested object.
+
 - **`create_request` authors gRPC requests**, via `kind: "grpc"` with a url and, under
   `grpc`, the fully qualified `method`, the `protoPath`, the `methodType` and the
   `messages`. All four RPC shapes are accepted because Bruno writes all four, though only
@@ -175,6 +187,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   machinery, since `req.setUrl`/`setHeader`/`setBody` have no target here.
 
 ### Fixed
+
+- **`assert`, `vars` and `settings` now reach a `.bru` WebSocket or gRPC request.** They
+  were applied after the http-block path had already returned, and were not in the
+  refusal list either, so passing an assertion for a `.bru` transport request neither
+  wrote it nor said it had not been written. The `.yml` writer applied all three
+  throughout.
+
+- **An edited `.yml` api-key credential is written as `apikey`, the mode Bruno's reader
+  matches.** The edit path wrote `type: api-key`, which its reader does not match, on a
+  request that had just been told to authenticate — so the credential was on disk and
+  inert. Create and edit now share one builder, and a test compares their bytes.
 
 - **A WebSocket message's `selected` flag is now written and read in `.bru`.** The model
   behind both dialects treated the flag as `.yml`-only, so the true case was dropped on
