@@ -1,4 +1,4 @@
-import { loadEnvironment } from './env-loader.js';
+import { loadEnvironment, substitute } from './env-loader.js';
 import { resetUploadDirsCache } from './upload-path.js';
 import { forkingScriptRunner, type ScriptRunner } from './sandbox-host.js';
 import { wrapFetchResponse } from './response-wrapper.js';
@@ -301,6 +301,40 @@ async function executeSingleRequest(
   tokenCache: TokenCache = createTokenCache(),
   websocketOptions?: WebsocketRunOptions,
 ): Promise<RequestExecutionResult> {
+  // The result for a request whose intended oauth2 credential could not be obtained.
+  //
+  // This used to be a warning on a request that went out anyway, which is a quiet
+  // identity substitution: the file says "as this principal", the wire says "as
+  // nobody". A 401 back at least looks like a problem, but an endpoint that permits
+  // anonymous access answers 200 and the run goes green having tested the one
+  // identity nobody asked about. Authorization testing is the main thing this server
+  // is for, so that outcome is worse than a failure.
+  //
+  // A refusal, not a throw, and per request: the rest of the group still runs. Only
+  // an automatable grant whose exchange actually failed reaches here — a grant that
+  // needs a browser resolves with no error at all and still sends, as before.
+  //
+  // The url is carried so the refusal names its target, and redacted here rather
+  // than at each call site: it has been substituted from the environment by then,
+  // so it can hold the very secret the refusal is about.
+  const oauth2Refused = (
+    oauthError: string,
+    method: string,
+    url: string,
+  ): RequestExecutionResult => ({
+    name: yaml.info.name,
+    method,
+    url: redactUrl(url),
+    status: 0,
+    duration_ms: 0,
+    tests: [],
+    error: `${oauthError}. The request was not sent: it authored an oauth2 credential that `
+      + 'could not be obtained, and sending it unauthenticated would exercise an identity the '
+      + 'file never asked for — against an endpoint that permits anonymous access it would '
+      + 'pass, proving only that anonymous access works. Set the auth type to "none" if the '
+      + 'unauthenticated case is what you meant to test.',
+  });
+
   // A kind with no http block cannot go down this pipeline: every step from the
   // URL onwards is HTTP-shaped. Each such kind either has a transport of its own
   // below, or is refused as a result rather than a throw — so one unsupported
@@ -315,6 +349,9 @@ async function executeSingleRequest(
         ? variableStore.merge(applyPreRequestVars(vars, yaml.vars))
         : prepareVariables(applyPreRequestVars(vars, yaml.vars), new Map());
       const grpcOauth = await resolveOAuth2(yaml, rootChain, grpcVars, tokenCache);
+      if (grpcOauth.error) {
+        return oauth2Refused(grpcOauth.error, 'GRPC', substitute(yaml.grpc.url ?? '', grpcVars));
+      }
       const { timeoutMs, warning } = resolveTimeout(yaml.settings?.timeout);
       const outcome = await executeGrpcRequest({
         request: yaml,
@@ -331,13 +368,7 @@ async function executeSingleRequest(
         scriptRunner,
         variableStore,
         baseVars: grpcVars,
-        // The token fetch reports its failure as one error string, the same way
-        // the http path folds it into that request's warnings — a failed exchange
-        // is a request sent without the credential, not a run that stops.
-        extraWarnings: [
-          ...(grpcOauth.error ? [grpcOauth.error] : []),
-          ...(warning ? [warning] : []),
-        ],
+        extraWarnings: warning ? [warning] : [],
       });
     }
 
@@ -346,6 +377,9 @@ async function executeSingleRequest(
         ? variableStore.merge(applyPreRequestVars(vars, yaml.vars))
         : prepareVariables(applyPreRequestVars(vars, yaml.vars), new Map());
       const wsOauth = await resolveOAuth2(yaml, rootChain, wsVars, tokenCache);
+      if (wsOauth.error) {
+        return oauth2Refused(wsOauth.error, 'WS', substitute(yaml.websocket.url ?? '', wsVars));
+      }
       const outcome = await executeWebsocketRequest({
         request: yaml,
         vars: wsVars,
@@ -360,7 +394,7 @@ async function executeSingleRequest(
         scriptRunner,
         variableStore,
         baseVars: wsVars,
-        extraWarnings: wsOauth.error ? [wsOauth.error] : [],
+        extraWarnings: [],
       });
     }
 
@@ -395,7 +429,9 @@ async function executeSingleRequest(
   // Its own fetch, not the pinned dispatcher below: the token endpoint is a
   // different host and gets its own SSRF check inside.
   const oauth = await resolveOAuth2(yaml, rootChain, effectiveVars, tokenCache);
-
+  if (oauth.error) {
+    return oauth2Refused(oauth.error, yaml.http.method, substitute(yaml.http.url ?? '', effectiveVars));
+  }
 
   // eslint-disable-next-line prefer-const -- url is reassigned by pre-request script mutations below
   const built = await buildFetchOptions(yaml, effectiveVars, collectionRoot, rootChain, oauth.token);
@@ -404,7 +440,7 @@ async function executeSingleRequest(
   // Reassignable: a pre-request script that sets a variable triggers a
   // re-substitution below, which re-derives auth warnings and the
   // applied auth-header names from the merged vars so they stay consistent.
-  let authWarnings = oauth.error ? [...(built.warnings ?? []), oauth.error] : built.warnings;
+  let authWarnings = built.warnings;
   let authHeaderNames = built.authHeaderNames ?? [];
   let authQueryNames = built.authQueryNames ?? [];
   const name = yaml.info.name;

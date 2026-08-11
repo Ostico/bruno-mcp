@@ -479,7 +479,31 @@ flagged it either.
 
 ---
 
-## A-policy. OAuth2 token-fetch failure downgrades to an unauthenticated request
+## A-policy. OAuth2 token-fetch failure downgrades to an unauthenticated request — CLOSED (decided: refuse)
+
+**Resolution.** The policy was changed: an automatable grant whose token exchange
+fails now refuses the request rather than sending it with no credential. The
+refusal carries the exchange's own reason, the request's redacted url and
+`status: 0`, so the request fails by name and the rest of the group still runs.
+HTTP, gRPC and WebSocket all take the same path, through one helper in
+`request-executor.ts`.
+
+The decisive argument is the one the section already raised, plus one it did not:
+the harm is not merely a green run that proved nothing, it is an *identity
+substitution*. The file says "as this principal", the wire says "as nobody", and
+against an endpoint permitting anonymous access the run reports a pass. A caller
+who means to test the unauthenticated case can say so with `auth.type: none`.
+
+A grant that needs a browser is untouched, and cannot be affected: `resolveOAuth2`
+returns no error at all for a non-automatable grant, so `error` present means
+exactly "an automatable exchange was attempted and failed". The existing test for
+that case is the regression guard.
+
+Covered by `request-executor-digest-oauth2.test.ts` (refusal, and the url
+redaction — the url is substituted by then, so it can hold the secret) and
+`oauth2-refusal-transports.test.ts` (the two transports are never entered).
+
+Original writeup follows.
 
 Separated from the defects above because it is **deliberate**, and filing it as a
 bug would send someone hunting for a fault that does not exist.

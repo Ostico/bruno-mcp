@@ -186,6 +186,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Pre-request scripts still do not run for these transports; that is separate
   machinery, since `req.setUrl`/`setHeader`/`setBody` have no target here.
 
+### Changed
+
+- **A request whose oauth2 token could not be fetched is refused instead of sent
+  unauthenticated.** It used to go out with no credential and a warning attached to the
+  result. Against a protected endpoint that produces a 401 that reads like a
+  misconfiguration; against one that permits anonymous access it produces a pass, having
+  exercised an identity the file never named. Authorization testing is what this server is
+  mostly for, so a run that goes green as nobody is the worse outcome of the two.
+
+  The refusal is a result, not a thrown error: the request fails by name with `status: 0`,
+  and the rest of the group still runs. It applies to HTTP, gRPC and WebSocket alike, and
+  only when an automatable grant's exchange actually failed — a grant that needs a browser
+  is still reported and still sent without a credential, since no exchange was attempted.
+  A run that means to test the unauthenticated case should set the auth type to `none`.
+
 ### Fixed
 
 - **`list_requests` and `get_collection_stats` say when a request's extension means Bruno
