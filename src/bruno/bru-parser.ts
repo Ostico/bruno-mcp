@@ -194,6 +194,12 @@ function readTransportMessages(
     // Only WebSocket messages have one. Defaulting a gRPC message to `text`
     // would write a key into the file that Bruno drops on the next read.
     if (withType && entry.type != null) message.type = String(entry.type);
+    // Also WebSocket-only, and only in its true form: `bruToJsonV2` resolves a
+    // missing `selected` pair to `false`, so the false it hands us here means
+    // "the line was absent" just as often as it means "the author deselected
+    // this". Carrying only the true case keeps a flag Bruno wrote from being
+    // dropped on the next write without inventing a decision from an absence.
+    if (withType && entry.selected === true) message.selected = true;
     return message;
   });
 
@@ -787,6 +793,11 @@ function writeTransportBlocks(json: Record<string, unknown>, bruFile: BruFile): 
   const messages = (block.messages ?? []).map((message) => {
     const entry: Record<string, unknown> = { name: message.name };
     if (message.type !== undefined) entry.type = message.type;
+    // `jsonToBruV2` writes the line only for a truthy value, so passing a false
+    // through would be indistinguishable from leaving it out. The model only
+    // ever holds true (see `BruTransportMessage.selected`), so this writes the
+    // same bytes Bruno writes for the same message.
+    if (message.selected === true) entry.selected = true;
     entry.content = message.content;
     return entry;
   });

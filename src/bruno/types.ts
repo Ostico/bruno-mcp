@@ -515,11 +515,56 @@ export interface RequestSettingsInput {
   encodeUrl?: boolean;
 }
 
+/**
+ * One authored WebSocket message.
+ *
+ * `selected` is kept as an explicit `false` rather than folded into absence,
+ * because for a session that sends several messages the difference between "not
+ * selected" and "not stated" decides what reaches the wire. The `.bru` dialect has
+ * no field for it at all, which is refused rather than dropped — see
+ * `validateRequestInput`.
+ */
+export interface CreateWebsocketMessageInput {
+  /** The message's title, which is how a warning or a transcript entry names it. */
+  title?: string;
+  /** `text`, `json` or `xml`. Every payload goes on the wire as a string either way. */
+  type?: string;
+  /** The payload itself. */
+  content: string;
+  selected?: boolean;
+}
+
+/** The WebSocket-only half of a create/modify input. */
+export interface CreateWebsocketInput {
+  messages?: CreateWebsocketMessageInput[];
+}
+
+/**
+ * What kind of request to author. Absent means `http`, so every call written
+ * before this existed still means what it meant.
+ *
+ * Only `http` and `ws` are accepted today. gRPC authoring needs a proto path
+ * carrying the run path's transitive confinement, which is its own task, and
+ * accepting `grpc` here before then would take a call this builder cannot honour.
+ */
+export type CreateRequestKind = 'http' | 'ws';
+
 export interface CreateRequestInput {
   collectionPath: string;
   name: string;
-  method: HttpMethod;
+  kind?: CreateRequestKind;
+  /**
+   * Required for an http request and refused for a WebSocket one, which has no
+   * method: the optionality is the type admitting that, and
+   * `validateRequestInput` is what enforces it.
+   */
+  method?: HttpMethod;
   url: string;
+  /**
+   * WebSocket messages. Refused unless `kind` is `ws`, so a stray key cannot
+   * quietly do nothing.
+   */
+  websocket?: CreateWebsocketInput;
   headers?: Record<string, string>;
   body?: {
     type: BodyType;

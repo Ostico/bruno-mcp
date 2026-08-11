@@ -291,14 +291,20 @@ function serialiseGrpcBlock(grpc: YamlGrpc): Record<string, unknown> {
 /**
  * Serialise the `websocket:` block. No service definition and no `metadata`: a
  * WebSocket request has one target and its credentials are ordinary headers.
+ *
+ * The keys are written in the order upstream's own writer emits them — url,
+ * headers, message, auth (`filestore/src/formats/yml/items/stringifyWebsocketRequest.ts`).
+ * YAML does not care, but a file this server authors is meant to be
+ * byte-comparable to the one Bruno writes for the same request, and key order is
+ * the whole difference between "the same file" and "a file that parses the same".
  */
 function serialiseWebsocketBlock(websocket: YamlWebsocket): Record<string, unknown> {
   const block: Record<string, unknown> = { url: websocket.url };
-  if (websocket.auth !== undefined) block.auth = websocket.auth;
   const headers = serialiseHeaderList(websocket.headers);
   if (headers) block.headers = headers;
   const messages = serialiseTransportMessages(websocket.messages, true);
   if (messages) block.message = messages;
+  if (websocket.auth !== undefined) block.auth = websocket.auth;
   applyExtraKeys(block, websocket.extra, YAML_WEBSOCKET_KEYS);
   return block;
 }

@@ -17,7 +17,7 @@ import { toRequestView } from '../bruno/request-view.js';
 import { validateToolPath, resolveRequestFile } from './tool-path.js';
 import { withPathLock } from '../bruno/path-mutex.js';
 import { topologicalSort } from './topological-sort.js';
-import { inlineScriptsSchema, assertionEntrySchema, requestBodySchema, requestVarsSchema, requestSettingsSchema } from './schemas.js';
+import { inlineScriptsSchema, assertionEntrySchema, requestBodySchema, requestVarsSchema, requestSettingsSchema, websocketAuthoringSchema } from './schemas.js';
 import type { ToolContext } from './context.js';
 
 export function registerCreateRequestTool(ctx: ToolContext): void {
@@ -25,11 +25,14 @@ export function registerCreateRequestTool(ctx: ToolContext): void {
     'create_request',
     {
       title: 'Create Bruno Request',
-      description: 'Generate request files for API testing (supports .bru and .yml formats). Supports multipart/form-data with file uploads and per-part contentType (body.type "form-data" with formData entries of type "file"), and inline scripts (pre-request/post-response/tests) so no separate add_test_script call is needed. Scripts run as async functions: top-level await works, and bru.sleep(ms)/setTimeout/setInterval are available, spending the script timeout (settings.timeout, default 5000ms) — raise it via the settings argument.',
+      description: 'Generate request files for API testing (supports .bru and .yml formats). Authors HTTP requests by default and WebSocket requests with kind "websocket" (url plus websocket.messages; no method and no body). Supports multipart/form-data with file uploads and per-part contentType (body.type "form-data" with formData entries of type "file"), and inline scripts (pre-request/post-response/tests) so no separate add_test_script call is needed. Scripts run as async functions: top-level await works, and bru.sleep(ms)/setTimeout/setInterval are available, spending the script timeout (settings.timeout, default 5000ms) — raise it via the settings argument.',
       inputSchema: {
         collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to existing collection directory.'),
         name: z.string().min(1, 'Request name is required'),
-        method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']),
+        kind: z.enum(['http', 'websocket']).optional()
+          .describe('Transport. Defaults to "http". "websocket" takes no method and no body, and its payload is websocket.messages.'),
+        method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']).optional()
+          .describe('Required for kind "http", refused for "websocket", which has no method.'),
         url: z.string().min(1, 'URL is required'),
         headers: z.record(z.string()).optional(),
         body: requestBodySchema,
@@ -45,6 +48,7 @@ export function registerCreateRequestTool(ctx: ToolContext): void {
           .describe('Declared assertions, evaluated on every run without needing a test() block.'),
         vars: requestVarsSchema,
         settings: requestSettingsSchema,
+        websocket: websocketAuthoringSchema,
         folder: z.string().optional(),
         sequence: z.number().optional(),
         scripts: inlineScriptsSchema
@@ -63,7 +67,11 @@ export function registerCreateRequestTool(ctx: ToolContext): void {
         const input: CreateRequestInput = {
           collectionPath: args.collectionPath,
           name: args.name,
-          method: args.method as HttpMethod,
+          // The tool surface spells the transport out; the model uses the token
+          // both dialects' parsers resolve to. Mapped here so the wire name and
+          // the on-disk kind can differ without either leaking into the other.
+          kind: args.kind === 'websocket' ? 'ws' : args.kind,
+          method: args.method as HttpMethod | undefined,
           url: args.url,
           headers: args.headers,
           body: args.body as CreateRequestInput['body'],
@@ -76,6 +84,7 @@ export function registerCreateRequestTool(ctx: ToolContext): void {
           assert: args.assert,
           vars: args.vars,
           settings: args.settings,
+          websocket: args.websocket,
           folder: args.folder,
           sequence: args.sequence,
           scripts: args.scripts as Record<string, string> | undefined
