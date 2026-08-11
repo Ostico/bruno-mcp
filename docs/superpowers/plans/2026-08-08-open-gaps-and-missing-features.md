@@ -510,7 +510,7 @@ configured is a product decision. Changing it would affect all three transports.
 
 Things a caller can reasonably want that there is no way to do.
 
-### B1. Authoring gRPC and WebSocket requests
+### B1. Authoring gRPC and WebSocket requests — CLOSED (#168, #169, #170)
 
 **Evidence.** `create_request` has no transport-kind discriminant; its schema is
 HTTP-shaped throughout. `modify_request` on a WebSocket request permits only
@@ -525,6 +525,13 @@ general-purpose writing tool, against a format the author had to be taught.
 **Done when:** see `2026-08-08-transport-authoring-tasks.md`, which breaks this
 into seven tasks. Note A1 and A2 above were found while measuring it and are
 tracked there too; they are repeated here because they are defects, not features.
+
+**Done.** `create_request` takes `kind` (`http` by default, plus `graphql`, `grpc`,
+`websocket`) with a nested per-transport object, and `modify_request` edits a url,
+headers, auth and that nested object on a request with no http block. Both refuse by
+name what the transport has no place for rather than writing it and ignoring it. The
+seven tasks are annotated individually in that file; Task 7 could not be executed as
+written and is closed there with the reason.
 
 ### B2. Response headers are not returned — CLOSED (#163)
 

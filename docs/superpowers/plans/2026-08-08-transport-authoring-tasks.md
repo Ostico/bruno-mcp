@@ -328,3 +328,38 @@ transcript, and the error paths.
 Its findings are about the *run* path, where this list is about the *authoring*
 path, so they are expected to be separate work. Triage them into this list or into
 their own once they land, rather than assuming either.
+
+**Closed — not executable as written; re-audited instead.** The probe's findings never
+landed: it ran against a third-party endpoint and left no artifact, so there is nothing
+to triage. Rather than assume it found nothing, the run path was audited independently
+against its own tests. Every attack the probe was aimed at is already pinned:
+
+- Handshake-header collisions — a header the handshake owns is overridden rather than
+  honoured or rejected, and duplicate spellings collapse to the last value
+  (`tests/integration/ws-handshake.test.ts:167-208`).
+- CRLF injection — refused by the constructor, and the refusal names the target rather
+  than reporting an empty url (`tests/integration/ws-session.test.ts:558`).
+- `Sec-WebSocket-Version` and `Sec-WebSocket-Protocol` — both negotiated through the
+  library rather than as headers, with the authored version honoured as a number and a
+  non-numeric one reported instead of passed on (`ws-transport.test.ts:411-467`).
+- All bounds, at their edges — message count, wall clock, cumulative bytes and idle,
+  each naming itself as the stop reason; idle arms on the first frame, restarts on
+  every frame, and suspends while a paced sequence is still going out.
+  `maxFrameBytes` is applied where payloads are kept (`transport-redaction.ts:161`),
+  not at the socket, which is why it does not appear in the transport at all.
+- Auth — centralised in `applyAuth` with a per-transport disposition, so a mode a
+  transport cannot honour is refused by name (digest) or warned about rather than
+  opening a bare socket. Covered per transport in `auth-disposition.test.ts`.
+- Secret leakage — a substituted secret appears nowhere in the result under the default
+  bounds, and only once payloads are explicitly asked for; a script still receives the
+  payloads the surfaced transcript withholds.
+- Error paths — socket failure mid-session, peer-initiated close as closed rather than
+  truncated, close code and reason recorded, no code invented for a close that carried
+  none, and no socket surviving the call.
+
+One residual asymmetry, deliberately left alone: `bearer` and `api-key` withhold an
+empty credential and warn, while `basic` sends `Authorization: Basic Og==` — base64 of
+`:` — silently. That matches upstream, which applies basic through axios and sets the
+header whatever the credentials are, and an empty `Bearer ` is not a syntactically
+valid credential where `Og==` is. Parity wins; the gap is a missing diagnostic, not a
+wrong byte.
