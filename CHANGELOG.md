@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A CSV reader for data rows**, the first piece of data-driven runs. Nothing calls it yet:
+  it lands on its own so the format it accepts can be argued about before the feature that
+  depends on it is built.
+
+  It reads RFC 4180 — comma delimiter, `"` quote, `""` escape, LF, CRLF or a bare CR
+  ending a record — and nothing beyond it. Written here rather than taken from a package
+  for two reasons. Every byte of every data row passes through this code, because a data
+  row's purpose is to hold the identity a request runs as, and a dependency on that path
+  is a permanent thing to trust and re-audit. And the reader of a rejection is an agent
+  that has to repair the file, which it can only do if the message names the line and the
+  column; a library reports its own position in its own vocabulary.
+
+  What it refuses is the point. A row whose field count disagrees with the header row is
+  rejected rather than padded, because padding binds a value to the wrong column and a run
+  that authenticates with one row's password under another row's username still comes back
+  green. A repeated or unnamed column is rejected, since one of the two would be
+  unreachable. A semicolon- or tab-separated export is rejected by name instead of parsing
+  as a single column called `name;password`. No refusal quotes cell contents — positions
+  and column names only, the same rule the `.bru` and `.yml` parse-failure summaries follow.
+
+  Two deliberate divergences from the spec, both documented where they happen: a newline
+  inside a quoted value is normalised to a bare LF, so a value can never carry a CR into a
+  header it is interpolated into; and a byte-order mark is stripped, which is what a
+  spreadsheet writes and what would otherwise become part of the first column's name.
+
 - **`modify_request` edits WebSocket and gRPC requests.** A url, headers, auth and the
   nested `websocket`/`grpc` object all apply, each written where that transport keeps it:
   a gRPC header edit lands in `metadata`, a WebSocket one in `headers`. gRPC also takes
