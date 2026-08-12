@@ -27,11 +27,11 @@ tests/ export-ignore
 jest.config.ts export-ignore
 .eslintrc.json export-ignore
 
-# Design notes, plans, specs, and vendored copies of upstream SDK documentation. These
-# record why the server is built the way it is, which matters when changing it and not
-# when running it. The README links one of them; in an archive that link stops resolving
-# locally and still resolves on GitHub, which is the better trade for a document whose
-# audience is a contributor.
+# Design notes and vendored copies of upstream SDK documentation. These record why the
+# server is built the way it is, which matters when changing it and not when running it.
+# Nothing outside this directory links into it, so an archive loses no reference by
+# dropping it. `docs/superpowers` is a submodule of a private repository, and an archive
+# would carry it as an empty directory in any case.
 docs/ export-ignore
 SPEC.md export-ignore
 examples/ export-ignore

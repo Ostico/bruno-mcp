@@ -1,0 +1,4 @@
+[submodule "docs/superpowers"]
+	path = docs/superpowers
+	url = git@github.com:Ostico/bruno-mcp-studio-docs.git
+	branch = main
