@@ -23,6 +23,7 @@ const repoRoot = join(__dirname, '..', '..', '..');
 interface ServerManifest {
   name: string;
   version: string;
+  description: string;
   packages: {
     registryType: string;
     identifier: string;
@@ -61,5 +62,17 @@ describe('the MCP registry manifest', () => {
   it('agrees with package.json on the version', () => {
     expect(manifest.version).toBe(pkg.version);
     expect(manifest.packages[0].version).toBe(pkg.version);
+  });
+
+  it('keeps the description inside the length the registry accepts', () => {
+    // Measured, not guessed. Publishing 2.3.0 returned
+    //   422 { "message": "expected length <= 100", "location": "body.description" }
+    // for a 126-character description, after the tag had fired and npm had already
+    // published. The npm description is a separate field with no such limit, so
+    // there is nothing to keep the two in step and nothing else to notice this.
+    expect(manifest.description.length).toBeLessThanOrEqual(100);
+    // Non-empty as well: the registry has this description and the package has its
+    // own, so an empty one here would list the server with no summary at all.
+    expect(manifest.description.trim().length).toBeGreaterThan(0);
   });
 });
