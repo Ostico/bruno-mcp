@@ -5,12 +5,30 @@ on:
     tags:
       - 'v*.*.*'
 
+  # Listing on the MCP registry is the one part of a release that can fail after
+  # npm has already published, and it cannot be recovered by re-running the
+  # failed job: `registry` needs `release`, both check out the tag, and npm
+  # rejects a second publish of a version it already serves, so `release` would
+  # fail before `registry` was reached. Moving the tag has the same outcome.
+  # 2.3.0's listing had to be published by hand for exactly that reason. This
+  # input runs the listing on its own against an existing tag.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to list on the MCP registry, without the leading v (for example 2.3.0). The tag must exist and npm must already serve that version.'
+        required: true
+        type: string
+
 permissions:
   contents: write
   id-token: write
 
 jobs:
+  # Publishing to npm happens only on a tag. A manual run exists to repair a lost
+  # registry listing, and npm has nothing to repair — it either has the version or
+  # the job below will refuse to list it.
   release:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     environment: production
 
@@ -68,18 +86,53 @@ jobs:
   registry:
     runs-on: ubuntu-latest
     needs: release
+    # A skipped dependency skips whatever needs it, so a manual run reaches this
+    # job only with always(). The result check is what always() then costs us: it
+    # has to be spelled out, or a failed npm publish would be followed by a
+    # listing attempt for a version npm does not serve.
+    if: |
+      always() &&
+      (github.event_name == 'workflow_dispatch' || needs.release.result == 'success')
     permissions:
       contents: read
       id-token: write
 
     steps:
+    # Before the checkout, because it chooses what to check out. The input is
+    # read through the environment rather than interpolated into the script: a
+    # `${{ }}` inside a run block is pasted in as text before the shell sees it,
+    # so a crafted input would run as code.
+    - name: Resolve the version to list
+      id: target
+      env:
+        REQUESTED: ${{ inputs.version }}
+      run: |
+        if [ "$GITHUB_EVENT_NAME" = 'workflow_dispatch' ]; then
+          V="${REQUESTED#v}"
+        else
+          V="${GITHUB_REF_NAME#v}"
+        fi
+        case "$V" in
+          ''|*[!0-9.]*)
+            echo "::error::'$V' is not a bare version like 2.3.0"
+            exit 1
+            ;;
+        esac
+        echo "version=$V" >> "$GITHUB_OUTPUT"
+        echo "Listing $V"
+
+    # The tag, not the branch: the listing describes a released version, and on a
+    # manual run the default ref would be whatever main happens to say now.
     - uses: actions/checkout@v6
+      with:
+        ref: refs/tags/v${{ steps.target.outputs.version }}
 
     # Same reason as the release job: the tag is the version, and the committed
     # server.json is documentation that a test keeps aligned with package.json.
     - name: Set version from tag
+      env:
+        V: ${{ steps.target.outputs.version }}
       run: |
-        V="${GITHUB_REF_NAME#v}"
         jq --arg v "$V" '.version = $v | .packages[0].version = $v' server.json > server.tagged.json
         mv server.tagged.json server.json
 
@@ -89,8 +142,9 @@ jobs:
     # not guaranteed the instant `npm publish` returns in the job before this
     # one. Poll rather than sleep, and fail loudly rather than silently skip.
     - name: Wait for the published version to be readable from npm
+      env:
+        V: ${{ steps.target.outputs.version }}
       run: |
-        V="${GITHUB_REF_NAME#v}"
         EXPECTED="$(jq -r '.name' server.json)"
         for i in $(seq 1 30); do
           ACTUAL="$(npm view "@ostico/bruno-mcp@$V" mcpName 2>/dev/null || true)"
