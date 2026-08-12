@@ -159,9 +159,15 @@ describe('reading CSV data rows', () => {
       );
     });
 
-    it('refuses a repeated column name, since one of the two would be unreachable', () => {
+    it('refuses a repeated column name, naming every column that shares it', () => {
       expect(() => parseCsvRows('name,password,name\na,b,c\n')).toThrow(
-        /Line 1: the header row names "name" twice/,
+        /Line 1: the header row uses the name "name" for 2 columns \(1, 3\)\./,
+      );
+    });
+
+    it('caps the positions it lists, so a wide file gets an error and not a list', () => {
+      expect(() => parseCsvRows('n,n,n,n,n\na,b,c,d,e\n')).toThrow(
+        /the name "n" for 5 columns \(1, 2, 3, …\)\./,
       );
     });
 

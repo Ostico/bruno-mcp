@@ -34,6 +34,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   header it is interpolated into; and a byte-order mark is stripped, which is what a
   spreadsheet writes and what would otherwise become part of the first column's name.
 
+  Tested against a real exported file as well as written-for-the-parser strings:
+  `tests/fixtures/csv/terragene-multilingual-glossary.csv` is a translation glossary
+  committed byte for byte as it came out of the tool that made it — 46 columns, CRLF,
+  quoted commas, a doubled quote, a non-breaking space, Cyrillic, and 30 empty cells in
+  its first data row. Its cells were compared one by one against Python's `csv` module,
+  an implementation with no shared ancestry, and agreed on all 1,748 of them. It also
+  produced a fix: a real export repeats a column name once per language group, fourteen
+  times over, so the duplicate-column error now reports how many columns share the name
+  and where the first few are, instead of saying the header names it "twice".
+
 - **`modify_request` edits WebSocket and gRPC requests.** A url, headers, auth and the
   nested `websocket`/`grpc` object all apply, each written where that transport keeps it:
   a gRPC header edit lands in `metadata`, a WebSocket one in `headers`. gRPC also takes

@@ -33,6 +33,9 @@ const BOM = /^\uFEFF/;
 /** Separators of the wider CSV world, used to recognise a file this reader cannot take. */
 const FOREIGN_DELIMITERS = [';', '\t'];
 
+/** Cap on the column positions a duplicate-name error lists, so a wide file stays readable. */
+const MAX_REPORTED_POSITIONS = 3;
+
 /** A parsed data file: the column names in file order, and one object per row. */
 export interface CsvRows {
   headers: string[];
@@ -239,11 +242,22 @@ function readHeaders(record: CsvRecord): string[] {
     );
   }
 
+  // Reported with a count and positions rather than as "names it twice", because
+  // a real export repeats a name once per group of columns — a glossary with
+  // fourteen languages carries fourteen columns called "Notes" — and a message
+  // that says "twice" sends the reader looking for the wrong thing. The
+  // positions are capped so a wide file cannot turn one error into a list.
   const duplicate = headers.find((name, index) => headers.indexOf(name) !== index);
   if (duplicate !== undefined) {
+    const at = headers
+      .map((name, index) => (name === duplicate ? index + 1 : 0))
+      .filter((position) => position !== 0);
+    const shown = at.slice(0, MAX_REPORTED_POSITIONS).join(', ');
     throw new Error(
-      `Line ${record.line}: the header row names "${duplicate}" twice. One of the two columns `
-        + 'would be unreachable, so which values a run used could not be told from the file.',
+      `Line ${record.line}: the header row uses the name "${duplicate}" for ${at.length} columns `
+        + `(${shown}${at.length > MAX_REPORTED_POSITIONS ? ', …' : ''}). A column name is the `
+        + 'variable name its values bind to, so all but one of them would be unreachable. Give '
+        + 'each column a distinct name.',
     );
   }
 
