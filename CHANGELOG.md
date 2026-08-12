@@ -5,6 +5,19 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **The MCP registry manifest's description was too long to publish.** `server.json`
+  carried a 126-character description and the registry accepts 100, so publishing 2.3.0
+  returned `422 { "message": "expected length <= 100", "location": "body.description" }`.
+  It failed after the tag had fired, so npm and the GitHub release were already done and
+  only the listing was lost — and a spent version number cannot be republished. The
+  description is now 97 characters, and `registry-manifest.test.ts` asserts the limit, so
+  the next occurrence is a local test failure rather than a 4xx nobody can undo. The npm
+  description is a separate field with no such limit, which is why nothing else noticed.
+
 ## [2.3.0] - 2026-08-12
 
 ### Added
