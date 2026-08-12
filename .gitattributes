@@ -49,3 +49,8 @@ CONTRIBUTING.md export-ignore
 # only leave whoever reads the archive thinking files went missing by accident.
 .gitattributes export-ignore
 .gitignore export-ignore
+
+# The submodule declaration. `docs/` is excluded above, so an archive holds neither the
+# submodule nor a directory to put it in, and the file would name a private repository
+# nobody reading the archive can reach.
+.gitmodules export-ignore
