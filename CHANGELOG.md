@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- **How to assert on a gRPC or WebSocket result.** `res.getBody()` on a WebSocket request
+  is the transcript array, and `res.getStatus()` is always `0` — a test written against the
+  status asserts on a constant and cannot fail. The outcome is `res.statusText`, carrying
+  the stop reason. Said once at the end of a paragraph about close codes before; now its own
+  section with an example, and stated in the `run_collection` description where a caller
+  writing assertions will meet it. gRPC's own shape is spelled out alongside.
+- **`includePayloads` gates the result, not the script.** A test script always sees the real
+  payloads, exactly as `res.body` always carries a full HTTP body while `response_body` is
+  gated by `includeResponseBody`. That makes `includePayloads: false` plus content
+  assertions the intended shape for CI — the assertions check the frames, and what comes
+  back holds only direction, timing and sizes. Previously discoverable only from the source.
+- **Simultaneity across separate `run_collection` calls is not promised.** Calls issued
+  together may overlap or may serialise; runs meant to be concurrent have been seen starting
+  more than twenty seconds apart, each passing its own assertions. A test that depends on two
+  things happening at once must be one call with a parallel group.
+
 ### Added
 
 - **A guide to execution groups and parallelism**, at `docs/execution-groups.md` and linked
