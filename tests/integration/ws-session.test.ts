@@ -58,6 +58,28 @@ async function startServer(
 const stop = (harness: Harness) =>
   new Promise<void>((resolve) => harness.server.close(() => resolve()));
 
+/**
+ * Wait until the server has seen `count` sockets close, then report what it saw.
+ *
+ * `harness.closes` counts closes from the *server's* side, and a close is a network
+ * event: the runner has already let go of its socket by the time a run resolves, but the
+ * far end learns of it an event-loop turn or more later. Reading the counter the instant
+ * the run returns therefore passes on an idle machine and fails under load, which is
+ * exactly the kind of test that gets its expectation lowered rather than its race fixed.
+ *
+ * Waiting for a specific count keeps the assertion whole — every socket was closed, none
+ * was left open — and returns the count so the caller still asserts it, and so a server
+ * that closes nothing fails on the number rather than on a timeout.
+ */
+async function closesSeen(harness: Harness, count: number, timeoutMs = 3000): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  while (harness.closes < count && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  return harness.closes;
+}
+
 async function collection(files: Record<string, string>): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'ws-run-'));
   await writeFile(join(root, 'bruno.json'), JSON.stringify({ version: '1', name: 'c', type: 'collection' }));
@@ -336,10 +358,9 @@ describe('no socket survives the call', () => {
     const harness = await startServer((socket) => socket.send('one'));
     try {
       await run(await collection({ 'bru.bru': bruWs('127.0.0.1', harness.port) }), { maxMessages: 1 });
-      // Polled rather than asserted immediately: the close is a network event, and
+      // Waited for rather than asserted immediately: the close is a network event, and
       // asserting it synchronously would pass for the wrong reason on a fast run.
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      expect(harness.closes).toBeGreaterThan(0);
+      expect(await closesSeen(harness, 1)).toBeGreaterThan(0);
     } finally {
       await stop(harness);
     }
@@ -359,8 +380,7 @@ describe('no socket survives the call', () => {
       );
       expect(result.websocket).toBeDefined();
       expect(['closed', 'error']).toContain(result.websocket?.stop_reason);
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      expect(harness.closes).toBeGreaterThan(0);
+      expect(await closesSeen(harness, 1)).toBeGreaterThan(0);
     } finally {
       await stop(harness);
     }
@@ -1031,7 +1051,7 @@ describe('two WebSocket sessions in parallel groups', () => {
         ['from-alpha', 'echo:from-alpha'],
         ['from-beta', 'echo:from-beta'],
       ]);
-      expect(harness.closes).toBe(2);
+      expect(await closesSeen(harness, 2)).toBe(2);
     } finally {
       await stop(harness);
     }
