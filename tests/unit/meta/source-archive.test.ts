@@ -14,8 +14,42 @@ import { join } from 'node:path';
 
 const repoRoot = join(__dirname, '../../..');
 
+/**
+ * Run git, and report a failure as a plain message.
+ *
+ * The rewrap is not decoration. When `spawnSync` cannot start a process at all —
+ * EAGAIN, which is what a machine running the whole suite in parallel workers hands
+ * back — the error it throws has `.error` pointing at itself, and jest's worker
+ * cannot serialise a cycle. The suite then reports "Test suite failed to run" with a
+ * `Converting circular structure to JSON` in place of any diagnosis, and passes
+ * locally, where nothing else is competing for processes.
+ */
+function run(
+  command: string,
+  args: string[],
+  options: Parameters<typeof execFileSync>[2] = {},
+): string | Buffer {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return execFileSync(command, args, { cwd: repoRoot, ...options });
+    } catch (reason) {
+      const failure = reason as { code?: string; message?: string; status?: number; stderr?: string };
+      // EAGAIN is the machine refusing to fork right now, not an answer about the
+      // archive, so it is worth asking again. A real non-zero exit is not retried.
+      if (failure.code === 'EAGAIN' && attempt < 4) {
+        continue;
+      }
+      throw new Error(
+        `${command} ${args.join(' ')} failed: ${failure.message ?? String(reason)}`
+          + `${failure.status === undefined ? '' : ` (exit ${failure.status})`}`
+          + `${failure.stderr ? `\n${String(failure.stderr)}` : ''}`,
+      );
+    }
+  }
+}
+
 const git = (...args: string[]): string =>
-  execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+  String(run('git', args, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }));
 
 /** The top-level entries an archive is meant to carry: enough to build and run. */
 const SHIPPED = [
@@ -38,15 +72,16 @@ const SHIPPED = [
  * which is why a newly added and uncommitted file will not appear here.
  */
 function archiveTopLevel(): Set<string> {
-  const tar = execFileSync('git', ['archive', '--worktree-attributes', '--format=tar', 'HEAD'], {
-    cwd: repoRoot,
+  const tar = run('git', ['archive', '--worktree-attributes', '--format=tar', 'HEAD'], {
     maxBuffer: 128 * 1024 * 1024,
   });
-  const listed = execFileSync('tar', ['tf', '-'], {
-    input: tar,
-    encoding: 'utf8',
-    maxBuffer: 32 * 1024 * 1024,
-  });
+  const listed = String(
+    run('tar', ['tf', '-'], {
+      input: tar,
+      encoding: 'utf8',
+      maxBuffer: 32 * 1024 * 1024,
+    }),
+  );
 
   return new Set(
     listed

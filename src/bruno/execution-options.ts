@@ -52,6 +52,16 @@ export interface ExecutionOptions {
    */
   variables?: Record<string, string>;
   /**
+   * Rows every group iterates over: the group runs once per row, with the row's
+   * columns bound over its variables. A group naming its own rows replaces these.
+   *
+   * Mutually exclusive with `dataFile`, and refused rather than merged, since
+   * two sources of rows in one scope have no obvious merge.
+   */
+  data?: Record<string, string>[];
+  /** A CSV inside the collection, read into `data`'s place. */
+  dataFile?: string;
+  /**
    * Whether responses' cookies are kept and sent on later requests in the same
    * run. Defaults to ON, matching Bruno's CLI, where the flag is the inverse
    * (`--disable-cookies`). Pass `false` to send only cookies a request writes

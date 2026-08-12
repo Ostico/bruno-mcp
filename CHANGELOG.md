@@ -7,7 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Data-driven runs: `data` and `dataFile` on `run_collection`.** A group given rows runs
+  once per row, with the row's columns bound as variables over the group's own. One call
+  now checks the same requests against fifty accounts, or one login against fifty
+  credential pairs. `data` takes the rows inline; `dataFile` reads them from a CSV inside
+  the collection, whose first line names the variables. Either can be given per group or
+  for the whole run, and a group naming its own rows replaces the run's rather than adding
+  to them — the rule `environment` already follows.
+
+  Each row is reported as its own group: same `name`, its own `index`, and an
+  `iterationIndex` counting from 0. That is not a reporting choice but the design. A group
+  owns its variable store, its cookie jar and its OAuth2 token cache, which is exactly what
+  a row needs, because a row commonly *is* a different identity. Two rows differing only in
+  a password therefore authenticate separately, where anything sharing state between rows
+  would let the second reuse the first one's token and pass its assertions on a credential
+  it had never sent.
+
+  A row's values are authored variables, the tier that recurses through interpolation, so a
+  cell holding `{{host}}` resolves exactly as the same value typed into `variables` would.
+  Rows are independent, so a failing row does not stop the rows after it; this server has
+  no `bail`, and none was added here. Two refusals rather than a guess: `data` and
+  `dataFile` in one scope, and more than 1000 rows — every row runs every request in the
+  group, so a spreadsheet passed by mistake is an outbound request storm.
+
+  Rows are not echoed back in the result. A row read from a `dataFile` is file content, and
+  a column named `password` has no business in a transcript because the run reported what
+  it bound; `iterationIndex` addresses the row for a caller who already has the data.
+
 ### Changed
+
+- **A JUnit suite name now carries the row it came from.** Two iterations of one group are
+  two groups with one name, and a suite name is what a CI dashboard addresses a suite by,
+  so 200 rows previously contributed 200 suites indistinguishable from one suite reported
+  200 times. They are now `login row 0: alpha`, `login row 1: alpha`, and so on. Runs
+  without rows are unchanged.
 
 - **A source archive of the repository now holds only what it takes to build and run the
   server.** `git archive` is what GitHub serves as "Download ZIP" and as the source

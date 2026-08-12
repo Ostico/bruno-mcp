@@ -268,3 +268,114 @@ describe('rejecting contradictory input', () => {
     ).rejects.toThrow(/both `requests` and `groups`/);
   });
 });
+
+describe('expanding data rows into groups', () => {
+  it('runs one group per row, each carrying its own row as variables', async () => {
+    const plan = await buildRunPlan(root, {
+      requests: ['users/list.bru'],
+      data: [{ user: 'alice' }, { user: 'bob' }],
+    });
+
+    expect(plan.groups).toHaveLength(2);
+    expect(plan.groups.map((g) => g.variables)).toEqual([{ user: 'alice' }, { user: 'bob' }]);
+    expect(plan.groups.map((g) => g.iterationIndex)).toEqual([0, 1]);
+  });
+
+  it('leaves iterationIndex absent when there are no rows', async () => {
+    const plan = await buildRunPlan(root, { requests: ['users/list.bru'] });
+
+    expect(plan.groups[0]!.iterationIndex).toBeUndefined();
+  });
+
+  it('numbers expanded groups by their position in the plan, not the caller list', async () => {
+    // The second group's iterations must not reuse index 1: `index` is what a
+    // caller addresses a result by, and two results sharing one is a collision
+    // that reads as a duplicate rather than as a distinct iteration.
+    const plan = await buildRunPlan(root, {
+      groups: [
+        { name: 'first', requests: ['users/list.bru'], data: [{ n: '1' }, { n: '2' }] },
+        { name: 'second', requests: ['users/list.bru'], data: [{ n: '3' }] },
+      ],
+    });
+
+    expect(plan.groups.map((g) => g.index)).toEqual([0, 1, 2]);
+    expect(plan.groups.map((g) => g.name)).toEqual(['first', 'first', 'second']);
+    expect(plan.groups.map((g) => g.iterationIndex)).toEqual([0, 1, 0]);
+  });
+
+  it('layers a row over the run-level and group-level variables, row winning', async () => {
+    const plan = await buildRunPlan(root, {
+      variables: { host: 'example.test', user: 'run' },
+      groups: [{ requests: ['users/list.bru'], variables: { user: 'group' }, data: [{ user: 'row' }] }],
+    });
+
+    expect(plan.groups[0]!.variables).toEqual({ host: 'example.test', user: 'row' });
+  });
+
+  it('gives every iteration the same requests', async () => {
+    const plan = await buildRunPlan(root, {
+      requests: ['auth'],
+      data: [{ n: '1' }, { n: '2' }],
+    });
+
+    expect(plan.groups[0]!.requests).toHaveLength(2);
+    expect(plan.groups[1]!.requests).toHaveLength(2);
+  });
+
+  it('expands every group over run-level rows', async () => {
+    const plan = await buildRunPlan(root, {
+      variables: {},
+      data: [{ n: '1' }, { n: '2' }],
+      groups: [
+        { name: 'a', requests: ['users/list.bru'] },
+        { name: 'b', requests: ['users/list.bru'] },
+      ],
+    });
+
+    expect(plan.groups.map((g) => `${g.name}#${g.iterationIndex}`)).toEqual([
+      'a#0',
+      'a#1',
+      'b#0',
+      'b#1',
+    ]);
+  });
+
+  it("a group's own rows replace the run's rather than multiplying with them", async () => {
+    // The rule `environment` follows. Appending would run iterations the caller
+    // never asked for; multiplying would run their product, which is worse.
+    const plan = await buildRunPlan(root, {
+      data: [{ n: 'run-1' }, { n: 'run-2' }],
+      groups: [
+        { name: 'inherits', requests: ['users/list.bru'] },
+        { name: 'own', requests: ['users/list.bru'], data: [{ n: 'own-1' }] },
+      ],
+    });
+
+    expect(plan.groups.map((g) => g.variables['n'])).toEqual(['run-1', 'run-2', 'own-1']);
+  });
+
+  it('still reports an empty group once per iteration rather than swallowing it', async () => {
+    const plan = await buildRunPlan(root, {
+      groups: [{ name: 'empty', requests: [], data: [{ n: '1' }, { n: '2' }] }],
+    });
+
+    expect(plan.groups).toHaveLength(2);
+    // Deduplicated, because the warning names the group and both iterations are
+    // the same group: two identical lines would say nothing the first did not.
+    expect(plan.warnings.filter((w) => w.includes('no requests'))).toHaveLength(1);
+  });
+
+  it('attributes a rows refusal to the group that wrote them', async () => {
+    await expect(
+      buildRunPlan(root, {
+        groups: [{ name: 'both', requests: ['users/list.bru'], data: [{ n: '1' }], dataFile: 'rows.csv' }],
+      }),
+    ).rejects.toThrow(/Group both gives both/);
+  });
+
+  it('attributes a run-level rows refusal to the run', async () => {
+    await expect(
+      buildRunPlan(root, { data: [{ n: '1' }], dataFile: 'rows.csv' }),
+    ).rejects.toThrow(/The run gives both/);
+  });
+});
