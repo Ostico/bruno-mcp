@@ -5,7 +5,7 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.3.0] - 2026-08-12
 
 ### Added
 
@@ -35,36 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Rows are not echoed back in the result. A row read from a `dataFile` is file content, and
   a column named `password` has no business in a transcript because the run reported what
   it bound; `iterationIndex` addresses the row for a caller who already has the data.
-
-### Changed
-
-- **A JUnit suite name now carries the row it came from.** Two iterations of one group are
-  two groups with one name, and a suite name is what a CI dashboard addresses a suite by,
-  so 200 rows previously contributed 200 suites indistinguishable from one suite reported
-  200 times. They are now `login row 0: alpha`, `login row 1: alpha`, and so on. Runs
-  without rows are unchanged.
-
-- **A source archive of the repository now holds only what it takes to build and run the
-  server.** `git archive` is what GitHub serves as "Download ZIP" and as the source
-  tarball on every release, and until now it carried the whole repository: the test suite
-  and its fixtures, the design notes and plans, the CI workflows and issue templates, the
-  contributor instructions. `src`, the manifests, the licence, the changelog, the README
-  and the integration guide stay; the rest is marked `export-ignore` in `.gitattributes`,
-  with a comment against each entry saying why it is not needed to run the server.
-
-  Nothing else changes. The npm package was already `dist/` only, decided by the `files`
-  field in `package.json`. A clone, a fetch and a CI checkout are git operations rather
-  than archives, so every excluded file is still there for anyone working on the
-  repository, and every CI gate still runs against all of them.
-
-  None of it would take effect without the `!.gitattributes` line in `.gitignore`, where
-  line 1 is `.*` and an ignored `.gitattributes` is not an error — it simply governs
-  nothing. That line was already there, added for the CSV fixture's line endings; its
-  comment now names this second thing it silently protects.
-  `tests/unit/meta/source-archive.test.ts` builds an archive and reads it back, so both
-  that trap and a top-level directory added later without a decision fail by name.
-
-### Added
 
 - **A CSV reader for data rows**, the first piece of data-driven runs. Nothing calls it yet:
   it lands on its own so the format it accepts can be argued about before the feature that
@@ -282,6 +252,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   machinery, since `req.setUrl`/`setHeader`/`setBody` have no target here.
 
 ### Changed
+
+- **A JUnit suite name now carries the row it came from.** Two iterations of one group are
+  two groups with one name, and a suite name is what a CI dashboard addresses a suite by,
+  so 200 rows previously contributed 200 suites indistinguishable from one suite reported
+  200 times. They are now `login row 0: alpha`, `login row 1: alpha`, and so on. Runs
+  without rows are unchanged.
+
+- **A source archive of the repository now holds only what it takes to build and run the
+  server.** `git archive` is what GitHub serves as "Download ZIP" and as the source
+  tarball on every release, and until now it carried the whole repository: the test suite
+  and its fixtures, the design notes and plans, the CI workflows and issue templates, the
+  contributor instructions. `src`, the manifests, the licence, the changelog, the README
+  and the integration guide stay; the rest is marked `export-ignore` in `.gitattributes`,
+  with a comment against each entry saying why it is not needed to run the server.
+
+  Nothing else changes. The npm package was already `dist/` only, decided by the `files`
+  field in `package.json`. A clone, a fetch and a CI checkout are git operations rather
+  than archives, so every excluded file is still there for anyone working on the
+  repository, and every CI gate still runs against all of them.
+
+  None of it would take effect without the `!.gitattributes` line in `.gitignore`, where
+  line 1 is `.*` and an ignored `.gitattributes` is not an error — it simply governs
+  nothing. That line was already there, added for the CSV fixture's line endings; its
+  comment now names this second thing it silently protects.
+  `tests/unit/meta/source-archive.test.ts` builds an archive and reads it back, so both
+  that trap and a top-level directory added later without a decision fail by name.
 
 - **Repositioned: this is not "the MCP server for Bruno", and no longer says it is.** In
   August 2026 Bruno's own team announced an official server, `usebruno/bruno-mcp`, which
