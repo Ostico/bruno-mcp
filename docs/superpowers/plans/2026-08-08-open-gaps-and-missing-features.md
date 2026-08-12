@@ -51,8 +51,8 @@ itself was wrong, in a way worth keeping: an authored header was not merely
 ineffective, it aborted the handshake. Then B3 in #166, which is what lets a run
 leave something behind for CI to read. Then B4 in #178, which turned out to need no new
 isolation machinery at all: an iteration is a group, so a row inherits the store, cookie
-jar and token cache a group already owns. What remains in section B is B1 (authoring
-either transport through the tool surface) and B10.
+jar and token cache a group already owns. What remains in section B is B10 alone; B1
+closed in #168, #169 and #170.
 
 ---
 
@@ -975,11 +975,12 @@ handing over an object.
 
 ## E. Visibility and project, not code
 
-### E1. Detach the fork
+### E1. Detach the fork — CLOSED
 
-The repository is `isFork: true` with `parent: null`, so it is excluded from
-GitHub repository search — `gh search repos "bruno mcp"` does not find it.
-Requested from GitHub support and pending as of 2026-08-08. Not a CLI operation.
+GitHub support detached the repository on 2026-08-12. `gh repo view` now reports
+`isFork: false` and `parent: null`, so it is no longer excluded from repository
+search. It was `isFork: true` with `parent: null` before, an inconsistent state
+that no CLI operation could fix.
 
 ### E2. Downstream aggregator listings
 
