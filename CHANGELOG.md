@@ -549,10 +549,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A collection can be reached over socket.io** without a socket.io block
   existing in either file format. A socket.io v4 server accepts a raw WebSocket at
-  its own path, and its frames are text; the recipe is written up in
-  `docs/superpowers/specs/2026-08-06-grpc-websocket-design.md`. The one part that
-  cannot be written as a stored frame — answering the server's engine.io PING so
-  it does not disconnect you at `pingTimeout` — is `websocket.engineIoKeepalive`.
+  its own path, and its frames are text; the README carries the recipe. The one
+  part that cannot be written as a stored frame — answering the server's
+  engine.io PING so it does not disconnect you at `pingTimeout` — is
+  `websocket.engineIoKeepalive`.
 
 ### Changed
 
@@ -820,7 +820,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its variables, its `parallel` flag, one variable store and one cookie jar.
   Nothing crosses a group boundary in either direction, at any `parallel`
   setting. The directory a request happens to sit in no longer decides any of
-  this. See `docs/superpowers/specs/2026-08-02-execution-groups-design.md`.
+  this.
 
 - **`run_collection` lost `requestPath` and `folder`; use `requests`.** Both were
   singular — one file, or one directory — and both are now one ordered
