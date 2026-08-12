@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A source archive of the repository now holds only what it takes to build and run the
+  server.** `git archive` is what GitHub serves as "Download ZIP" and as the source
+  tarball on every release, and until now it carried the whole repository: the test suite
+  and its fixtures, the design notes and plans, the CI workflows and issue templates, the
+  contributor instructions. `src`, the manifests, the licence, the changelog, the README
+  and the integration guide stay; the rest is marked `export-ignore` in `.gitattributes`,
+  with a comment against each entry saying why it is not needed to run the server.
+
+  Nothing else changes. The npm package was already `dist/` only, decided by the `files`
+  field in `package.json`. A clone, a fetch and a CI checkout are git operations rather
+  than archives, so every excluded file is still there for anyone working on the
+  repository, and every CI gate still runs against all of them.
+
+  None of it would take effect without the `!.gitattributes` line in `.gitignore`, where
+  line 1 is `.*` and an ignored `.gitattributes` is not an error — it simply governs
+  nothing. That line was already there, added for the CSV fixture's line endings; its
+  comment now names this second thing it silently protects.
+  `tests/unit/meta/source-archive.test.ts` builds an archive and reads it back, so both
+  that trap and a top-level directory added later without a decision fail by name.
+
 ### Added
 
 - **A CSV reader for data rows**, the first piece of data-driven runs. Nothing calls it yet:
