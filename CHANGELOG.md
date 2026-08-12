@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A lost MCP registry listing can be republished without cutting a release.** The release
+  workflow now takes a manual run with a version to list, which runs the registry job on
+  its own against that version's tag. Before, the listing could only be attempted as part
+  of a tag push, and a failure there was unrecoverable: the job needs the npm publish that
+  precedes it, and npm refuses a version it already serves, so re-running the failed job
+  fails earlier than before rather than succeeding. 2.3.0's listing had to be published by
+  hand. The manual run cannot publish to npm — that job is now gated to tag pushes — and
+  `release-workflow.test.ts` holds both halves of that in place.
+
 ### Fixed
 
 - **The MCP registry manifest's description was too long to publish.** `server.json`
