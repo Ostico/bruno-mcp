@@ -318,7 +318,11 @@ A group is an isolated run inside one call. It owns its request list, environmen
 }
 ```
 
-Group fields: `name`, `requests`, `environment`, `variables`, `parallel`.
+Group fields: `name`, `requests`, `environment`, `variables`, `parallel`, `data`, `dataFile`.
+
+[docs/execution-groups.md](./docs/execution-groups.md) covers the whole model: what a group
+owns, the two `parallel` flags and their defaults, ordering, iterations over data rows, the
+concurrency ceiling, and what a failure looks like at each level.
 
 - Omit `requests` to run the **whole collection** under that group's identity. An empty `[]` runs nothing.
 - `environment` **replaces** the run-level one; `variables` **merge** over the run-level ones, group winning.
