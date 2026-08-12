@@ -982,16 +982,40 @@ GitHub support detached the repository on 2026-08-12. `gh repo view` now reports
 search. It was `isFork: true` with `parent: null` before, an inconsistent state
 that no CLI operation could fix.
 
-### E2. Downstream aggregator listings
+### E2. Downstream aggregator listings — CHECKED 2026-08-12
 
-The official MCP registry listing went live with 2.2.1 and now updates itself on
-every release. mcp.so, Glama, PulseMCP and Smithery ingest the official registry
-on their own schedules; whether they have synced has not been checked.
+The official registry serves 2.3.0 as `active` and `isLatest`, and the npm
+description it mirrors is current: 190 characters naming gRPC, WebSocket and
+execution groups. So nothing below is stale metadata of ours; it is third-party
+crawl lag, except Smithery, which is a different problem.
 
-### E3. Comment on `usebruno/bruno#7541`
+- **Glama** — listed as Bruno MCP Studio against the right repository and MIT,
+  but serving a pre-2.3.0 description and `tools: []`.
+- **mcp.so** — listed at `mcp.so/server/bruno-mcp/Ostico` under the old name and
+  the old description. `mcp.so/server/bruno-mcp-studio/Ostico` is empty: the old
+  slug is the one that exists.
+- **Smithery** — absent. A search for `bruno` returns one unrelated repository.
+  Listing there wants a repository submission through their site or a
+  `smithery.yaml` in this repository.
+- **PulseMCP** — absent, confirmed by the maintainer in a browser. Not checkable
+  from a shell: the v0beta API fails a share of requests by design as part of its
+  sunset, and the site blocks CLI fetches.
 
-Upstream maintainers are discussing programmatic runner capability, which is
-precisely what this server is.
+The registry listing does *not* update itself on every release without care —
+see the 2.3.0 failure recorded in `CHANGELOG.md`, where a 126-character
+`server.json` description was rejected with `expected length <= 100` after npm had
+already published, and the listing had to be published by hand.
+
+### E3. Comment on `usebruno/bruno#7541` — DRAFTED
+
+Draft in `docs/superpowers/drafts/2026-08-12-upstream-7541-comment.md`, not
+posted. The issue asks for either a programmatic `runCollection(options, {
+onEvent })` or a lifecycle contract around `bru run`, and what the thread lacks is
+anyone who priced the subprocess route. The draft supplies that: in-memory
+secrets, mid-run events rather than a report at exit, per-group isolation as a
+parameter, and assertions against the wire rather than a summary. Posting is a
+judgement call, not a task — upstream announced its own MCP server on 2026-08-11,
+so the disclosure in the draft is load-bearing.
 
 ---
 
