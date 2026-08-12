@@ -975,6 +975,10 @@ handing over an object.
 
 ## E. Visibility and project, not code
 
+Nothing in this section is open as of 2026-08-12. E1 and E3 are closed, and E2 is a
+measurement rather than a task — it is worth re-running when a listing matters, since
+the aggregators it names refresh on their own schedule.
+
 ### E1. Detach the fork — CLOSED
 
 GitHub support detached the repository on 2026-08-12. `gh repo view` now reports
@@ -1006,16 +1010,22 @@ see the 2.3.0 failure recorded in `CHANGELOG.md`, where a 126-character
 `server.json` description was rejected with `expected length <= 100` after npm had
 already published, and the listing had to be published by hand.
 
-### E3. Comment on `usebruno/bruno#7541` — DRAFTED
+### E3. Comment on `usebruno/bruno#7541` — CLOSED 2026-08-12
 
-Draft in `docs/superpowers/drafts/2026-08-12-upstream-7541-comment.md`, not
-posted. The issue asks for either a programmatic `runCollection(options, {
-onEvent })` or a lifecycle contract around `bru run`, and what the thread lacks is
-anyone who priced the subprocess route. The draft supplies that: in-memory
-secrets, mid-run events rather than a report at exit, per-group isolation as a
-parameter, and assertions against the wire rather than a summary. Posting is a
-judgement call, not a task — upstream announced its own MCP server on 2026-08-11,
-so the disclosure in the draft is load-bearing.
+Posted as
+[`#7541 (comment)`](https://github.com/usebruno/bruno/issues/7541#issuecomment-5272110819),
+from the draft kept at `docs/superpowers/drafts/2026-08-12-upstream-7541-comment.md`.
+The issue asks for either a programmatic `runCollection(options, { onEvent })` or a
+lifecycle contract around `bru run`, and what the thread lacked was anyone who had
+priced the subprocess route. The comment supplies that: in-memory secrets, mid-run
+events rather than a report at exit, per-group isolation as a parameter, and
+assertions against the wire rather than a summary. It opens with a disclosure of who
+maintains what, says nothing about upstream's own MCP server, and links the
+repository rather than the package.
+
+The comment ends with an offer to turn those four points into a checklist against a
+concrete API sketch. That offer is the follow-up worth taking; restating the four
+points is not. The thread had been quiet since 2026-03-31, so a reply may not come.
 
 ---
 

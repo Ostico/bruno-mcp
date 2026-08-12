@@ -1,8 +1,14 @@
 # Draft comment for `usebruno/bruno#7541`
 
-Not posted. Written 2026-08-12 against issue #7541 ("Official execution lifecycle /
-programmatic runner capability for Bruno CLI integrations"), state OPEN, labels
-`enhancement`, `triage-pending`, `module-cli`.
+**Posted 2026-08-12** as
+[`#7541 (comment)`](https://github.com/usebruno/bruno/issues/7541#issuecomment-5272110819).
+Kept here because the reasoning is the reusable part, and because a follow-up should
+build on it rather than restate it.
+
+Written 2026-08-12 against issue #7541 ("Official execution lifecycle / programmatic
+runner capability for Bruno CLI integrations"), state OPEN, labels `enhancement`,
+`triage-pending`, `module-cli`. The thread had been quiet since 2026-03-31, and the
+only prior comments were CodeRabbit output and a `@coderabbitai plan` exchange.
 
 The issue asks for one of two things: a programmatic `runCollection(options, { onEvent })`
 or an official lifecycle contract around `bru run`. What it does not have is evidence
@@ -11,9 +17,8 @@ maintain a third-party MCP server for Bruno collections, we evaluated delegating
 execution to `bru run`, and we refused — so we can name what the contract would have to
 expose for us to switch. That is worth more to this thread than another vote.
 
-Post only after deciding it is wanted. Upstream announced its own MCP server on
-2026-08-11, so a comment from us reads as an interested party; the disclosure below is
-not optional.
+Upstream announced its own MCP server on 2026-08-11, so a comment from us reads as an
+interested party. That is why the disclosure opens the comment rather than closing it.
 
 ---
 
@@ -70,11 +75,12 @@ some.
 
 ---
 
-## Notes for whoever posts this
+## Rules the posted comment follows, and the one live follow-up
 
 - Say nothing about upstream's own MCP server. Comparing products in a CLI issue turns a
-  technical contribution into a territorial one.
+  technical contribution into a territorial one. The posted text holds to this.
 - Do not link the npm package. The repository link is the disclosure; the package link is
-  marketing.
-- If a maintainer replies with a concrete API sketch, the follow-up offer at the end is
-  the real value — take it up rather than restating these four points.
+  marketing. The posted text links the repository only.
+- **Still live:** if a maintainer replies with a concrete API sketch, the follow-up offer
+  at the end of the comment is the real value — take it up rather than restating these
+  four points.
