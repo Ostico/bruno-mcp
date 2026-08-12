@@ -876,6 +876,8 @@ export class RequestExecutor {
       parallel: options?.parallel,
       environment: options?.environment,
       variables: options?.variables,
+      data: options?.data,
+      dataFile: options?.dataFile,
     });
 
     // The same ceiling governs both resources a run can exhaust: the forked
@@ -987,6 +989,7 @@ export class RequestExecutor {
         index: group.index,
         summary: summarise(results, Date.now() - groupStart),
         results,
+        ...(group.iterationIndex !== undefined ? { iterationIndex: group.iterationIndex } : {}),
         ...(group.missingRequests.length > 0 ? { missingRequests: group.missingRequests } : {}),
         ...(captured.names.length > 0 ? { capturedVariableNames: captured.names } : {}),
         ...(Object.keys(captured.values).length > 0 ? { capturedVariables: captured.values } : {}),
@@ -1013,6 +1016,9 @@ export class RequestExecutor {
             index,
             summary: summarise([], 0),
             results: [],
+            ...(plan.groups[index]!.iterationIndex !== undefined
+              ? { iterationIndex: plan.groups[index]!.iterationIndex }
+              : {}),
             ...(plan.groups[index]!.missingRequests.length > 0
               ? { missingRequests: plan.groups[index]!.missingRequests }
               : {}),

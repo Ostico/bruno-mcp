@@ -148,6 +148,23 @@ export interface GroupRunResult {
   warnings?: string[];
   /** Set when the group itself failed, as opposed to a request within it. */
   error?: string;
+  /**
+   * Which iteration of its group this is, counting from 0, when the group was
+   * run once per data row. Absent when the group ran once.
+   *
+   * Two iterations report as two groups, with the same `name` and different
+   * `index`, because that is what they are: an iteration is a group run with one
+   * row bound, so it gets its own store, cookie jar and token cache.
+   */
+  iterationIndex?: number;
+  /**
+   * The row itself is deliberately not echoed here. A row read from a
+   * `dataFile` is file content, and this result already refuses to carry file
+   * content for the reason `ParseFailure` gives above: a column named
+   * `password` would end up in a transcript nobody meant to put it in. The
+   * index addresses the row for a caller who has the data, which every caller
+   * does.
+   */
 }
 
 /**

@@ -85,6 +85,27 @@ describe('JUnit XML', () => {
     );
   });
 
+  it('distinguishes two iterations of one group by suite name', () => {
+    // Two rows are two groups with one name. Without the row in the name every
+    // dashboard that tracks a suite over time reads them as one suite reported
+    // twice, and a failure on row 7 is indistinguishable from a flake.
+    const xml = junit({
+      groups: [
+        group({ name: 'login', index: 0, iterationIndex: 0 }),
+        group({ name: 'login', index: 1, iterationIndex: 1 }),
+      ],
+    });
+
+    expect(xml).toContain('<testsuite name="login row 0: alpha"');
+    expect(xml).toContain('<testsuite name="login row 1: alpha"');
+  });
+
+  it('names an unnamed group\'s iterations by row alone', () => {
+    const xml = junit({ groups: [group({ iterationIndex: 3 })] });
+
+    expect(xml).toContain('<testsuite name="row 3: alpha"');
+  });
+
   it('carries a failing test as a failure element and counts it on both levels', () => {
     const xml = junit();
 

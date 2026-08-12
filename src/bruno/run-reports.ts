@@ -240,7 +240,15 @@ export function renderJUnitXml(
 
 /** Every suite one group contributes: its results, then what it could not do. */
 function groupSuites(group: GroupRunResult, collectionPath: string): JUnitSuite[] {
-  const label = group.name === undefined ? '' : `${group.name}: `;
+  // The iteration is part of the label rather than left to `index`, because a
+  // JUnit consumer addresses a suite by name: 200 rows of one group would
+  // otherwise contribute 200 suites with one name, which every dashboard that
+  // tracks a test over time reads as the same suite reported repeatedly.
+  const parts = [
+    ...(group.name === undefined ? [] : [group.name]),
+    ...(group.iterationIndex === undefined ? [] : [`row ${group.iterationIndex}`]),
+  ];
+  const label = parts.length === 0 ? '' : `${parts.join(' ')}: `;
 
   const suites: JUnitSuite[] = group.results.map((request) => {
     const file = request.path === undefined ? undefined : reportPath(request.path, collectionPath);

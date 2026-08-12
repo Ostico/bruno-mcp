@@ -7,6 +7,7 @@
  * max-lines ceiling and this is the part with no execution state in it.
  */
 import { isAbsolute, join, resolve } from 'node:path';
+import { resolveRows } from './iteration-data.js';
 import {
   resolveRunTargets,
   type DiscoveryResult,
@@ -26,6 +27,10 @@ export interface GroupInput {
   environment?: string;
   variables?: Record<string, string>;
   parallel?: boolean;
+  /** Rows to iterate this group over, given inline. Mutually exclusive with `dataFile`. */
+  data?: Record<string, string>[];
+  /** A CSV inside the collection whose rows this group iterates over. */
+  dataFile?: string;
 }
 
 export interface ResolvedGroup {
@@ -46,6 +51,17 @@ export interface ResolvedGroup {
    * group is unaffected.
    */
   error?: string;
+  /**
+   * Which iteration of its group this is, counting from 0, when the group was
+   * expanded over data rows. Absent when the group runs once.
+   *
+   * An iteration is a group, not a phase inside one: expansion happens here, and
+   * everything downstream sees one more group. That is what gives a row its own
+   * variable store, cookie jar and token cache without a line of code asking for
+   * it, and what makes two rows differing only in a password two identities
+   * rather than one identity tested twice.
+   */
+  iterationIndex?: number;
 }
 
 export interface RunPlanInput {
@@ -54,6 +70,10 @@ export interface RunPlanInput {
   parallel?: boolean;
   environment?: string;
   variables?: Record<string, string>;
+  /** Rows every group iterates over unless it gives its own. */
+  data?: Record<string, string>[];
+  /** A CSV inside the collection whose rows every group iterates over. */
+  dataFile?: string;
 }
 
 export interface RunPlan {
@@ -160,16 +180,49 @@ export async function buildRunPlan(
       );
     }
 
-    groups.push({
+    // A group's own rows REPLACE the run's, rather than adding to them, for the
+    // reason its `environment` does: the caller who wrote rows on one group was
+    // describing that group, and appending the run's rows underneath would run
+    // iterations they never asked for.
+    const ownRows = group.data !== undefined || group.dataFile !== undefined;
+    const rows = await resolveRows(
+      ownRows ? { data: group.data, dataFile: group.dataFile } : { data: input.data, dataFile: input.dataFile },
+      collectionPath,
+      // Named for where the rows were written rather than where they were used,
+      // so a refusal points at the line the caller has to edit.
+      ownRows ? `Group ${group.name ?? index}` : 'The run',
+    );
+
+    const resolved = {
       name: group.name,
-      index,
       requests,
       environment: group.environment ?? input.environment,
       variables: { ...input.variables, ...group.variables },
       parallel: group.parallel ?? false,
       missingRequests,
       error,
-    });
+    };
+
+    if (rows === undefined) {
+      // `index` is the position in the plan rather than in the caller's list,
+      // which are the same number until a group expands and different after.
+      groups.push({ ...resolved, index: groups.length });
+      continue;
+    }
+
+    for (const [iterationIndex, row] of rows.entries()) {
+      groups.push({
+        ...resolved,
+        index: groups.length,
+        // The row wins over both the run's variables and the group's, being the
+        // most specific thing said about this execution. It goes in as an
+        // authored override, which is the tier that recurses through
+        // interpolation — a cell holding `{{host}}` resolves, exactly as the
+        // same value written into `variables` by hand would.
+        variables: { ...resolved.variables, ...row },
+        iterationIndex,
+      });
+    }
   }
 
   return { groups, parseFailures, warnings: [...new Set(warnings)] };

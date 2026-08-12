@@ -49,8 +49,10 @@ what happened in it is read — then B6 and B7 together in #165, which is what m
 send-wait-send protocol drivable and its handshake negotiable. B7's own guess about
 itself was wrong, in a way worth keeping: an authored header was not merely
 ineffective, it aborted the handshake. Then B3 in #166, which is what lets a run
-leave something behind for CI to read. What remains in section B is B1 (authoring
-either transport through the tool surface), B4 and B10.
+leave something behind for CI to read. Then B4 in #177, which turned out to need no new
+isolation machinery at all: an iteration is a group, so a row inherits the store, cookie
+jar and token cache a group already owns. What remains in section B is B1 (authoring
+either transport through the tool surface) and B10.
 
 ---
 
@@ -643,7 +645,7 @@ extended to the caller's run variables: `walkAndMask` has no length floor, so a
 variable holding a short value would blank every occurrence of it across the
 report, to hide data the caller already receives inline in the same response.
 
-### B4. No iteration or data-driven primitive
+### B4. No iteration or data-driven primitive — CLOSED (#177)
 
 **Evidence.** Nothing resembling iteration count, iteration index, or a data file
 exists anywhere in `src/`.
