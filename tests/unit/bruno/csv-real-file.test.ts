@@ -1,35 +1,43 @@
 /**
- * The CSV reader against a file nobody wrote for it.
+ * The CSV reader against a file it was not written for.
  *
- * `tests/fixtures/csv/terragene-multilingual-glossary.csv` is a real
- * translation glossary, committed byte for byte as it was exported: 46 columns
- * over 14 languages, CRLF line endings, quoted fields containing commas, a
- * doubled quote inside a quoted field, a non-breaking space inside a value,
- * Cyrillic and `™`, and 30 empty cells in its first data row alone. It is the
- * shape of a CSV a person actually has lying around, as opposed to one written
- * to exercise a parser.
+ * `tests/fixtures/csv/multilingual-glossary.csv` began as a real translation
+ * glossary exported from a translation tool. Its words are not the original
+ * ones: every letter and digit was substituted for another from the same
+ * Unicode block, so nothing identifying survives — no product, no company, no
+ * catalogue number. Read it and it is nonsense.
+ *
+ * Everything the parser can see, though, is the export's own and was not chosen
+ * by anybody here: 46 columns over fourteen languages with `Notes` and
+ * `Example of use` repeated once per language, CRLF endings and no final
+ * newline, quoted fields containing commas, a doubled quote inside a quoted
+ * field, a non-breaking space inside a value, Cyrillic alongside Latin, a
+ * trademark sign, and 30 empty cells in the first data row. The substitution
+ * touches letters and digits only, so it cannot move a comma, add or remove a
+ * quote, or change a line ending — the file is still 11,218 bytes with 38 CRLFs,
+ * exactly as it was exported.
  *
  * Every expectation below was taken from Python's `csv` module reading the same
- * file — an implementation with no shared ancestry with this one. Before these
- * tests were written the two were compared cell for cell across all 1,748 data
- * cells and agreed on every one; what is committed here is the subset worth
- * reading, since committing the other implementation's output as a fixture
- * would only test that two copies of the same data match.
+ * bytes — an implementation with no shared ancestry with this one. The two were
+ * compared cell for cell across all 1,748 data cells and agreed on every one,
+ * before and after the substitution; what is committed here is the subset worth
+ * reading, since committing the other implementation's output as a fixture would
+ * only test that two copies of the same data match.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseCsvRows } from '../../../src/bruno/csv-parser';
 
-const FIXTURE = join('tests', 'fixtures', 'csv', 'terragene-multilingual-glossary.csv');
+const FIXTURE = join('tests', 'fixtures', 'csv', 'multilingual-glossary.csv');
 
-const realFile = (): string => readFileSync(FIXTURE, 'utf8');
+const fixtureText = (): string => readFileSync(FIXTURE, 'utf8');
 
 /**
  * The file with its repeated column names made distinct — the repair the
  * duplicate-name error asks the caller for, applied to the header line only.
  *
  * Written out here rather than hidden in a helper module because it is half the
- * point of the first test: the file as exported cannot be a data file, and this
+ * point of the second test: the file as exported cannot be a data file, and this
  * is exactly how little has to change for it to become one.
  */
 function withDistinctHeaders(text: string): string {
@@ -52,7 +60,7 @@ describe('a real exported CSV', () => {
     // seven confusing messages instead of this one. The `.gitignore` in this
     // repo ignores all dotfiles, so `.gitattributes` also needs un-ignoring —
     // an ignored one is not an error, it simply never takes effect.
-    const text = realFile();
+    const text = fixtureText();
 
     expect(text.split('\r\n')).toHaveLength(39);
     expect(text.replace(/\r\n/g, '')).not.toContain('\n');
@@ -63,48 +71,52 @@ describe('a real exported CSV', () => {
     // per language group, so the refusal fires on the first real file it met.
     // Reporting "twice" here would have sent the reader looking for one stray
     // column out of 46.
-    expect(() => parseCsvRows(realFile())).toThrow(
+    expect(() => parseCsvRows(fixtureText())).toThrow(
       /Line 1: the header row uses the name "Notes" for 14 columns \(6, 9, 12, …\)/,
     );
   });
 
   it('reads once its column names are distinct', () => {
-    const { headers, rows } = parseCsvRows(withDistinctHeaders(realFile()));
+    const { headers, rows } = parseCsvRows(withDistinctHeaders(fixtureText()));
 
     expect(headers).toHaveLength(46);
     expect(rows).toHaveLength(38);
   });
 
   it('splits on a comma inside a quoted value the way the exporter meant', () => {
-    const { rows } = parseCsvRows(withDistinctHeaders(realFile()));
+    const { rows } = parseCsvRows(withDistinctHeaders(fixtureText()));
 
-    expect(rows[0]['fi-FI']).toBe('BIOTRACE™ Auto Read 20, biologinen höyryindikaattori  (73100)');
+    expect(rows[0]['fi-FI']).toBe('IPWCAHJL™ Hbav Alhk 07, ipvsvnpulu oófyfpukprhhaavyp  (51977)');
   });
 
   it('reads a doubled quote inside a quoted value as one literal quote', () => {
-    const { rows } = parseCsvRows(withDistinctHeaders(realFile()));
+    const { rows } = parseCsvRows(withDistinctHeaders(fixtureText()));
 
-    // Written in the file as """THIS SIDE UP"" (para BD125X/1)".
-    expect(rows[32]['en-GB']).toBe('"THIS SIDE UP" (para BD125X/1)');
+    // Written in the file as """COPB BPKL DX"" (whyh IK903G/9)".
+    expect(rows[32]['en-GB']).toBe('"COPB BPKL DX" (whyh IK903G/9)');
   });
 
   it('leaves no CR in any value, though every line in the file ends with one', () => {
-    const { rows } = parseCsvRows(withDistinctHeaders(realFile()));
+    const { rows } = parseCsvRows(withDistinctHeaders(fixtureText()));
 
-    const withCarriageReturn = rows.flatMap((row) => Object.values(row)).filter((value) => value.includes('\r'));
+    const withCarriageReturn = rows
+      .flatMap((row) => Object.values(row))
+      .filter((value) => value.includes('\r'));
+
     expect(withCarriageReturn).toEqual([]);
   });
 
   it('keeps a non-breaking space that a trim would have eaten', () => {
-    const { rows } = parseCsvRows(withDistinctHeaders(realFile()));
+    const { rows } = parseCsvRows(withDistinctHeaders(fixtureText()));
 
     // U+00A0, mid-value, in the French cell. `String.prototype.trim` counts it
-    // as whitespace, which is one reason values are never trimmed.
-    expect(rows[0]['fr-FR']).toContain('automatique\u00A020');
+    // as whitespace, which is one reason values are never trimmed. The
+    // substitution that anonymised this file left it where the exporter put it.
+    expect(rows[0]['fr-FR']).toContain('hbavthapxbl\u00A007');
   });
 
   it('keeps every empty cell rather than collapsing the row', () => {
-    const { headers, rows } = parseCsvRows(withDistinctHeaders(realFile()));
+    const { headers, rows } = parseCsvRows(withDistinctHeaders(fixtureText()));
     const first = rows[0];
 
     expect(Object.keys(first)).toHaveLength(46);
@@ -112,9 +124,12 @@ describe('a real exported CSV', () => {
   });
 
   it('carries scripts and symbols through untouched', () => {
-    const { rows } = parseCsvRows(withDistinctHeaders(realFile()));
+    const { rows } = parseCsvRows(withDistinctHeaders(fixtureText()));
 
-    expect(rows[0]['ru-RU']).toContain('Биологический индикатор');
-    expect(rows[0]['en-GB']).toBe('BIOTRACE™ Auto Read 20 Steam Biological Indicator  (73100)');
+    // Cyrillic asserted by range rather than by literal: the point is that the
+    // script survived the read, and a hand-copied string of scrambled Cyrillic
+    // would only add a way for the test itself to be wrong.
+    expect(rows[0]['ru-RU']).toMatch(/^IPWCAHJL™ [Ѐ-ӿ]/);
+    expect(rows[0]['en-GB']).toBe('IPWCAHJL™ Hbav Alhk 07 Balht Ipvsvnpjhs Pukpjhavy  (51977)');
   });
 });

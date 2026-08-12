@@ -35,11 +35,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   spreadsheet writes and what would otherwise become part of the first column's name.
 
   Tested against a real exported file as well as written-for-the-parser strings:
-  `tests/fixtures/csv/terragene-multilingual-glossary.csv` is a translation glossary
-  committed byte for byte as it came out of the tool that made it — 46 columns, CRLF,
-  quoted commas, a doubled quote, a non-breaking space, Cyrillic, and 30 empty cells in
-  its first data row. Its cells were compared one by one against Python's `csv` module,
-  an implementation with no shared ancestry, and agreed on all 1,748 of them. It also
+  `tests/fixtures/csv/multilingual-glossary.csv` began as a translation glossary exported
+  from a translation tool. Its words are not the original ones — every letter and digit was
+  substituted for another from the same Unicode block, so nothing identifying survives —
+  but everything the parser can see is the export's own and was chosen by nobody here:
+  46 columns, CRLF endings and no final newline, quoted commas, a doubled quote, a
+  non-breaking space, Cyrillic, and 30 empty cells in its first data row. Its cells were
+  compared one by one against Python's `csv` module, an implementation with no shared
+  ancestry, and agreed on all 1,748 of them before and after the substitution. It also
   produced a fix: a real export repeats a column name once per language group, fourteen
   times over, so the duplicate-column error now reports how many columns share the name
   and where the first few are, instead of saying the header names it "twice".
