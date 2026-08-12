@@ -5,6 +5,10 @@
 # The `.*` rule above would otherwise make an ESLint config impossible to
 # commit, which is why `npm run lint` had no config to find.
 !.eslintrc.json
+# Same trap, and a quieter one: an ignored `.gitattributes` is not an error, it
+# simply never takes effect, so git would go on shipping the whole repository in
+# every source archive with nothing to say it had been told otherwise.
+!.gitattributes
 # Dependencies
 node_modules/
 npm-debug.log*

@@ -1,0 +1,44 @@
+# What a source archive of this repository contains.
+#
+# `export-ignore` applies to `git archive`, which is what GitHub serves as "Download
+# ZIP" and as the source tarball attached to every release and tag. It does not touch
+# the npm package — that is the `files` field in package.json, which ships `dist/`
+# only — and it does not touch a clone, a fetch or a CI checkout, since those are git
+# operations rather than archives. The test suite and the workflows excluded below are
+# therefore still there for anyone who clones the repository, and every CI gate still
+# runs against all of them.
+#
+# The rule is that an archive should hold what it takes to build and run the server and
+# nothing whose only reader is somebody working on the repository itself. So `src`, the
+# manifests, the licence, the changelog and the two guides a user needs stay; the rest
+# is listed here. `npm ci && npm run build && node dist/index.js` works in an archive;
+# `npm test` and `npm run lint` do not, by design.
+
+# The test suite and its fixtures: the bulk of the repository by file count, and of no
+# use without the jest and eslint configuration excluded alongside it.
+tests/ export-ignore
+jest.config.ts export-ignore
+.eslintrc.json export-ignore
+
+# Design notes, plans, specs, and vendored copies of upstream SDK documentation. These
+# record why the server is built the way it is, which matters when changing it and not
+# when running it. The README links one of them; in an archive that link stops resolving
+# locally and still resolves on GitHub, which is the better trade for a document whose
+# audience is a contributor.
+docs/ export-ignore
+SPEC.md export-ignore
+examples/ export-ignore
+
+# Instructions and process for working on the repository, not for using the server.
+CLAUDE.md export-ignore
+CONTRIBUTING.md export-ignore
+
+# CI workflows, issue templates and funding metadata: every one of them addresses this
+# repository on GitHub, and none can do anything from inside an archive.
+.github/ export-ignore
+
+# The dotfiles that only govern the repository, this file included. Its rules have
+# already been applied by the time an archive is written, so carrying it along would
+# only leave whoever reads the archive thinking files went missing by accident.
+.gitattributes export-ignore
+.gitignore export-ignore
