@@ -3,7 +3,7 @@
   "name": "io.github.Ostico/bruno-mcp-studio",
   "title": "Bruno MCP Studio",
   "description": "Author, edit and run Bruno collections non-destructively — both dialects at byte parity, execution groups, gRPC and WebSocket.",
-  "version": "2.2.1",
+  "version": "2.3.0",
   "websiteUrl": "https://github.com/Ostico/bruno-mcp-studio#readme",
   "repository": {
     "source": "github",
@@ -15,7 +15,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@ostico/bruno-mcp",
-      "version": "2.2.1",
+      "version": "2.3.0",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
