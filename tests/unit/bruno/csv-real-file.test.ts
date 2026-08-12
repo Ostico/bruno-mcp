@@ -45,6 +45,19 @@ function withDistinctHeaders(text: string): string {
 }
 
 describe('a real exported CSV', () => {
+  it('still has the CRLF line endings it was exported with', () => {
+    // First, because it is the assumption every other test here rests on, and
+    // because it is not git's default: without `-text` in .gitattributes git
+    // normalises these CRLFs away on commit and the tests below fail in CI with
+    // seven confusing messages instead of this one. The `.gitignore` in this
+    // repo ignores all dotfiles, so `.gitattributes` also needs un-ignoring —
+    // an ignored one is not an error, it simply never takes effect.
+    const text = realFile();
+
+    expect(text.split('\r\n')).toHaveLength(39);
+    expect(text.replace(/\r\n/g, '')).not.toContain('\n');
+  });
+
   it('is refused as exported, because 14 of its columns share a name', () => {
     // The finding this fixture exists for: a genuine export repeats a name once
     // per language group, so the refusal fires on the first real file it met.

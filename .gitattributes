@@ -1,0 +1,6 @@
+# CSV fixtures are committed as the tool that exported them left them, because their
+# line endings are part of what the tests check. Without `-text` git normalises CRLF to
+# LF on commit and back again per checkout, which silently rewrites the bytes under a
+# test that exists to read real ones: the CRLF assertions then pass on the author's
+# machine and fail in CI, where the clone is the only copy.
+tests/fixtures/csv/*.csv -text
