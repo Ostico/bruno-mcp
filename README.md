@@ -518,7 +518,18 @@ Both transports are loaded lazily, and that is enforced rather than asserted: a 
 
 Two things are refused rather than guessed at. A file whose declared type and target block disagree (`type: grpc` with an `http:` block) is a parse error naming both, because the type decides what a reader reports while the block decides what a runner contacts. And a `.bru` request whose target url is empty is refused on write, because the format drops such a block while keeping the credentials beside it — the result would look authored and go nowhere.
 
-What is deliberately not built, and why — streaming, reflection, proxy support for these transports, held-open sessions, and a socket.io or MQTT block — is written up in [`docs/superpowers/specs/2026-08-06-grpc-websocket-design.md`](docs/superpowers/specs/2026-08-06-grpc-websocket-design.md), together with a recipe for reaching a socket.io server as a plain `ws` request.
+Five things are deliberately not built. **Streaming gRPC calls** and **held-open WebSocket sessions** would make a run's result depend on when it was read, and every response here is a value a caller can assert against. **Server reflection** would fetch the schema over the same connection under test, so a `.proto` path is required instead. **Proxy support and certificate pinning** do not reach these transports: the gating is `undici`-only, `@grpc/grpc-js` exposes no proxy API and honours ambient `http_proxy` on its own, and `ws` would need an agent of its own. And **a socket.io or MQTT block** would invent a file format upstream has not chosen, which is a migration the moment it does.
+
+socket.io needs no block, because it is a framing convention on top of WebSocket rather than a protocol of its own. Measured against socket.io 4.8.3, a plain `ws` request reaches one:
+
+1. Connect to `ws://host:port/socket.io/?EIO=4&transport=websocket`. Both query parameters are required — `EIO=4` selects the Engine.IO version, and `transport=websocket` stops the server expecting an HTTP long-polling handshake first.
+2. The server sends `0{…}`, the Engine.IO OPEN packet. Its payload carries `sid`, `pingInterval` and `pingTimeout` in milliseconds.
+3. Send `40` to join the default namespace — nothing works before this. A named namespace is `40/namespace,`.
+4. The server answers `40{"sid":"…"}`.
+5. Send an event as `42["event-name",payload]`: `4` for MESSAGE, `2` for EVENT, then a JSON array whose first element is the event name.
+6. The server sends `2` (PING) every `pingInterval` and disconnects a client that does not answer `3` (PONG) within `pingTimeout`. Set `websocket.engineIoKeepalive` on `run_collection` if a recording outlives that window; it is off by default and answers only after a real OPEN frame has been seen.
+
+Steps 1 to 5 are frames the request file already stores, so only step 6 needs anything from the runner. This is pinned to `EIO=4` — Engine.IO v2 and v3 frame differently. Acks (`42<id>[…]` answered by `43<id>[…]`) and binary attachments (a `45` placeholder followed by separate binary frames) are writable by hand and unpleasant in practice.
 
 ## Security
 
