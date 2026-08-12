@@ -6,8 +6,10 @@
 # commit, which is why `npm run lint` had no config to find.
 !.eslintrc.json
 # Same trap, and a quieter one: an ignored `.gitattributes` is not an error, it
-# simply never takes effect, so git would go on shipping the whole repository in
-# every source archive with nothing to say it had been told otherwise.
+# simply never takes effect. Git goes on rewriting the line endings of the fixtures
+# that are committed to have particular ones, and goes on putting the whole
+# repository in every source archive, with nothing anywhere to say it had been told
+# otherwise.
 !.gitattributes
 # Dependencies
 node_modules/
