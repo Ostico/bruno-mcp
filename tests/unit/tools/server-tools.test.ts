@@ -20,10 +20,16 @@ jest.mock('../../../src/bruno/request', () => ({
     updateRequest: jest.fn(),
   }),
 }));
+// The registry the tools resolve is named in what they report, so this one has to
+// return a path rather than the `undefined` a bare jest.fn() gives: a stub that
+// resolves to nothing lets a message reading "not registered in undefined" satisfy
+// an assertion about the registry. The real resolver always returns a string —
+// the explicit path, then BRUNO_WORKSPACE_PATH, then the platform default.
+const mockWorkspaceFile = join(tmpdir(), 'bruno-mcp-no-such-workspace', 'workspace.yml');
 jest.mock('../../../src/bruno/workspace', () => ({
   createWorkspaceResolver: () => ({
     resolve: jest.fn(),
-    resolveWorkspacePath: jest.fn(),
+    resolveWorkspacePath: jest.fn(() => mockWorkspaceFile),
     getDefaultPath: jest.fn(),
     parseWorkspaceYaml: jest.fn(),
   }),
@@ -103,17 +109,20 @@ describe('Server tool handlers', () => {
     });
 
     it('says the new collection is not in the registry list_collections reads', async () => {
-      // The collection exists on disk and is fully usable by path, but nothing
-      // here writes Bruno's workspace.yml — so a caller that creates one and then
-      // calls list_collections to find it gets an empty answer. Saying so in the
-      // success message is the only place that lands before the caller acts.
+      // list_collections reads Bruno's workspace registry, not the disk, so a caller
+      // told only "created" cannot tell whether the next call will find it. Here the
+      // resolved registry does not exist, which is the case that has to name the file
+      // it tried and say the collection is reachable by path anyway — saying so in the
+      // success message is the only place that lands before the caller acts. The
+      // registered case is covered against a real workspace file elsewhere.
       getManagerMock(server, 'collectionManager', 'createCollection')
         .mockResolvedValue({ success: true, path: '/ws/my-api' });
       const handler = getHandler(server, 'create_collection');
       const result = await handler({ name: 'my-api', outputPath: '/ws' });
-      expect(result.content[0].text).toContain('workspace.yml');
+      expect(result.content[0].text).toContain(mockWorkspaceFile);
+      expect(result.content[0].text).toContain('no workspace file there to add it to');
+      expect(result.content[0].text).toContain('usable by path');
       expect(result.content[0].text).toContain('list_collections');
-      expect(result.content[0].text).toContain('collectionPath');
     });
 
     it('should return error on failure', async () => {
