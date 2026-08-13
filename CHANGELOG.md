@@ -8,7 +8,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Documentation
-
 - **How to assert on a gRPC or WebSocket result.** `res.getBody()` on a WebSocket request
   is the transcript array, and `res.getStatus()` is always `0` — a test written against the
   status asserts on a constant and cannot fail. The outcome is `res.statusText`, carrying
@@ -26,7 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   things happening at once must be one call with a parallel group.
 
 ### Added
-
 - **`get_collection_stats` reports each request's URL, and can be asked for less.** The URL is
   the field most wanted when triaging an unfamiliar collection — two requests named "Create"
   say nothing, their targets say everything — and it was the one field missing, so learning a
@@ -37,6 +35,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or `WS`), `nameContains`, and `includeRequests: false` for counts only. A filter never
   touches the counts: `totalRequests` and `requestsByMethod` keep describing the whole
   collection, and a filtered call adds `matchedRequests` so the two cannot be confused.
+
+- **`bail` stops a run at the first failure.** A chain of dependent requests behind a login
+  that stopped working produced one failure for the cause and one for every consequence of
+  it, with the cause the least visible of them. `bail: true` on `run_collection` stops at the
+  first request that fails or whose tests fail; everything the run did not reach is reported
+  in place with `skipped: true` and `skipReason: "bail"`, carrying the method and URL it
+  would have sent, and later groups are skipped whole. A skipped request is counted in a new
+  `summary.skipped` and in neither `passed` nor `failed`, so `passed + failed` still equals
+  `total` and a truncated run cannot read as a shorter one that went green. The run gains a
+  `bail` object naming the reason (`request failure` or `test failure`), the request it
+  stopped at, that request's file and group, and how many were skipped. JUnit reports the
+  skipped requests as skipped rather than as having verified nothing, and the HTML page
+  counts them out of both totals. Nothing cancels a request already in flight, so a
+  concurrent run skips only what had not started and says so in `warnings` instead of
+  leaving the shortfall to be inferred.
 
 - **`move_request` relocates a request, within a collection or between two of them.** There
   was no way to reorganise a collection through this server: a request could be created,
@@ -74,7 +87,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   needs to predict what a call will do.
 
 ### Changed
-
 - **An SSRF refusal now says that an allowlist entry matches one spelling of a target.** An
   allowlisted hostname is deliberately never resolved — the operator vouched for the name, not
   for whatever it points at today — so it does not cover the addresses behind it, and an
@@ -94,15 +106,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `release-workflow.test.ts` holds both halves of that in place.
 
 ### Fixed
+- **`create_collection` created a collection `list_collections` could not see, and said
+  nothing about it.** `workspace.yml` is Bruno's own registry, and `list_collections`
+  reads that registry rather than the disk, so a collection created here appeared in
+  neither it nor the Bruno GUI's sidebar until something else wrote that file — while the
+  success message mentioned neither the registry nor the consequence, which read as silent
+  failure. The new collection is now added to the same workspace `list_collections`
+  resolves (`workspacePath`, then `BRUNO_WORKSPACE_PATH`, then the platform default),
+  `registerInWorkspace: false` skips it, and the result always says what happened:
+  registered, already listed, or not registered and why. A collection that is not
+  registered is still usable by every other tool — pass the returned path as
+  `collectionPath`.
+  The workspace file is edited a line at a time rather than parsed and re-serialised,
+  because it belongs to the Bruno app: it quotes every scalar and can carry keys such as an
+  empty `specs:` that a YAML round-trip would rewrite. A registry in a shape that cannot be
+  extended that way is left untouched and reported.
 
-- **`create_collection` said nothing about the collection being invisible to
-  `list_collections`.** `workspace.yml` is Bruno's own registry; this server reads it and
-  does not write it, so a collection created here exists on disk, works with every other
-  tool by path, and appears in neither `list_collections` nor the Bruno GUI's sidebar until
-  someone opens it there once. The success message and the tool description now say so, and
-  say what to do instead — pass the returned path as `collectionPath`. Nothing about where
-  the collection is written has changed; what changed is that the caller is told, at the
-  moment it decides what to do next, rather than discovering it from an empty list.
+- **The SSRF allowlist no longer depends on how a target is spelled.** An operator who
+  allowlisted `127.0.0.1` still had `http://localhost:8888` refused, because a denylisted name
+  is rejected before anything resolves — the same listener reachable or not according to how it
+  was written, which half-blocked one real dev environment that defines both spellings. A
+  normally-blocked name is now permitted when *every* address it resolves to is allowlisted,
+  which is exactly what an address entry vouches for; a name whose addresses are only partly
+  covered stays refused, and so does one whose resolution fails, since a DNS message would hide
+  why the name was denied. The permitted name still carries its resolved addresses to the
+  caller, so the connection remains pinned to them. The refusal text now also states which
+  spelling each kind of entry matches, which was previously impossible to work out from inside.
 
 - **A pre-request script did not run at all on a gRPC or WebSocket request.** Both transports
   are executed by a branch that returned before the pre-request phase began, so on either of

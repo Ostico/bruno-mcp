@@ -302,6 +302,22 @@ function requestCases(
   classname: string,
   seconds: number,
 ): JUnitCase[] {
+  if (request.skipped === true) {
+    // Before the no-checks branch below, which would otherwise claim this request
+    // "ran and nothing was verified" — the opposite of what happened, and the
+    // reading a CI dashboard would act on.
+    return [{
+      name: 'Request runs',
+      classname,
+      status: 'skipped',
+      seconds: 0,
+      outcome: {
+        element: 'skipped',
+        message: 'The run stopped at an earlier failure, so this request never ran',
+      },
+    }];
+  }
+
   if (request.error !== undefined) {
     // Matches upstream: an errored request reports one testcase carrying the
     // error, whatever its scripts managed to register before the failure.
@@ -469,7 +485,17 @@ function upstreamResult(
       data: request.response_body ?? null,
       responseTime: request.duration_ms,
     },
-    status: request.error === undefined ? null : 'error',
+    status: request.skipped === true
+      ? 'skipped'
+      : (request.error === undefined ? null : 'error'),
+    // The page counts a skipped request out of both its passed and failed totals
+    // from these two fields, the same way `summary.skipped` does in the result.
+    ...(request.skipped === true
+      ? {
+        skipped: true,
+        skipReason: 'The run stopped at an earlier failure, so this request never ran',
+      }
+      : {}),
     error: request.error ?? null,
     // One list, because a declared assertion and a script test are already one
     // list by the time a result exists.

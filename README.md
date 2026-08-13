@@ -215,7 +215,7 @@ See [INTEGRATION.md](./INTEGRATION.md) for worked examples, Docker, and troubles
 
 | Tool | What it does |
 |---|---|
-| `create_collection` | New collection. `format: "yaml"` (default) or `"bru"`. On disk only — not registered in `workspace.yml` |
+| `create_collection` | New collection. `format: "yaml"` (default) or `"bru"`. Also registers it in the workspace, so `list_collections` and the Bruno app can see it — `registerInWorkspace: false` to skip that, `workspacePath` to pick the file |
 | `list_collections` | Find collections from Bruno's `workspace.yml` |
 | `get_collection_stats` | Counts by method, folders, environments, request list with URLs — filterable by `folder`, `method`, `nameContains`, or `includeRequests: false` for counts only |
 | `create_request` | Write a request: method, url, headers, query, body, auth, scripts, settings. `kind: "websocket"` or `kind: "grpc"` for those transports |
@@ -290,6 +290,7 @@ A missing target folder is created, and reported: a folder with no settings file
 | `captureVariables` | Names of `bru.setVar` variables whose values you want back |
 | `parallel` | Run the **groups** concurrently. Default `false` |
 | `maxConcurrency` | Ceiling on requests in flight. Omit to derive one from the machine; `0` lifts it |
+| `bail` | Stop at the first failure instead of running the rest. Default `false` |
 | `cookieJar` | Keep cookies across the run so a login carries forward. Default `true` |
 | `includeResponseBody` | Include response bodies. Default `true` |
 | `maxResponseBodyBytes` | Truncate bodies past this size. Default `10240` |
@@ -297,7 +298,45 @@ A missing target folder is created, and reported: a folder with no settings file
 
 A directory in `requests` expands to the requests under it, ordered by `seq` within each folder, subfolders first, ties broken by filename. Duplicates are honoured: naming a request twice runs it twice.
 
-Nothing stops a run early. A request that fails, a file that will not parse, a name that matches nothing — each is reported and the run continues.
+By default nothing stops a run early. A request that fails, a file that will not parse, a name that matches nothing — each is reported and the run continues.
+
+### Stopping at the first failure
+
+`bail: true` stops the run at the first request that fails or whose tests fail. Twenty-three
+requests behind a login that stopped working is twenty-three failures for one cause, and the
+cause is the least visible of them.
+
+```json
+{
+  "collectionPath": "./collections/my-api",
+  "bail": true
+}
+```
+
+Everything the run did not reach comes back in place, marked `skipped: true` with
+`skipReason: "bail"`, carrying the method and URL it would have sent. Those requests are
+counted in `summary.skipped` and in **neither** `passed` nor `failed`, so `passed + failed`
+still equals `total` and a truncated run cannot read as a shorter one that went green. The
+run itself gains a `bail` object:
+
+```json
+{
+  "bail": {
+    "reason": "test failure",
+    "at": "Login",
+    "path": "/collections/my-api/auth/login.bru",
+    "group": 0,
+    "skipped": 22
+  }
+}
+```
+
+`reason` is either `request failure` (nothing came back) or `test failure` (it came back and a
+check failed). Later groups are skipped whole.
+
+Nothing cancels a request already in flight. With `parallel`, or with a group of its own that
+runs concurrently, the requests that had already started still finish and are reported
+normally — the run says so in `warnings` rather than leaving you to infer it from the count.
 
 ## Execution groups
 
@@ -585,7 +624,7 @@ Operator escape hatches, all off by default:
 
 | Variable | Effect |
 |---|---|
-| `BRUNO_SSRF_ALLOWLIST` | Comma-separated exact hostnames, IP literals and/or CIDR ranges allowed despite being private. Read once at startup and never influenced by tool arguments; wildcards are rejected |
+| `BRUNO_SSRF_ALLOWLIST` | Comma-separated exact hostnames, IP literals and/or CIDR ranges allowed despite being private. A hostname entry is matched against the spelling in the URL; an address entry is matched against the address the URL resolves to, and also permits an otherwise-blocked name such as `localhost` when every address it resolves to is allowlisted. Read once at startup and never influenced by tool arguments; wildcards are rejected |
 | `BRUNO_UPLOAD_DIRS` | Extra directories uploads may read from |
 | `BRUNO_PROXY_HOSTS` | Hosts allowed to use a collection's proxy |
 | `BRUNO_INSECURE_TLS_HOSTS` | Hosts allowed to skip certificate verification |

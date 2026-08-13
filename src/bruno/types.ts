@@ -1215,6 +1215,7 @@ export type {
   GroupRunResult,
   CollectionRunResult,
   ParseFailure,
+  BailInfo,
 } from './run-results.js';
 
 // Utility types for better type safety

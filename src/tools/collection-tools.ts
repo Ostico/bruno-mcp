@@ -5,6 +5,7 @@
  */
 
 import { z } from 'zod';
+import { join } from 'path';
 import { listCollectionsHandler } from '../bruno/list-collections-handler.js';
 import { getCollectionStats, filterCollectionStats } from '../bruno/collection-stats.js';
 import { collectionDialectWarnings } from '../bruno/request-extensions.js';
@@ -13,7 +14,51 @@ import {
   CreateCollectionInput,
 } from '../bruno/types.js';
 import { validateToolPath } from './tool-path.js';
+import { createWorkspaceResolver } from '../bruno/workspace.js';
+import { registerCollectionInWorkspace } from '../bruno/workspace-registrar.js';
 import type { ToolContext } from './context.js';
+
+/**
+ * Add the new collection to a workspace registry and describe what happened.
+ *
+ * Always says something. The gap this closes was silence: the collection existed
+ * on disk, `list_collections` did not show it, and nothing in the success message
+ * explained why.
+ */
+async function registrationNote(
+  args: { name: string; workspacePath?: string; registerInWorkspace?: boolean },
+  collectionPath: string,
+): Promise<string> {
+  if (args.registerInWorkspace === false) {
+    return 'Not registered in a workspace, as asked. list_collections reads the workspace '
+      + 'registry, so it will not show this collection until something registers it.';
+  }
+
+  const workspacePath = createWorkspaceResolver().resolveWorkspacePath(args.workspacePath);
+  let registration;
+  try {
+    registration = await registerCollectionInWorkspace(workspacePath, {
+      name: args.name,
+      path: collectionPath,
+    });
+  } catch (reason) {
+    // The collection is already on disk and usable by path, so a registry that
+    // could not be written is reported rather than failing the call.
+    return `Created, but the workspace registry at ${workspacePath} could not be written: `
+      + `${reason instanceof Error ? reason.message : String(reason)}. `
+      + 'The collection is usable by path; it will not appear in list_collections.';
+  }
+
+  switch (registration.outcome) {
+    case 'added':
+      return `Registered in ${registration.workspacePath}, so list_collections will show it.`;
+    case 'already-listed':
+      return `Already listed in ${registration.workspacePath} at that path, so nothing was added.`;
+    case 'skipped':
+      return `Not registered in ${registration.workspacePath}: ${registration.reason}. `
+        + 'The collection is usable by path; it will not appear in list_collections.';
+  }
+}
 
 export function registerCreateCollectionTool(ctx: ToolContext): void {
   ctx.server.registerTool(
@@ -21,18 +66,26 @@ export function registerCreateCollectionTool(ctx: ToolContext): void {
     {
       title: 'Create Bruno Collection',
       description: 'Create a new Bruno API testing collection with configuration. '
-        + 'WRITES TO DISK ONLY: the new collection is NOT registered in Bruno\'s workspace.yml, '
-        + 'so it will not appear in list_collections and will not be in the Bruno GUI\'s sidebar '
-        + 'until someone opens it there once. That registration is not needed to use it — pass '
-        + 'the returned path straight to every other tool as collectionPath. Do not call '
-        + 'list_collections to find a collection you just created: it will not be there.',
+        + 'The new collection is also added to the workspace registry, because '
+        + '`list_collections` reads that registry and not the disk: a collection that is '
+        + 'not listed there is invisible to it and to the Bruno app. The result says '
+        + 'whether it was registered and, if not, why.',
       inputSchema: {
         name: z.string().min(1, 'Collection name is required'),
         description: z.string().optional(),
         baseUrl: z.string().url().optional(),
         outputPath: z.string().min(1, 'Output path is required').describe('Absolute path where the new collection directory will be created.'),
         ignore: z.array(z.string()).optional(),
-        format: z.enum(['yaml', 'bru']).optional().default('yaml')
+        format: z.enum(['yaml', 'bru']).optional().default('yaml'),
+        workspacePath: z.string().optional().describe(
+          'Absolute path of the workspace.yml to register the new collection in. Defaults to '
+          + 'the same one list_collections reads: BRUNO_WORKSPACE_PATH, or the Bruno app\'s '
+          + 'workspace for this platform.',
+        ),
+        registerInWorkspace: z.boolean().optional().describe(
+          'Set false to create the collection without touching any workspace file. It will '
+          + 'not appear in list_collections until something else registers it.',
+        ),
       }
     },
     async (args) => {
@@ -43,6 +96,18 @@ export function registerCreateCollectionTool(ctx: ToolContext): void {
             content: [{ type: 'text', text: `Invalid outputPath: ${pathCheck.reason}` }],
             isError: true,
           };
+        }
+
+        // Checked before anything is created, so a bad workspace path cannot
+        // leave a collection on disk that the same call then refuses to report.
+        if (args.workspacePath !== undefined) {
+          const workspaceCheck = validateToolPath(args.workspacePath);
+          if (!workspaceCheck.valid) {
+            return {
+              content: [{ type: 'text', text: `Invalid workspacePath: ${workspaceCheck.reason}` }],
+              isError: true,
+            };
+          }
         }
 
         const input: CreateCollectionInput = {
@@ -61,17 +126,10 @@ export function registerCreateCollectionTool(ctx: ToolContext): void {
             content: [
               {
                 type: 'text',
-                // Said here and not only in the description, because this is the
-                // moment a caller decides what to do next — and the obvious next
-                // move, calling list_collections to find what it just made, comes
-                // back empty. workspace.yml is Bruno's own registry: this server
-                // reads it and does not write it, so nothing here registers the
-                // new directory.
-                text: `✅ Bruno collection "${args.name}" created successfully at: ${result.path}\n\n`
-                  + 'Not registered in Bruno\'s workspace.yml, so it will not appear in '
-                  + 'list_collections, and the Bruno GUI will not show it until someone opens it '
-                  + 'there once. Nothing else needs that: pass the path above as collectionPath to '
-                  + 'every other tool.'
+                text: `✅ Bruno collection "${args.name}" created successfully at: ${result.path}`
+                  // The manager's path, not `outputPath`: the collection lives in a
+                  // directory named after it, one level below the path asked for.
+                  + `\n${await registrationNote(args, result.path ?? join(args.outputPath, args.name))}`
               }
             ]
           };
