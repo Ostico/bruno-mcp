@@ -8,7 +8,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Documentation
-
 - **How to assert on a gRPC or WebSocket result.** `res.getBody()` on a WebSocket request
   is the transcript array, and `res.getStatus()` is always `0` — a test written against the
   status asserts on a constant and cannot fail. The outcome is `res.statusText`, carrying
@@ -26,6 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   things happening at once must be one call with a parallel group.
 
 ### Added
+- **`atob` and `btoa` inside the script sandbox.** A fresh V8 context carries the ECMAScript
+  intrinsics and nothing else, so both of those and `Buffer` were absent: a test could not
+  decode the JWT payload a login had just returned, and the workaround was an extra HTTP
+  request for a value already in hand. Both names are the ones upstream's sandbox allows
+  through, so a script written for the Bruno app works unchanged, and both script kinds get
+  them — building an Authorization header is `btoa`. Written as JavaScript that runs inside the
+  realm rather than as host functions placed on the context, because a host function's
+  `constructor` is a live route back to the host global. `Buffer` remains absent by design; a
+  bare reference throws and names itself.
 
 - **`bail` stops a run at the first failure.** A chain of dependent requests behind a login
   that stopped working produced one failure for the cause and one for every consequence of
@@ -77,21 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   README described the shape of a call; this describes the model, which is what a caller
   needs to predict what a call will do.
 
-### Fixed
-
-- **The SSRF allowlist no longer depends on how a target is spelled.** An operator who
-  allowlisted `127.0.0.1` still had `http://localhost:8888` refused, because a denylisted name
-  is rejected before anything resolves — the same listener reachable or not according to how it
-  was written, which half-blocked one real dev environment that defines both spellings. A
-  normally-blocked name is now permitted when *every* address it resolves to is allowlisted,
-  which is exactly what an address entry vouches for; a name whose addresses are only partly
-  covered stays refused, and so does one whose resolution fails, since a DNS message would hide
-  why the name was denied. The permitted name still carries its resolved addresses to the
-  caller, so the connection remains pinned to them. The refusal text now also states which
-  spelling each kind of entry matches, which was previously impossible to work out from inside.
-
 ### Changed
-
 - **An SSRF refusal now says that an allowlist entry matches one spelling of a target.** An
   allowlisted hostname is deliberately never resolved — the operator vouched for the name, not
   for whatever it points at today — so it does not cover the addresses behind it, and an
@@ -111,7 +105,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `release-workflow.test.ts` holds both halves of that in place.
 
 ### Fixed
-
 - **`create_collection` created a collection `list_collections` could not see, and said
   nothing about it.** `workspace.yml` is Bruno's own registry, and `list_collections`
   reads that registry rather than the disk, so a collection created here appeared in
@@ -127,6 +120,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   because it belongs to the Bruno app: it quotes every scalar and can carry keys such as an
   empty `specs:` that a YAML round-trip would rewrite. A registry in a shape that cannot be
   extended that way is left untouched and reported.
+
+- **The SSRF allowlist no longer depends on how a target is spelled.** An operator who
+  allowlisted `127.0.0.1` still had `http://localhost:8888` refused, because a denylisted name
+  is rejected before anything resolves — the same listener reachable or not according to how it
+  was written, which half-blocked one real dev environment that defines both spellings. A
+  normally-blocked name is now permitted when *every* address it resolves to is allowlisted,
+  which is exactly what an address entry vouches for; a name whose addresses are only partly
+  covered stays refused, and so does one whose resolution fails, since a DNS message would hide
+  why the name was denied. The permitted name still carries its resolved addresses to the
+  caller, so the connection remains pinned to them. The refusal text now also states which
+  spelling each kind of entry matches, which was previously impossible to work out from inside.
 
 - **A pre-request script did not run at all on a gRPC or WebSocket request.** Both transports
   are executed by a branch that returned before the pre-request phase began, so on either of

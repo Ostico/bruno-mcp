@@ -442,6 +442,7 @@ Scripts run in a V8 context inside a forked process (see [Security](#security)).
 | `res(path, ...fns)` | Bruno's query language over the body: `res("data.pets..name")` descends to every `name`, `[0]` indexes, `[?]` filters or maps with a callback. Also valid as an assertion's left-hand side, where the syntax could not appear bare |
 | `bru.setVar(name, v)` `bru.getVar(name)` | Pass values to later requests as `{{name}}` |
 | `bru.sleep(ms)` | Also `setTimeout`/`setInterval` and their `clear*` |
+| `atob(s)` `btoa(s)` | base64, in both script kinds. Enough to read a JWT payload without a second request |
 
 **Pre-request** scripts get `req` and `bru` instead — there is no response yet. Mutating `req` changes what is sent: `req.getUrl()`, `req.setUrl()`, `req.getMethod()`, `req.getHeader()`, `req.setHeader()`, `req.getHeaders()`, `req.getBody()`, `req.setBody()`.
 
@@ -458,6 +459,22 @@ expect(res.getStatus()).to.equal(200);      // ❌ runs, passes, reported nowher
 ```
 
 **Do not `JSON.parse(res.getBody())`.** It is already an object whenever the media type's subtype is `json` or carries the `+json` suffix — `application/json`, `text/json`, `application/vnd.api+json` — so parsing again throws `SyntaxError: "[object Object]" is not valid JSON`. Read fields directly. If an endpoint may return either, branch: `typeof b === "string" ? JSON.parse(b) : b`.
+
+**Reading a claim out of a token** needs no second request. `atob` and `btoa` are both present,
+under the names Bruno's own sandbox uses, so the usual base64url dance works:
+
+```js
+test("the token is for the user we logged in as", function() {
+  const payload = res.getBody().token.split(".")[1];
+  const claims = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+  expect(claims.uid).to.equal(bru.getVar("expectedUid"));
+});
+```
+
+`Buffer` is **not** available. It is a host class with affordances a sandbox should not hand out,
+and a faithful stand-in would be a fake whose gaps you would find one at a time; a bare reference
+throws `Buffer is not defined`, which is reported as a script error rather than silently
+misbehaving.
 
 Sleeping counts against the script timeout — `settings.timeout`, 5000 ms when unset. `await bru.sleep(10000)` under the default reports a timeout instead of waiting.
 
