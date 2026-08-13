@@ -279,6 +279,7 @@ In `.yml` collections `post-response` and `tests` share Bruno's single `after-re
 | `captureVariables` | Names of `bru.setVar` variables whose values you want back |
 | `parallel` | Run the **groups** concurrently. Default `false` |
 | `maxConcurrency` | Ceiling on requests in flight. Omit to derive one from the machine; `0` lifts it |
+| `bail` | Stop at the first failure instead of running the rest. Default `false` |
 | `cookieJar` | Keep cookies across the run so a login carries forward. Default `true` |
 | `includeResponseBody` | Include response bodies. Default `true` |
 | `maxResponseBodyBytes` | Truncate bodies past this size. Default `10240` |
@@ -286,7 +287,45 @@ In `.yml` collections `post-response` and `tests` share Bruno's single `after-re
 
 A directory in `requests` expands to the requests under it, ordered by `seq` within each folder, subfolders first, ties broken by filename. Duplicates are honoured: naming a request twice runs it twice.
 
-Nothing stops a run early. A request that fails, a file that will not parse, a name that matches nothing — each is reported and the run continues.
+By default nothing stops a run early. A request that fails, a file that will not parse, a name that matches nothing — each is reported and the run continues.
+
+### Stopping at the first failure
+
+`bail: true` stops the run at the first request that fails or whose tests fail. Twenty-three
+requests behind a login that stopped working is twenty-three failures for one cause, and the
+cause is the least visible of them.
+
+```json
+{
+  "collectionPath": "./collections/my-api",
+  "bail": true
+}
+```
+
+Everything the run did not reach comes back in place, marked `skipped: true` with
+`skipReason: "bail"`, carrying the method and URL it would have sent. Those requests are
+counted in `summary.skipped` and in **neither** `passed` nor `failed`, so `passed + failed`
+still equals `total` and a truncated run cannot read as a shorter one that went green. The
+run itself gains a `bail` object:
+
+```json
+{
+  "bail": {
+    "reason": "test failure",
+    "at": "Login",
+    "path": "/collections/my-api/auth/login.bru",
+    "group": 0,
+    "skipped": 22
+  }
+}
+```
+
+`reason` is either `request failure` (nothing came back) or `test failure` (it came back and a
+check failed). Later groups are skipped whole.
+
+Nothing cancels a request already in flight. With `parallel`, or with a group of its own that
+runs concurrently, the requests that had already started still finish and are reported
+normally — the run says so in `warnings` rather than leaving you to infer it from the count.
 
 ## Execution groups
 

@@ -61,6 +61,25 @@ export interface RequestExecutionResult {
   grpc?: GrpcResultDetail;
   /** Present only for a WebSocket session that actually opened. */
   websocket?: WebsocketResultDetail;
+  /**
+   * Set for a request that never ran because `bail` stopped the run at an
+   * earlier failure.
+   *
+   * A skipped result is neither a pass nor a failure. It is counted in
+   * `CollectionRunSummary.skipped` and in neither of the other two, because
+   * calling it either would be a claim about a request nothing evaluated — and
+   * "passed" is the claim that made stopping early dangerous to report.
+   *
+   * `method` and `url` carry what the request declares rather than nothing: it
+   * is what would have been sent, and it is the only thing here that helps a
+   * caller decide whether to rerun this one.
+   */
+  skipped?: true;
+  /**
+   * Why it was skipped. One value today; named rather than implied so that a
+   * second reason cannot arrive and silently inherit this one's meaning.
+   */
+  skipReason?: 'bail';
 }
 
 /**
@@ -97,6 +116,16 @@ export interface CollectionRunSummary {
    * `tests.total` to tell "verified and green" from "never verified".
    */
   requestsWithoutTests: number;
+  /**
+   * Requests that never ran because `bail` stopped the run. Absent when nothing
+   * was skipped, so a run without `bail` reads exactly as it did before.
+   *
+   * Outside `total`, `passed` and `failed`, all three of which are about
+   * requests that were evaluated. `passed + failed === total` therefore still
+   * holds, and a caller checking `failed === 0` for a green run is not told a
+   * truncated run passed.
+   */
+  skipped?: number;
 }
 
 /**
@@ -181,8 +210,44 @@ export interface RunReportFile {
   bytes: number;
 }
 
+/**
+ * Where a `bail` run stopped, and what it cost.
+ *
+ * Reported at run level rather than on a group because "the run stopped here"
+ * is a fact about the run: every group after this one is skipped too, and a
+ * caller reading only the summary would otherwise have to scan the groups to
+ * discover that the run is incomplete.
+ */
+export interface BailInfo {
+  /**
+   * What kind of failure stopped it: `'request failure'` or `'test failure'`,
+   * upstream's own wording.
+   *
+   * Upstream distinguishes five kinds — it also names assertion, pre-request
+   * test and post-response test failures separately. Those three cannot be
+   * produced here, and not because they are unsupported: a declared assertion
+   * and a script test are already one `tests` list by the time a result exists,
+   * so the phase that registered a check is not recoverable from it. Reporting
+   * a guessed phase would be worse than reporting the two that are certain.
+   */
+  reason: 'request failure' | 'test failure';
+  /** The name of the request that failed. */
+  at: string;
+  /** Absolute path of that request's file, when the run discovered one. */
+  path?: string;
+  /** `index` of the group it was in, which addresses the group in `groups`. */
+  group: number;
+  /** How many requests never ran because of it, across every group. */
+  skipped: number;
+}
+
 export interface CollectionRunResult {
   summary: CollectionRunSummary;
+  /**
+   * Set only when `bail` stopped the run early. Its absence means the run
+   * covered everything it was given.
+   */
+  bail?: BailInfo;
   /**
    * One entry per group, in the order the caller listed them. Always present,
    * with a single implicit group when the caller named none: flattening that
