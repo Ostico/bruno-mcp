@@ -13,7 +13,7 @@ exports[`MCP tool surface contract matches the recorded surface exactly (titles,
     "title": "Add Test Script",
   },
   "create_collection": {
-    "description": "Create a new Bruno API testing collection with configuration",
+    "description": "Create a new Bruno API testing collection with configuration. WRITES TO DISK ONLY: the new collection is NOT registered in Bruno's workspace.yml, so it will not appear in list_collections and will not be in the Bruno GUI's sidebar until someone opens it there once. That registration is not needed to use it — pass the returned path straight to every other tool as collectionPath. Do not call list_collections to find a collection you just created: it will not be there.",
     "schema": {
       "baseUrl": "string?",
       "description": "string?",

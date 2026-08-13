@@ -30,6 +30,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`create_collection` said nothing about the collection being invisible to
+  `list_collections`.** `workspace.yml` is Bruno's own registry; this server reads it and
+  does not write it, so a collection created here exists on disk, works with every other
+  tool by path, and appears in neither `list_collections` nor the Bruno GUI's sidebar until
+  someone opens it there once. The success message and the tool description now say so, and
+  say what to do instead — pass the returned path as `collectionPath`. Nothing about where
+  the collection is written has changed; what changed is that the caller is told, at the
+  moment it decides what to do next, rather than discovering it from an empty list.
+
 - **The MCP registry manifest's description was too long to publish.** `server.json`
   carried a 126-character description and the registry accepts 100, so publishing 2.3.0
   returned `422 { "message": "expected length <= 100", "location": "body.description" }`.
