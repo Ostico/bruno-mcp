@@ -489,7 +489,19 @@ async function executeSingleRequest(
       // baseVars, not vars: re-substituting from the environment alone would drop
       // every vars:pre-request entry the moment a pre-request script wrote a
       // variable, which is exactly when this path runs.
-      const rebuilt = await buildFetchOptions(yaml, variableStore.merge(baseVars), collectionRoot, rootChain);
+      //
+      // `oauth.token`, for the same reason: the token was fetched before this
+      // script ran and is not part of any template, so a rebuild that omits it
+      // rebuilds the request as nobody. That failure is silent — the request
+      // still goes out, and against an endpoint permitting anonymous access it
+      // passes, proving only that anonymous access works.
+      const rebuilt = await buildFetchOptions(
+        yaml,
+        variableStore.merge(baseVars),
+        collectionRoot,
+        rootChain,
+        oauth.token,
+      );
       url = rebuilt.url;
       options = rebuilt.options;
       authWarnings = rebuilt.warnings;

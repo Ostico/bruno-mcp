@@ -48,6 +48,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An oauth2 request sent no credential when its own pre-request script set a variable.**
+  Writing any variable from a pre-request script rebuilds the request from its original
+  templates, so the new value can reach that request's own `{{placeholders}}`. The rebuild
+  was not handed the access token that had already been fetched, and the token is not part
+  of any template — so the `Authorization` header vanished and the request went out
+  unauthenticated. It was not refused and not warned about, which made it the failure the
+  refusal path exists to prevent: against an endpoint permitting anonymous access it passes,
+  proving only that anonymous access works. A collection whose login writes a variable — the
+  ordinary shape — could report a green authorization suite having never presented a
+  credential.
+
 - **The MCP registry manifest's description was too long to publish.** `server.json`
   carried a 126-character description and the registry accepts 100, so publishing 2.3.0
   returned `422 { "message": "expected length <= 100", "location": "body.description" }`.
