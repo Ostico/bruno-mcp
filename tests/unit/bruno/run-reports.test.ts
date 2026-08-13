@@ -141,6 +141,25 @@ describe('JUnit XML', () => {
     expect(xml).not.toContain('tests="0"');
   });
 
+  it('gives a request the run never reached a skipped testcase, not a no-checks one', () => {
+    // A bailed-out request has no tests either, so the branch order is what
+    // decides which of two opposite statements the XML makes about it: "ran and
+    // verified nothing" or "never ran".
+    const xml = junit({
+      groups: [group({
+        summary: summary({ total: 0, passed: 0, failed: 0, tests: { total: 0, passed: 0, failed: 0 } }),
+        results: [request({ tests: [], status: 0, skipped: true, skipReason: 'bail' })],
+      })],
+    });
+
+    expect(xml).toContain('<testcase name="Request runs" classname="api/alpha" status="skipped"');
+    expect(xml).toContain(
+      '<skipped type="skipped" message="The run stopped at an earlier failure, so this request never ran" />',
+    );
+    expect(xml).toContain('<testsuites tests="1" failures="0" errors="0" skipped="1"');
+    expect(xml).not.toContain('No checks registered');
+  });
+
   it('gives a request file that would not parse a suite of its own', () => {
     const xml = junit({
       parseErrors: 1,
@@ -327,6 +346,28 @@ describe('HTML report', () => {
       skipReason: 'Line 4: expected a block',
     });
     expect(payload.results[1]!.summary.skippedRequests).toBe(1);
+  });
+
+  it('marks a request the run never reached as skipped rather than as a pass', () => {
+    // The page derives its passed count from `status`, so a bailed-out request
+    // left at the default would be counted as one that succeeded.
+    const html = renderHtmlReport(
+      runResult({
+        groups: [group({
+          results: [request({ tests: [], status: 0, skipped: true, skipReason: 'bail' })],
+        })],
+      }),
+      COLLECTION,
+      COMPLETED_AT,
+    );
+
+    const payload = htmlPayload(html);
+    expect(payload.results[0]!.results[0]).toMatchObject({
+      name: 'alpha',
+      status: 'skipped',
+      skipped: true,
+      skipReason: 'The run stopped at an earlier failure, so this request never ran',
+    });
   });
 
   it('marks an errored request as errored and names it by what it has', () => {
