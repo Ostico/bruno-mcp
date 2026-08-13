@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`run_collection` now says where simultaneity comes from.** Its description and the
+  execution-groups guide both state that groups plus `parallel` are the only way to make two
+  things happen at the same moment: separate calls are not serialised by this server, but
+  nothing here decides when a second call starts, so a client that issues tool calls one at a
+  time produces runs seconds apart and no single result shows the gap. A test holds the
+  first half of that in place, failing if two concurrent runs ever stop overlapping.
+
 - **A lost MCP registry listing can be republished without cutting a release.** The release
   workflow now takes a manual run with a version to list, which runs the registry job on
   its own against that version's tag. Before, the listing could only be attempted as part
