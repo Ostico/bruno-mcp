@@ -215,7 +215,7 @@ See [INTEGRATION.md](./INTEGRATION.md) for worked examples, Docker, and troubles
 
 | Tool | What it does |
 |---|---|
-| `create_collection` | New collection. `format: "yaml"` (default) or `"bru"`. On disk only — not registered in `workspace.yml` |
+| `create_collection` | New collection. `format: "yaml"` (default) or `"bru"`. Also registers it in the workspace, so `list_collections` and the Bruno app can see it — `registerInWorkspace: false` to skip that, `workspacePath` to pick the file |
 | `list_collections` | Find collections from Bruno's `workspace.yml` |
 | `get_collection_stats` | Counts by method, folders, environments, request list |
 | `create_request` | Write a request: method, url, headers, query, body, auth, scripts, settings. `kind: "websocket"` or `kind: "grpc"` for those transports |

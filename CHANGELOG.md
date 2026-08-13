@@ -112,14 +112,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`create_collection` said nothing about the collection being invisible to
-  `list_collections`.** `workspace.yml` is Bruno's own registry; this server reads it and
-  does not write it, so a collection created here exists on disk, works with every other
-  tool by path, and appears in neither `list_collections` nor the Bruno GUI's sidebar until
-  someone opens it there once. The success message and the tool description now say so, and
-  say what to do instead — pass the returned path as `collectionPath`. Nothing about where
-  the collection is written has changed; what changed is that the caller is told, at the
-  moment it decides what to do next, rather than discovering it from an empty list.
+- **`create_collection` created a collection `list_collections` could not see, and said
+  nothing about it.** `workspace.yml` is Bruno's own registry, and `list_collections`
+  reads that registry rather than the disk, so a collection created here appeared in
+  neither it nor the Bruno GUI's sidebar until something else wrote that file — while the
+  success message mentioned neither the registry nor the consequence, which read as silent
+  failure. The new collection is now added to the same workspace `list_collections`
+  resolves (`workspacePath`, then `BRUNO_WORKSPACE_PATH`, then the platform default),
+  `registerInWorkspace: false` skips it, and the result always says what happened:
+  registered, already listed, or not registered and why. A collection that is not
+  registered is still usable by every other tool — pass the returned path as
+  `collectionPath`.
+  The workspace file is edited a line at a time rather than parsed and re-serialised,
+  because it belongs to the Bruno app: it quotes every scalar and can carry keys such as an
+  empty `specs:` that a YAML round-trip would rewrite. A registry in a shape that cannot be
+  extended that way is left untouched and reported.
 
 - **A pre-request script did not run at all on a gRPC or WebSocket request.** Both transports
   are executed by a branch that returned before the pre-request phase began, so on either of
