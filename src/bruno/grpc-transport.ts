@@ -66,6 +66,21 @@ export interface GrpcExecutionInput {
   timeoutMs: number;
   /** An oauth2 access token the caller already fetched, if any. */
   oauth2Token?: string;
+  /**
+   * A target a pre-request script set with `req.setUrl`, replacing the block's
+   * own. Applied instead of substituting the template, not over the substituted
+   * result: the script was handed the substituted target and what it gives back
+   * is a finished target, so expanding it again would treat response data as a
+   * template.
+   */
+  urlOverride?: string;
+  /**
+   * Metadata a pre-request script set with `req.setHeader`, applied over the
+   * request's own block and over auth's — last writer wins, as on the HTTP path.
+   * Metadata is this transport's header surface: grpc-js puts it on the wire as
+   * HTTP/2 headers, which is why auth's headers are merged into it below.
+   */
+  metadataOverrides?: Record<string, string>;
 }
 
 /** Everything a refusal needs: no channel was built and nothing was sent. */
@@ -121,8 +136,14 @@ function flatten(metadata: { getMap(): Record<string, unknown> }): Record<string
   return out;
 }
 
-/** The metadata this call sends: the request's own block plus applied auth. */
-function buildMetadata(
+/**
+ * The metadata this call sends: the request's own block plus applied auth.
+ *
+ * Exported so the pre-request phase can seed `req.getHeaders()` from the same
+ * implementation, rather than from a second copy of this loop that could drift
+ * from what is actually sent.
+ */
+export function buildMetadata(
   request: YamlRequest,
   subst: (value: string) => string,
 ): Record<string, string> {
@@ -146,7 +167,9 @@ function buildMetadata(
 export async function executeGrpcRequest(
   input: GrpcExecutionInput,
 ): Promise<TransportOutcome> {
-  const { request, vars, collectionRoot, rootChain, timeoutMs, oauth2Token } = input;
+  const {
+    request, vars, collectionRoot, rootChain, timeoutMs, oauth2Token, urlOverride, metadataOverrides,
+  } = input;
   const block = request.grpc;
   const warnings: string[] = [];
   const subst = (value: string) => substitute(value, vars);
@@ -155,7 +178,7 @@ export async function executeGrpcRequest(
     return refuse(request, '', 'Cannot execute a gRPC request with no grpc block', warnings);
   }
 
-  const target = subst(block.url ?? '').trim();
+  const target = (urlOverride ?? subst(block.url ?? '')).trim();
   if (target.length === 0) {
     return refuse(request, '', 'Cannot execute a gRPC request with an empty target', warnings);
   }
@@ -390,7 +413,11 @@ export async function executeGrpcRequest(
       : options,
   );
 
-  const metadataRecord = { ...buildMetadata(request, subst), ...headers };
+  const metadataRecord = {
+    ...buildMetadata(request, subst),
+    ...headers,
+    ...(metadataOverrides ?? {}),
+  };
   const metadata = new grpc.Metadata();
   for (const [name, value] of Object.entries(metadataRecord)) {
     metadata.set(name, value);

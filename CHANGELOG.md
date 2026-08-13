@@ -30,6 +30,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A pre-request script did not run at all on a gRPC or WebSocket request.** Both transports
+  are executed by a branch that returned before the pre-request phase began, so on either of
+  them `bru.setVar` wrote nothing, `req.setUrl` and `req.setHeader` changed nothing, and a
+  script that threw did not stop the request. Post-response and test scripts always did run,
+  which is what hid it: the missing phase was the one whose whole purpose is to happen before
+  substitution, so a script that computed a room name or a topic and then dialled it silently
+  dialled the template instead. A script's variable now reaches that request's own
+  `{{placeholders}}`, `req.setUrl` replaces the target, `req.setHeader` writes the transport's
+  own header surface — handshake headers for WebSocket, metadata for gRPC — and a script that
+  throws stops the request before anything is dialled. `req.setBody` is refused with a warning
+  rather than guessed at: neither transport sends a single body, so there is no one value for
+  it to replace.
+
 - **The MCP registry manifest's description was too long to publish.** `server.json`
   carried a 126-character description and the registry accepts 100, so publishing 2.3.0
   returned `422 { "message": "expected length <= 100", "location": "body.description" }`.
