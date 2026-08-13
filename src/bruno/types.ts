@@ -575,6 +575,18 @@ export interface CreateGrpcInput {
  */
 export type CreateRequestKind = 'http' | 'ws' | 'grpc';
 
+/**
+ * The edit side of `CreateRequestInput`: every field optional, plus one that
+ * exists only here. Creating a request derives its file's name from the
+ * request's name; editing one keeps the two apart, so changing the name leaves
+ * the file where it is and `filename` is how the file itself moves. Bruno draws
+ * the same line — it has one rename path for each.
+ */
+export type UpdateRequestInput = Partial<CreateRequestInput> & {
+  /** New basename for the file, in the request's own folder. */
+  filename?: string;
+};
+
 export interface CreateRequestInput {
   collectionPath: string;
   name: string;

@@ -272,4 +272,55 @@ http:
     expect(sent(1).Authorization).toBe('Bearer AT');
     expect(sent(2).Authorization).toBe('Bearer AT');
   });
+
+  it('keeps the bearer credential when a pre-request script sets a variable', async () => {
+    // Any variable a pre-request script writes rebuilds the request from its
+    // original templates, so the new value can reach this request's own
+    // placeholders. The token was fetched before that rebuild and is not part of
+    // any template, so the rebuild has to be handed it again or the request goes
+    // out as nobody — and unlike the refusal above, it does go out.
+    mockFetch
+      .mockResolvedValueOnce(ok({ access_token: 'AT-123' }))
+      .mockResolvedValueOnce(ok());
+    const root = await collection({
+      'r.yml': `${oauthRequest('client_credentials')}runtime:
+  scripts:
+    - type: before-request
+      code: |
+        bru.setVar("anything", "at all");
+`,
+    });
+
+    const result = await run(root, { client_secret: 's3cret' });
+
+    expect(mockFetch.mock.calls[1][0]).toBe('https://api.test/data');
+    expect(sent(1).Authorization).toBe('Bearer AT-123');
+    expect(result.summary.passed).toBe(1);
+  });
+
+  it('rebuilds with the variable the script set, not just with the token', async () => {
+    // The rebuild exists to pick up the script's variable. Restoring the token
+    // must not come at the cost of that, so both halves are asserted together:
+    // a fix that passed the token but dropped the re-substitution would satisfy
+    // the test above and still be wrong.
+    mockFetch
+      .mockResolvedValueOnce(ok({ access_token: 'AT-9' }))
+      .mockResolvedValueOnce(ok());
+    const root = await collection({
+      'r.yml': `${oauthRequest('client_credentials').replace(
+        'url: "https://api.test/data"',
+        'url: "https://api.test/{{resource}}"',
+      )}runtime:
+  scripts:
+    - type: before-request
+      code: |
+        bru.setVar("resource", "chosen-late");
+`,
+    });
+
+    await run(root, { client_secret: 's3cret' });
+
+    expect(mockFetch.mock.calls[1][0]).toBe('https://api.test/chosen-late');
+    expect(sent(1).Authorization).toBe('Bearer AT-9');
+  });
 });

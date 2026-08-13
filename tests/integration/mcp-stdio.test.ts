@@ -45,6 +45,7 @@ const EXPECTED_TOOLS = [
   'remove_environment_variable',
   'create_request',
   'modify_request',
+  'move_request',
   'add_test_script',
   'remove_script',
   'delete_request',
