@@ -43,6 +43,12 @@ import type { TransportOutcome } from './transport-verification.js';
 import { runTransportPreRequest } from './transport-pre-request.js';
 import { executeWebsocketRequest, handshakeHeaders, type WebsocketRunOptions } from './ws-transport.js';
 import { writeRunReports } from './run-reports.js';
+import {
+  crashedRequestResult,
+  skippedGroupResult,
+  skippedRequestResult,
+  summarise,
+} from './run-result-builders.js';
 
 // Re-exported from its new home so existing importers keep working. The move was
 // made to free `max-lines` headroom in this file, not to change its surface.
@@ -52,7 +58,7 @@ import type {
   MockRequestData,
   CollectionRunResult,
   GroupRunResult,
-  CollectionRunSummary,
+  BailInfo,
   RequestExecutionResult,
   TestResult,
   MockResponseData,
@@ -995,7 +1001,37 @@ export class RequestExecutor {
 
     const gates = createGateRegistry(plan.groups);
 
+    // Set by the first failure `bail` catches, and read by everything that has
+    // not started yet. `skipped` is filled in at the end, once the results say
+    // how many requests it actually cost — counting it here would mean
+    // predicting what a parallel group had already begun.
+    let bail: Omit<BailInfo, 'skipped'> | undefined;
+
+    // First failure wins. A `parallel` group can produce several at once, and
+    // the one to report is the one that stopped the run, not the last to resolve.
+    const recordBail = (result: RequestExecutionResult, groupIndex: number): void => {
+      if (options?.bail !== true || bail !== undefined) {
+        return;
+      }
+      if (result.error !== undefined) {
+        bail = { reason: 'request failure', at: result.name, path: result.path, group: groupIndex };
+        return;
+      }
+      // The same predicate `summarise` counts a failure by, so a run cannot stop
+      // on something the summary then reports as passed.
+      if (result.tests.some((test) => test.status === 'fail')) {
+        bail = { reason: 'test failure', at: result.name, path: result.path, group: groupIndex };
+      }
+    };
+
     const runGroup = async (group: ResolvedGroup): Promise<GroupRunResult> => {
+      // Before the membership check below, deliberately. A group that never ran
+      // has nothing to say about whether its members parse: reporting it as an
+      // error would blame it for a defect the run stopped before reaching.
+      if (bail !== undefined) {
+        return skippedGroupResult(group);
+      }
+
       // Membership could not be resolved at all — a named request file that is
       // there but will not parse. That is a failure preceding every request in
       // the group, which is exactly what group-level `error` means, so it takes
@@ -1054,10 +1090,26 @@ export class RequestExecutor {
           ...result,
           path: req.filePath,
         });
+        // Checked here rather than in the serial loop so that it covers a
+        // `parallel` group too: those requests are all handed out at once, but a
+        // concurrency cap means the tail of them has not begun, and this is the
+        // point each one passes on its way in.
+        //
+        // Returning here skips the gate bookkeeping below, so a group waiting on
+        // this one is left short. That is what `recordGroupEnd` is for: it fails
+        // the waiter with the count it never reached instead of leaving it to
+        // hang, and the group ending is exactly what a bail means.
+        if (bail !== undefined) {
+          return located(skippedRequestResult(req));
+        }
         try {
-          return located(await runOne(req, vars, store, jar, tokenCache));
+          const result = located(await runOne(req, vars, store, jar, tokenCache));
+          recordBail(result, group.index);
+          return result;
         } catch (reason) {
-          return located(crashedRequestResult(req, reason));
+          const result = located(crashedRequestResult(req, reason));
+          recordBail(result, group.index);
+          return result;
         } finally {
           // A gate marks a position in a group, so a request that failed still
           // counts as reached: waiting for a verdict instead would hang the run
@@ -1139,14 +1191,31 @@ export class RequestExecutor {
     summary.total += crashed;
     summary.failed += crashed;
 
+    // Counted from the results rather than predicted when the run stopped: with
+    // fan-out, how much a bail actually skipped depends on what had already
+    // started, and only the results know that.
+    const skippedByBail = groups.reduce(
+      (count, g) => count + g.results.filter((r) => r.skipped === true).length,
+      0,
+    );
+    const fanOut = options?.parallel === true || plan.groups.some((g) => g.parallel);
+    const bailWarnings = bail !== undefined && fanOut
+      ? ['This run stopped at a failure while running concurrently, so it skipped only what had '
+        + 'not started yet. Requests already in flight ran to completion and their results are '
+        + 'included; a stop that covers every remaining request needs a serial run.']
+      : [];
+
     const runResult: CollectionRunResult = {
       summary,
       groups,
+      ...(bail === undefined ? {} : { bail: { ...bail, skipped: skippedByBail } }),
       // Derived, not tallied in parallel with the list: the count and the
       // detail cannot drift apart if only one of them is maintained.
       parseErrors: plan.parseFailures.length,
       parseFailures: plan.parseFailures,
-      ...(plan.warnings.length > 0 ? { warnings: plan.warnings } : {}),
+      ...(plan.warnings.length > 0 || bailWarnings.length > 0
+        ? { warnings: [...plan.warnings, ...bailWarnings] }
+        : {}),
     };
 
     if (!options?.report) {
@@ -1189,73 +1258,4 @@ async function runGroupsInOrder(
     }
   }
   return settled;
-}
-
-/**
- * The result for a request that threw before it could produce one.
- *
- * `executeSingleRequest` turns a network failure into a result, so getting here
- * takes a throw from the setup around it — `rootLoader.forRequest` on a folder
- * root that will not read, or `buildDispatcher` on a malformed `settings.proxy`.
- * Rare, but one request's problem either way, so it is reported as one
- * request's result. `status: 0` matches how an SSRF refusal is already
- * reported: no response was received, rather than one that came back as zero.
- */
-function crashedRequestResult(req: ParsedRequest, reason: unknown): RequestExecutionResult {
-  return {
-    name: req.yaml.info.name,
-    // A kind with no http block reports its kind where the method would go, and
-    // no target: it never reached a URL, so claiming one would be a fiction.
-    method: req.yaml.http?.method ?? (req.yaml.info.type ?? 'unknown').toUpperCase(),
-    url: req.yaml.http?.url ?? '',
-    status: 0,
-    duration_ms: 0,
-    tests: [],
-    error: reason instanceof Error ? reason.message : String(reason),
-  };
-}
-
-/**
- * Reduce per-request results to the run summary.
- *
- * Both the request-level and the test-level counts are tallied from the results
- * themselves. `passed` in particular is COUNTED, not derived as
- * `total - failed`: that subtraction made a run in which nothing was ever
- * evaluated arithmetically identical to a run in which everything passed, so a
- * dropped script or an inert feature left the summary green. `tests.total` and
- * `requestsWithoutTests` are what tell those two runs apart.
- */
-function summarise(
-  results: RequestExecutionResult[],
-  durationMs: number,
-): CollectionRunSummary {
-  let passed = 0;
-  let failed = 0;
-  const tests = { total: 0, passed: 0, failed: 0 };
-  let requestsWithoutTests = 0;
-
-  for (const r of results) {
-    let requestFailed = r.error !== undefined;
-    for (const t of r.tests) {
-      tests.total++;
-      if (t.status === 'fail') {
-        tests.failed++;
-        requestFailed = true;
-      } else {
-        tests.passed++;
-      }
-    }
-    if (r.tests.length === 0) requestsWithoutTests++;
-    if (requestFailed) failed++;
-    else passed++;
-  }
-
-  return {
-    total: results.length,
-    passed,
-    failed,
-    duration_ms: durationMs,
-    tests,
-    requestsWithoutTests,
-  };
 }

@@ -61,6 +61,22 @@ describe('passing groups through', () => {
 
     expect(mockedExecute).toHaveBeenCalledWith('/c', expect.objectContaining({ maxConcurrency: 0 }));
   });
+
+  it('passes bail through, and declares it', async () => {
+    await handler({ collectionPath: '/c', bail: true });
+
+    expect(mockedExecute).toHaveBeenCalledWith('/c', expect.objectContaining({ bail: true }));
+    expect(inputSchema.bail).toBeDefined();
+  });
+
+  it('leaves bail off when the caller does not ask for it', async () => {
+    // The schema defaults it to false, and false must reach the executor as
+    // false rather than as absent — a run that opts out is not a run that
+    // forgot to mention it.
+    await handler({ collectionPath: '/c', bail: false });
+
+    expect(mockedExecute).toHaveBeenCalledWith('/c', expect.objectContaining({ bail: false }));
+  });
 });
 
 describe('rejecting contradictory input', () => {
