@@ -49,6 +49,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **An SSRF refusal now says that an allowlist entry matches one spelling of a target.** An
+  allowlisted hostname is deliberately never resolved — the operator vouched for the name, not
+  for whatever it points at today — so it does not cover the addresses behind it, and an
+  allowlisted address does not cover a name that resolves to it. Nothing said so, which made
+  the consequence look like a defect: a caller that reached a service at `http://localhost` and
+  was then refused at `http://127.0.0.1` read the guard as inconsistent between name and
+  address, rather than as one allowlist entry present and the other missing. The refusal and
+  the README now state the rule, and name that pair as the case it explains.
+
 - **A lost MCP registry listing can be republished without cutting a release.** The release
   workflow now takes a manual run with a version to list, which runs the registry job on
   its own against that version's tag. Before, the listing could only be attempted as part

@@ -583,6 +583,8 @@ Operator escape hatches, all off by default:
 | `BRUNO_DNS_TIMEOUT_MS` | DNS resolution timeout |
 | `BRUNO_WORKSPACE_PATH` | Where to find Bruno's `workspace.yml` |
 
+An allowlist entry matches a target's **exact spelling**. An allowlisted hostname is never resolved — the operator vouched for the name, not for whatever it points at today — so it does not cover the addresses behind it, and an allowlisted address does not cover a name that resolves to it. `localhost` and `127.0.0.1` are therefore two entries, and allowing one while a request uses the other looks like an inconsistent guard when it is a missing entry. Refusals say so.
+
 This constrains what `run_collection` will fetch. An agent with shell access can reach the network anyway, so treat it as one layer, not a boundary.
 
 ## FAQ
