@@ -69,6 +69,25 @@ describe('ssrfRemediation', () => {
     expect(ssrfRemediation()).toContain('hostnames, IPs or CIDRs');
   });
 
+  it('states that an entry matches one spelling, whatever the allowlist holds', () => {
+    // Without this, the guard reads as inconsistent: a caller that reaches a
+    // service at localhost and is then refused at 127.0.0.1 concludes the check
+    // is broken, when the operator allowlisted one spelling and not the other.
+    // It belongs in both branches, so it is asserted with and without entries.
+    for (const value of [undefined, 'svc.internal.test']) {
+      if (value === undefined) {
+        delete process.env.BRUNO_SSRF_ALLOWLIST;
+      } else {
+        process.env.BRUNO_SSRF_ALLOWLIST = value;
+      }
+      resetAllowlistCache();
+      const msg = ssrfRemediation();
+      expect(msg).toContain("exact spelling");
+      expect(msg).toContain('allowlisted hostname is never resolved');
+      expect(msg).toContain('http://localhost and http://127.0.0.1 can differ');
+    }
+  });
+
   it('tells the caller to stop and escalate when nothing is configured', () => {
     const msg = ssrfRemediation();
     expect(msg).toContain('No entries are configured');
