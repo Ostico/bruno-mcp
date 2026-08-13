@@ -30,10 +30,6 @@ import { isRequestFile, isYamlRequestFile } from './request-extensions.js';
  * requests with one `seq` sort against each other arbitrarily, which is the
  * defect this function exists to remove, so it takes the maximum instead.
  *
- * A sibling that will not parse is skipped rather than fatal: failing to create
- * a request because an unrelated file in the folder is malformed would be a
- * worse trade than a `seq` that ignores it.
- *
  * Not atomic against a concurrent create in the same folder. The per-path lock
  * that guards writing is keyed on the new file's own path, so two creations of
  * *different* files in one folder do not exclude each other and can choose the
@@ -45,15 +41,34 @@ export async function nextRequestSequence(
   dirPath: string,
   collectionPath: string,
 ): Promise<number> {
+  const sequences = await requestSequencesIn(dirPath, collectionPath);
+  return sequences.reduce((highest, seq) => (seq > highest ? seq : highest), 0) + 1;
+}
+
+/**
+ * Every `seq` declared by the request files in one folder, in readdir order.
+ *
+ * A folder that cannot be listed yields none, so a caller ordering against it
+ * behaves as it would for an empty folder. A sibling that will not parse is
+ * skipped rather than fatal: failing an operation because an unrelated file in
+ * the folder is malformed would be a worse trade than a `seq` that ignores it.
+ *
+ * Folder metadata files are excluded — a `folder.bru` carries the folder's own
+ * sequence among its siblings, which is a different number in a different scale
+ * from the requests inside it.
+ */
+export async function requestSequencesIn(
+  dirPath: string,
+  collectionPath: string,
+): Promise<number[]> {
   let entries;
   try {
     entries = await readdir(dirPath, { withFileTypes: true });
   } catch {
-    // A folder that cannot be listed has no siblings to order against.
-    return 1;
+    return [];
   }
 
-  let highest = 0;
+  const sequences: number[] = [];
   for (const entry of entries) {
     if (!entry.isFile() || !isRequestFile(entry.name)) {
       continue;
@@ -64,13 +79,13 @@ export async function nextRequestSequence(
       continue;
     }
 
-    const seq = await readSequence(fullPath);
-    if (seq !== undefined && seq > highest) {
-      highest = seq;
+    const seq = await readRequestSequence(fullPath);
+    if (seq !== undefined) {
+      sequences.push(seq);
     }
   }
 
-  return highest + 1;
+  return sequences;
 }
 
 /**
@@ -85,7 +100,7 @@ export async function nextRequestSequence(
  * A `seq` of 0 or below needs no special case either: the running maximum starts
  * at 0, so it never wins the comparison.
  */
-async function readSequence(filePath: string): Promise<number | undefined> {
+export async function readRequestSequence(filePath: string): Promise<number | undefined> {
   try {
     const content = await readFile(filePath, 'utf-8');
     return isYamlRequestFile(filePath)

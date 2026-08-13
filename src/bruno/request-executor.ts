@@ -37,9 +37,10 @@ import { redactUrl, stripCredentialHeaders } from './request-redaction.js';
 import { encodeRequestUrl, shouldEncodeUrl, hasExplicitScheme } from './url-encoder.js';
 import { scriptTimeoutMs } from './script-timeout.js';
 import { buildFetchOptions } from './fetch-options.js';
-import { executeGrpcRequest } from './grpc-transport.js';
+import { buildMetadata, executeGrpcRequest } from './grpc-transport.js';
 import type { TransportOutcome } from './transport-verification.js';
-import { executeWebsocketRequest, type WebsocketRunOptions } from './ws-transport.js';
+import { runTransportPreRequest } from './transport-pre-request.js';
+import { executeWebsocketRequest, handshakeHeaders, type WebsocketRunOptions } from './ws-transport.js';
 import { writeRunReports } from './run-reports.js';
 
 // Re-exported from its new home so existing importers keep working. The move was
@@ -335,6 +336,27 @@ async function executeSingleRequest(
       + 'unauthenticated case is what you meant to test.',
   });
 
+  // A pre-request script that threw must stop a transport request the same way it
+  // stops an HTTP one: nothing is dialled, and the failure is reported as itself
+  // rather than as whatever the half-prepared request would have done. Shaped like
+  // the oauth2 refusal above — `status: 0`, no tests — because it is the same kind
+  // of event: a request that was never sent.
+  const transportScriptFailed = (
+    method: string,
+    url: string,
+    error: string,
+    warnings: string[],
+  ): RequestExecutionResult => ({
+    name: yaml.info.name,
+    method,
+    url: redactUrl(url),
+    status: 0,
+    duration_ms: 0,
+    tests: [],
+    error: `Pre-request script failed: ${error}. The request was not sent.`,
+    ...(warnings.length > 0 ? { warnings } : {}),
+  });
+
   // A kind with no http block cannot go down this pipeline: every step from the
   // URL onwards is HTTP-shaped. Each such kind either has a transport of its own
   // below, or is refused as a result rather than a throw — so one unsupported
@@ -345,21 +367,43 @@ async function executeSingleRequest(
       // The same variable and oauth2 preparation the HTTP path does, in the same
       // order, because the transport substitutes into a target and a message the
       // same way a URL and a body are substituted into.
+      const grpcBase = applyPreRequestVars(vars, yaml.vars);
       const grpcVars = variableStore
-        ? variableStore.merge(applyPreRequestVars(vars, yaml.vars))
-        : prepareVariables(applyPreRequestVars(vars, yaml.vars), new Map());
+        ? variableStore.merge(grpcBase)
+        : prepareVariables(grpcBase, new Map());
       const grpcOauth = await resolveOAuth2(yaml, rootChain, grpcVars, tokenCache);
+      const grpcUrl = substitute(yaml.grpc.url ?? '', grpcVars);
       if (grpcOauth.error) {
-        return oauth2Refused(grpcOauth.error, 'GRPC', substitute(yaml.grpc.url ?? '', grpcVars));
+        return oauth2Refused(grpcOauth.error, 'GRPC', grpcUrl);
       }
       const { timeoutMs, warning } = resolveTimeout(yaml.settings?.timeout);
+      // Before the transport, as on the HTTP path: this is the phase whose whole
+      // point is to run before substitution, so a variable it writes reaches this
+      // request's own placeholders through the vars it hands back.
+      const pre = await runTransportPreRequest({
+        yaml,
+        rootChain,
+        scriptRunner,
+        variableStore,
+        baseVars: grpcBase,
+        vars: grpcVars,
+        label: 'GRPC',
+        url: grpcUrl,
+        headers: buildMetadata(yaml, (value) => substitute(value, grpcVars)),
+      });
+      const grpcWarnings = warning ? [warning, ...pre.warnings] : pre.warnings;
+      if (pre.error) {
+        return transportScriptFailed('GRPC', pre.urlOverride ?? grpcUrl, pre.error, grpcWarnings);
+      }
       const outcome = await executeGrpcRequest({
         request: yaml,
-        vars: grpcVars,
+        vars: pre.vars,
         collectionRoot,
         rootChain,
         timeoutMs,
         oauth2Token: grpcOauth.token,
+        urlOverride: pre.urlOverride,
+        metadataOverrides: pre.headerOverrides,
       });
       return verifyTransport({
         outcome,
@@ -367,25 +411,46 @@ async function executeSingleRequest(
         rootChain,
         scriptRunner,
         variableStore,
-        baseVars: grpcVars,
-        extraWarnings: warning ? [warning] : [],
+        // The post-script set, so a post-response script and an assertion read the
+        // variables a pre-request script wrote rather than the stale ones.
+        baseVars: pre.vars,
+        extraWarnings: grpcWarnings,
       });
     }
 
     if (yaml.websocket) {
+      const wsBase = applyPreRequestVars(vars, yaml.vars);
       const wsVars = variableStore
-        ? variableStore.merge(applyPreRequestVars(vars, yaml.vars))
-        : prepareVariables(applyPreRequestVars(vars, yaml.vars), new Map());
+        ? variableStore.merge(wsBase)
+        : prepareVariables(wsBase, new Map());
       const wsOauth = await resolveOAuth2(yaml, rootChain, wsVars, tokenCache);
+      const wsUrl = substitute(yaml.websocket.url ?? '', wsVars);
       if (wsOauth.error) {
-        return oauth2Refused(wsOauth.error, 'WS', substitute(yaml.websocket.url ?? '', wsVars));
+        return oauth2Refused(wsOauth.error, 'WS', wsUrl);
+      }
+      const pre = await runTransportPreRequest({
+        yaml,
+        rootChain,
+        scriptRunner,
+        variableStore,
+        baseVars: wsBase,
+        vars: wsVars,
+        label: 'WS',
+        url: wsUrl,
+        // No auth headers: they are applied inside the transport, after this.
+        headers: handshakeHeaders(yaml, (value) => substitute(value, wsVars), {}),
+      });
+      if (pre.error) {
+        return transportScriptFailed('WS', pre.urlOverride ?? wsUrl, pre.error, pre.warnings);
       }
       const outcome = await executeWebsocketRequest({
         request: yaml,
-        vars: wsVars,
+        vars: pre.vars,
         rootChain,
         oauth2Token: wsOauth.token,
         options: websocketOptions,
+        urlOverride: pre.urlOverride,
+        headerOverrides: pre.headerOverrides,
       });
       return verifyTransport({
         outcome,
@@ -393,8 +458,8 @@ async function executeSingleRequest(
         rootChain,
         scriptRunner,
         variableStore,
-        baseVars: wsVars,
-        extraWarnings: [],
+        baseVars: pre.vars,
+        extraWarnings: pre.warnings,
       });
     }
 
@@ -489,7 +554,19 @@ async function executeSingleRequest(
       // baseVars, not vars: re-substituting from the environment alone would drop
       // every vars:pre-request entry the moment a pre-request script wrote a
       // variable, which is exactly when this path runs.
-      const rebuilt = await buildFetchOptions(yaml, variableStore.merge(baseVars), collectionRoot, rootChain);
+      //
+      // `oauth.token`, for the same reason: the token was fetched before this
+      // script ran and is not part of any template, so a rebuild that omits it
+      // rebuilds the request as nobody. That failure is silent — the request
+      // still goes out, and against an endpoint permitting anonymous access it
+      // passes, proving only that anonymous access works.
+      const rebuilt = await buildFetchOptions(
+        yaml,
+        variableStore.merge(baseVars),
+        collectionRoot,
+        rootChain,
+        oauth.token,
+      );
       url = rebuilt.url;
       options = rebuilt.options;
       authWarnings = rebuilt.warnings;

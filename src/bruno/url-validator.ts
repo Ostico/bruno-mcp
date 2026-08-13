@@ -867,10 +867,19 @@ export function allowlistEntryCount(): number {
  */
 export function ssrfRemediation(): string {
   const count = allowlistEntryCount();
+  // The spelling sentence is here rather than left implicit because its absence
+  // reads as a bug: a caller who reaches a service at http://localhost and is
+  // then refused at http://127.0.0.1 concludes the guard is inconsistent, when
+  // in fact the operator allowlisted one spelling and not the other. An
+  // allowlisted hostname is deliberately never resolved — the operator vouched
+  // for the name, not for whatever it points at today.
   const preamble =
     'Targets that resolve to private, loopback, link-local or otherwise reserved ' +
     'addresses are refused unless the server operator allowlists them via the ' +
-    'BRUNO_SSRF_ALLOWLIST environment variable (comma-separated hostnames, IPs or CIDRs).';
+    'BRUNO_SSRF_ALLOWLIST environment variable (comma-separated hostnames, IPs or CIDRs). ' +
+    "An entry matches a target's exact spelling: an allowlisted hostname is never resolved, " +
+    'so it does not cover the addresses behind it, and an allowlisted address does not cover ' +
+    'a name that resolves to it. That is why http://localhost and http://127.0.0.1 can differ.';
 
   if (count === 0) {
     return (

@@ -9,11 +9,14 @@ import path from 'path';
 import { readFile, unlink } from 'node:fs/promises';
 import {
   CreateRequestInput,
+  UpdateRequestInput,
   HttpMethod,
   AuthType,
 } from '../bruno/types.js';
 import { createReader } from '../bruno/format-factory.js';
+import { detectFormat, findCollectionRoot, findCollectionRootFromDirectory } from '../bruno/format-detector.js';
 import { toRequestView } from '../bruno/request-view.js';
+import { moveRequestFile } from '../bruno/request-move.js';
 import { validateToolPath, resolveRequestFile } from './tool-path.js';
 import { collectionDialectWarnings } from '../bruno/request-extensions.js';
 import { declaredFormat } from '../bruno/request-discovery.js';
@@ -136,10 +139,17 @@ export function registerModifyRequestTool(ctx: ToolContext): void {
     'modify_request',
     {
       title: 'Modify Request',
-      description: 'Update an existing Bruno request file with partial-merge semantics. Only provided fields are updated; all other fields are preserved. Supports multipart/form-data with file uploads and per-part contentType. Inline scripts REPLACE the existing script of the same type by default (idempotent — repeated calls do not accumulate duplicate blocks); pass scriptMode:"append" to concatenate instead. Use remove_script to clear a script entirely.',
+      description: 'Update an existing Bruno request file with partial-merge semantics. Only provided fields are updated; all other fields are preserved. Supports multipart/form-data with file uploads and per-part contentType. Inline scripts REPLACE the existing script of the same type by default (idempotent — repeated calls do not accumulate duplicate blocks); pass scriptMode:"append" to concatenate instead. Use remove_script to clear a script entirely. RENAMING: name and filename are independent, as they are in Bruno itself — name changes the request\'s name inside the file and filename moves the file. Pass both to keep them in step, and read the new path back from the response.',
       inputSchema: {
         filePath: z.string().min(1, 'File path is required').describe('Absolute path to the .yml or .bru request file to modify. Get from list_requests or get_collection_stats.'),
-        name: z.string().optional(),
+        name: z.string().optional()
+          .describe('The request\'s name inside the file. Does NOT rename the file — pass filename for that.'),
+        filename: z.string().optional()
+          .describe('Renames the file, keeping it in its own folder. Basename only, no path '
+            + 'separators. The extension is optional and must match the collection\'s format if '
+            + 'given, since a collection carries one format only. Refused if another file of that '
+            + 'name already exists. The new path comes back in the response; use it as filePath '
+            + 'from then on, because the old one is gone.'),
         method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']).optional(),
         url: z.string().optional(),
         headers: z.record(z.string()).optional(),
@@ -194,8 +204,9 @@ export function registerModifyRequestTool(ctx: ToolContext): void {
         }
 
         // 5. Build partial update input from provided fields
-        const updates: Partial<CreateRequestInput> = {};
+        const updates: UpdateRequestInput = {};
         if (args.name !== undefined) updates.name = args.name;
+        if (args.filename !== undefined) updates.filename = args.filename;
         if (args.method !== undefined) updates.method = args.method as HttpMethod;
         if (args.url !== undefined) updates.url = args.url;
         if (args.headers !== undefined) updates.headers = args.headers;
@@ -230,12 +241,22 @@ export function registerModifyRequestTool(ctx: ToolContext): void {
           // file was modified, and the caller still needs to know Bruno will not
           // see it. Appended to the message the caller already reads, because a
           // second content block is easy to drop.
+          // The path is read back rather than rebuilt from `filename`, because
+          // the builder normalises the extension and may have left the file
+          // where it was. Both halves of the test are needed: a caller that
+          // asked for no rename cannot have had one, and a case-only rename
+          // that resolved to the same path did not move anything.
+          const newPath = result.path ?? args.filePath;
           return {
             content: [
               {
                 type: 'text',
                 text: [
-                  `Successfully modified request "${path.basename(args.filePath)}"`,
+                  args.filename === undefined || newPath === args.filePath
+                    ? `Successfully modified request "${path.basename(args.filePath)}"`
+                    : `Successfully modified request "${path.basename(args.filePath)}" and `
+                      + `renamed the file to "${path.basename(newPath)}". It now lives at `
+                      + `${newPath}; pass that as filePath from now on, because the old path is gone.`,
                   ...resolvedFile.warnings,
                 ].join('\n\n')
               }
@@ -261,6 +282,117 @@ export function registerModifyRequestTool(ctx: ToolContext): void {
             }
           ],
           isError: true
+        };
+      }
+    }
+  );
+}
+
+export function registerMoveRequestTool(ctx: ToolContext): void {
+  ctx.server.registerTool(
+    'move_request',
+    {
+      title: 'Move Request',
+      description: 'Relocate a request file to another folder, or to another collection entirely. '
+        + 'Pass copy:true to duplicate it instead of moving it. The bytes are moved verbatim and '
+        + 'nothing is parsed and rewritten, so no part of the request can be lost on the way — '
+        + 'which also means seq arrives unchanged and may tie with a request already there; that '
+        + 'is reported, and Bruno breaks such a tie by filename. The file keeps its name: use '
+        + 'modify_request with filename to rename it. The new path comes back in the response.',
+      inputSchema: {
+        filePath: z.string().min(1, 'File path is required')
+          .describe('Absolute path to the .yml or .bru request file to move. Get from list_requests or get_collection_stats.'),
+        targetCollectionPath: z.string().optional()
+          .describe('Absolute path to the collection it should land in. Omit to move within the '
+            + "request's own collection."),
+        targetFolder: z.string().optional()
+          .describe('Folder inside the target collection, relative to its root, e.g. "auth/login". '
+            + 'Omit for the collection root. Created if it does not exist.'),
+        copy: z.boolean().optional()
+          .describe('Leave the original in place and write a duplicate at the destination. Since '
+            + 'the file keeps its name, a copy needs a different folder or collection.'),
+      }
+    },
+    async (args) => {
+      try {
+        const resolved = await resolveRequestFile(args.filePath, 'filePath');
+        if (!resolved.ok) {
+          return {
+            content: [{ type: 'text', text: resolved.message }],
+            isError: true,
+          };
+        }
+
+        // One expression for both cases so the "not a collection" answer has a
+        // single reachable check: a targetCollectionPath with no manifest and a
+        // source whose root has gone away both land here.
+        let targetRoot: string | null;
+        if (args.targetCollectionPath !== undefined) {
+          const targetCheck = validateToolPath(args.targetCollectionPath);
+          if (!targetCheck.valid) {
+            return {
+              content: [{ type: 'text', text: `Invalid targetCollectionPath: ${targetCheck.reason}` }],
+              isError: true,
+            };
+          }
+          // From the directory, not from a file inside it: the marker usually
+          // sits in the very directory the caller named.
+          targetRoot = await findCollectionRootFromDirectory(targetCheck.resolved);
+        } else {
+          targetRoot = await findCollectionRoot(args.filePath);
+        }
+        if (targetRoot === null) {
+          return {
+            content: [{
+              type: 'text',
+              text: 'Could not determine the target collection: no opencollection.yml or '
+                + 'bruno.json found within 10 parent directories. Pass targetCollectionPath as '
+                + "the collection's root directory.",
+            }],
+            isError: true,
+          };
+        }
+
+        const result = await moveRequestFile({
+          filePath: args.filePath,
+          targetCollectionPath: targetRoot,
+          targetFolder: args.targetFolder,
+          copy: args.copy,
+        });
+
+        if (!result.success || result.path === undefined) {
+          return {
+            content: [{ type: 'text', text: `Failed to move request: ${result.error}` }],
+            isError: true,
+          };
+        }
+
+        // Read against the collection it landed in, not the one it left: moving a
+        // .yml request into a bruno.json collection is the very state this
+        // warning exists for. Reported and not refused, as everywhere else — the
+        // file's own extension stays authoritative, and the repair is a rename.
+        const detection = await detectFormat(targetRoot);
+        const arrivalWarnings = collectionDialectWarnings([result.path], detection.format);
+
+        return {
+          content: [{
+            type: 'text',
+            text: [
+              `${args.copy === true ? 'Copied' : 'Moved'} request `
+                + `"${path.basename(args.filePath)}" to ${result.path}`
+                + (args.copy === true ? '.' : '; pass that as filePath from now on.'),
+              ...result.warnings,
+              ...arrivalWarnings,
+            ].join('\n\n'),
+          }],
+        };
+      } catch (error) {
+        return {
+          content: [{
+            type: 'text',
+            text: `❌ Error moving request: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          }],
+          isError: true,
         };
       }
     }
