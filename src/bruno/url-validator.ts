@@ -302,9 +302,19 @@ export async function validateUrl(
     return { valid: true, normalisedUrl };
   }
 
-  // 4. Check hostname denylist (localhost, *.local, cloud metadata)
+  // 4. Check hostname denylist (localhost, *.local, cloud metadata).
+  //
+  // A denylisted name is not refused outright when the operator has allowlisted
+  // addresses: `localhost` and `127.0.0.1` name the same listener, and refusing
+  // the name while permitting the address made the same target reachable or not
+  // depending on spelling. The name is permitted only when every address it
+  // resolves to is itself allowlisted, which is exactly what the operator
+  // vouched for; anything else keeps the original refusal, including a
+  // resolution that fails, since a DNS message would hide why the name was
+  // denied. Deferring costs a lookup, so it is skipped when no address entry
+  // could permit the name anyway.
   const hostnameResult = checkHostname(hostname);
-  if (hostnameResult) {
+  if (hostnameResult && !hasAddressEntries(allowlist)) {
     return { ...hostnameResult, allowlistOverridable: true };
   }
 
@@ -317,6 +327,9 @@ export async function validateUrl(
       const records = await lookupWithTimeout(hostname);
       ips = records.map((r) => r.address);
     } catch (err) {
+      if (hostnameResult) {
+        return { ...hostnameResult, allowlistOverridable: true };
+      }
       if (err instanceof DnsTimeoutError) {
         return {
           valid: false,
@@ -326,8 +339,21 @@ export async function validateUrl(
       return { valid: false, reason: `DNS resolution failed for hostname: ${hostname}` };
     }
     if (ips.length === 0) {
+      if (hostnameResult) {
+        return { ...hostnameResult, allowlistOverridable: true };
+      }
       return { valid: false, reason: `DNS resolution returned no addresses for hostname: ${hostname}` };
     }
+  }
+
+  if (hostnameResult) {
+    const everyAddressVouchedFor = ips.every((ip) => ipAllowed(allowlist, ip));
+    if (!everyAddressVouchedFor) {
+      return { ...hostnameResult, allowlistOverridable: true };
+    }
+    // `addresses` carries the resolved set to the caller, which pins the
+    // connection to it; a name permitted here must not skip that.
+    return { valid: true, addresses: ips, normalisedUrl };
   }
 
   // 6. Check every resolved IP against the SSRF denylist. An IP explicitly
@@ -369,6 +395,18 @@ export async function validateUrl(
 // ---------------------------------------------------------------------------
 // Hostname checks
 // ---------------------------------------------------------------------------
+
+/**
+ * Whether the allowlist holds any address-shaped entry. Only those can permit a
+ * denylisted hostname, since a hostname entry is matched against the spelling in
+ * the URL and a denylisted name that matched one never reached this check.
+ */
+function hasAddressEntries(allowlist: Allowlist): boolean {
+  return allowlist.ipv4.size > 0
+    || allowlist.ipv6.size > 0
+    || allowlist.cidr4.length > 0
+    || allowlist.cidr6.length > 0;
+}
 
 function checkHostname(hostname: string): UrlValidationResult | null {
   // Exact match: localhost
@@ -853,7 +891,10 @@ export function ssrfRemediation(): string {
 
   return (
     `${preamble} ${count} ${count === 1 ? 'entry is' : 'entries are'} configured; none match ` +
-    'this target. If the service is also reachable at an allowlisted hostname or address, use ' +
+    'this target. A hostname entry matches the spelling in the URL, and an address entry ' +
+    'matches the address the URL resolves to, so a name and its address are separate entries ' +
+    '— except that a normally-blocked name is permitted when every address it resolves to is ' +
+    'allowlisted. If the service is also reachable at an allowlisted hostname or address, use ' +
     'that. Otherwise report to the user that an entry must be added.'
   );
 }
