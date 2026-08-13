@@ -504,6 +504,29 @@ A subprotocol is authored as a `Sec-WebSocket-Protocol` header on the request, c
 
 Each transcript entry says what kind of frame it was — `text`, `binary`, `ping`, `pong` or `close` — carries the authored `title` of a message the session sent, and, on a close frame, the `close_code` the peer gave, with its reason as that entry's payload: `1000` is an ordinary goodbye, `1006` a peer that vanished without one, `1008` a refusal, `1011` a server error. Control frames do not count toward `maxMessages`, or a peer that pings once a second would end a session by itself and report `count` for one that received no answer. A binary frame's payload is base64 and `bytes` is the true wire size for every kind. A post-response script sees the same fields, because the transcript is what `res.body` is on this transport.
 
+### Asserting on a gRPC or WebSocket result
+
+Both transports run post-response and test scripts, and `res` is shaped so there is one thing to learn rather than two. What differs from HTTP is worth stating outright, because guessing it wrong makes a test that cannot fail.
+
+On a **WebSocket** request:
+
+- `res.getBody()` is the transcript — the same array the result carries, handed to the script as a structure rather than as JSON text. `res.rawBody` keeps the serialised form.
+- `res.getStatus()` is always `0`. A session has no status, and inventing one would be worse than having none. The outcome is in `res.statusText`, which carries the stop reason (`count`, `timeout`, `bytes`, `closed` or `error`).
+- So a WebSocket assertion reads frames and `statusText`. A test written against `res.getStatus()` asserts on a constant.
+
+```js
+test("the server answered our subscribe", function() {
+  const inbound = res.getBody().filter(f => f.direction === "in" && f.type === "text");
+  expect(inbound.length).to.be.at.least(1);
+  expect(inbound[0].payload).to.contain('"subscribed"');
+  expect(res.statusText).to.equal("count");
+});
+```
+
+**The payloads a script sees are always the real ones, whatever `includePayloads` says.** That flag gates the transcript in the *result*, not the one in `res`, because outbound frames are recorded after `{{var}}` interpolation and a result returned by default must not carry every secret you passed in. This is the split HTTP already has — `res.body` always holds the full body while `response_body` is gated by `includeResponseBody`. It means `includePayloads: false` together with content assertions is the intended shape for CI, not a workaround: the assertions check the payloads, and what comes back holds only direction, timing and sizes.
+
+On a **gRPC** request `res` is closer to HTTP: `res.getStatus()` is the gRPC status code (`0` is OK), `res.statusText` is the server's own `details` when it supplied any and the code's canonical name otherwise, `res.getBody()` is the parsed response message, and the response trailers arrive as the headers.
+
 `includePayloads` is off by default as a security property, not a preference: outbound frames are recorded **after** `{{var}}` substitution, so recording them by default would write every secret passed in `variables` into a result that is returned by default. `engineIoKeepalive` is off for a related reason — it puts a frame on the wire the request did not author — and even when on it replies only after an OPEN frame has actually been seen.
 
 A WebSocket request can now be authored rather than copied. `create_request` takes `kind: "websocket"` with a url and `websocket.messages`, and refuses the fields that transport has no place for: an HTTP method, a body, query parameters, path params. Each message carries `content` and, optionally, a `title` and a `type` of `text` or `binary`; an untitled message is named `message 1`, `message 2` by position, exactly as Bruno names one. Headers, auth, `assert`, `vars`, `settings` and scripts work as they do for an HTTP request, and the written file is byte-identical to what Bruno writes for the same request in both formats — proven against upstream's own writer, not against a round-trip through our parser.

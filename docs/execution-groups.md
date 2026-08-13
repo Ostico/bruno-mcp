@@ -180,6 +180,18 @@ slot each, so a ceiling below the width of your fan-out serialises them — quie
 nothing about the result says the cap was the reason. When you are reproducing a race
 between scripted requests, give `maxConcurrency` at least as many slots as you have racers.
 
+### Concurrency across separate calls
+
+Everything above is about one call. Simultaneity *between* calls is not something this
+server promises: two `run_collection` calls issued together may overlap, or may serialise,
+and nothing in either result says which happened. Runs that were meant to be simultaneous
+have been observed starting more than twenty seconds apart, each passing its own
+assertions — the kind of failure that leaves a green suite proving nothing.
+
+So a test that depends on two things happening at once must be **one call** with a parallel
+group, where the ordering is part of the contract. Reach for several concurrent calls only
+when you do not care which order they run in.
+
 ## Failure semantics
 
 The boundary that isolates state also isolates failure.
