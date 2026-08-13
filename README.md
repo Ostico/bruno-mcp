@@ -93,7 +93,7 @@ On the fork parent specifically, since this project owes it its existence: [maca
 
 **Authoring**
 
-- **Collections** — create and organise them, or discover the ones Bruno already knows from its `workspace.yml`
+- **Collections** — create and organise them, or discover the ones Bruno already knows from its `workspace.yml`. A collection this server creates is written to disk and not registered in that file, so `list_collections` will not show it and the Bruno GUI will not list it until someone opens it there once — everything else takes the path directly
 - **Requests** — every HTTP method, with headers, query and path params, bodies, auth, assertions, vars and settings
 - **Read back** — `read_request` and `read_environment` return structured JSON, identical for `.bru` and `.yml`, so an agent can inspect before it edits
 - **Partial-merge edits** — `modify_request` changes only the fields you pass and leaves the rest of the file alone
@@ -215,11 +215,12 @@ See [INTEGRATION.md](./INTEGRATION.md) for worked examples, Docker, and troubles
 
 | Tool | What it does |
 |---|---|
-| `create_collection` | New collection. `format: "yaml"` (default) or `"bru"` |
+| `create_collection` | New collection. `format: "yaml"` (default) or `"bru"`. On disk only — not registered in `workspace.yml` |
 | `list_collections` | Find collections from Bruno's `workspace.yml` |
 | `get_collection_stats` | Counts by method, folders, environments, request list |
 | `create_request` | Write a request: method, url, headers, query, body, auth, scripts, settings. `kind: "websocket"` or `kind: "grpc"` for those transports |
-| `modify_request` | Partial-merge edit — only the fields you pass change |
+| `modify_request` | Partial-merge edit — only the fields you pass change. `filename` renames the file |
+| `move_request` | Move or copy a request to another folder or collection |
 | `read_request` | Read one request back as JSON, same shape for `.bru` and `.yml` |
 | `list_requests` | Every request file in the collection, as absolute paths |
 | `delete_request` | Delete a request file. Needs `confirm: true` |
@@ -254,9 +255,19 @@ Notable options:
 - `scripts` — inline `pre-request`, `post-response`, `tests` (no separate `add_test_script` call needed)
 - `settings.timeout` — script and request timeout in ms
 
+`name` and `filename` are independent, as they are in Bruno itself: `name` changes the request's name inside the file and `filename` moves the file, so pass both to keep them in step. A `filename` is a basename in the request's own folder, its extension is optional and must match the collection's format if given, and a name already taken by another file is refused. The path it moved to comes back in the response — use it as `filePath` from then on.
+
 `modify_request` **replaces** a script of the same type by default, so repeating a call is idempotent. Pass `scriptMode: "append"` to concatenate. `add_test_script` appends by default, being an add.
 
 In `.yml` collections `post-response` and `tests` share Bruno's single `after-response` slot, so replacing either overwrites both.
+
+### Moving requests
+
+`move_request` relocates a request file — into another folder, or into another collection with `targetCollectionPath`. Pass `copy: true` to duplicate it instead.
+
+The bytes are moved verbatim, never parsed and rewritten, so nothing a request declares can be lost on the way. Two consequences follow from that. The file keeps its name, so a copy needs a different folder or collection; renaming is `modify_request`. And `seq` arrives unchanged, so the request can land next to a sibling claiming the same number — that is reported rather than repaired, because renumbering means rewriting the file. Bruno breaks such a tie by filename, so the order is defined either way.
+
+A missing target folder is created, and reported: a folder with no settings file carries no folder-level auth, headers or scripts.
 
 ## Running
 
@@ -521,6 +532,29 @@ A subprotocol is authored as a `Sec-WebSocket-Protocol` header on the request, c
 
 Each transcript entry says what kind of frame it was — `text`, `binary`, `ping`, `pong` or `close` — carries the authored `title` of a message the session sent, and, on a close frame, the `close_code` the peer gave, with its reason as that entry's payload: `1000` is an ordinary goodbye, `1006` a peer that vanished without one, `1008` a refusal, `1011` a server error. Control frames do not count toward `maxMessages`, or a peer that pings once a second would end a session by itself and report `count` for one that received no answer. A binary frame's payload is base64 and `bytes` is the true wire size for every kind. A post-response script sees the same fields, because the transcript is what `res.body` is on this transport.
 
+### Asserting on a gRPC or WebSocket result
+
+Both transports run post-response and test scripts, and `res` is shaped so there is one thing to learn rather than two. What differs from HTTP is worth stating outright, because guessing it wrong makes a test that cannot fail.
+
+On a **WebSocket** request:
+
+- `res.getBody()` is the transcript — the same array the result carries, handed to the script as a structure rather than as JSON text. `res.rawBody` keeps the serialised form.
+- `res.getStatus()` is always `0`. A session has no status, and inventing one would be worse than having none. The outcome is in `res.statusText`, which carries the stop reason (`count`, `timeout`, `bytes`, `closed` or `error`).
+- So a WebSocket assertion reads frames and `statusText`. A test written against `res.getStatus()` asserts on a constant.
+
+```js
+test("the server answered our subscribe", function() {
+  const inbound = res.getBody().filter(f => f.direction === "in" && f.type === "text");
+  expect(inbound.length).to.be.at.least(1);
+  expect(inbound[0].payload).to.contain('"subscribed"');
+  expect(res.statusText).to.equal("count");
+});
+```
+
+**The payloads a script sees are always the real ones, whatever `includePayloads` says.** That flag gates the transcript in the *result*, not the one in `res`, because outbound frames are recorded after `{{var}}` interpolation and a result returned by default must not carry every secret you passed in. This is the split HTTP already has — `res.body` always holds the full body while `response_body` is gated by `includeResponseBody`. It means `includePayloads: false` together with content assertions is the intended shape for CI, not a workaround: the assertions check the payloads, and what comes back holds only direction, timing and sizes.
+
+On a **gRPC** request `res` is closer to HTTP: `res.getStatus()` is the gRPC status code (`0` is OK), `res.statusText` is the server's own `details` when it supplied any and the code's canonical name otherwise, `res.getBody()` is the parsed response message, and the response trailers arrive as the headers.
+
 `includePayloads` is off by default as a security property, not a preference: outbound frames are recorded **after** `{{var}}` substitution, so recording them by default would write every secret passed in `variables` into a result that is returned by default. `engineIoKeepalive` is off for a related reason — it puts a frame on the wire the request did not author — and even when on it replies only after an OPEN frame has actually been seen.
 
 A WebSocket request can now be authored rather than copied. `create_request` takes `kind: "websocket"` with a url and `websocket.messages`, and refuses the fields that transport has no place for: an HTTP method, a body, query parameters, path params. Each message carries `content` and, optionally, a `title` and a `type` of `text` or `binary`; an untitled message is named `message 1`, `message 2` by position, exactly as Bruno names one. Headers, auth, `assert`, `vars`, `settings` and scripts work as they do for an HTTP request, and the written file is byte-identical to what Bruno writes for the same request in both formats — proven against upstream's own writer, not against a round-trip through our parser.
@@ -534,6 +568,8 @@ Headers become **metadata**, which is that transport's only header surface — a
 **`modify_request` edits both transports.** A url, headers, auth, `assert`, `vars`, `settings`, `name` and `sequence` all apply, as does the nested `websocket` or `grpc` object — its messages, and for gRPC the `method`, `protoPath` and `methodType`. Each field is written where that transport keeps it, so a gRPC header edit lands in `metadata` and never writes a `headers` block. Everything the edit does not name comes back byte-identical, which matters more here than for HTTP: an edit regenerates the whole file from a parsed model, so anything the model does not carry is gone without a message.
 
 What is still refused is what the transport genuinely has no place for — an HTTP method, a body, query parameters, path params, and the other transport's object — by name, leaving the file byte-unchanged. Refusing url, headers and auth as well used to be the behaviour, which meant a WebSocket request's target could not be changed for the life of the file.
+
+**A pre-request script runs on both transports**, and reaches what each of them actually has. `bru.setVar` is honoured and the value reaches that same request's own `{{placeholders}}`, so a script can compute a room name, a topic or a target and then dial it. `req.setUrl` replaces the target. `req.setHeader` writes the transport's own header surface: a WebSocket's handshake headers, or a gRPC call's metadata — which is the same surface, since grpc-js puts metadata on the wire as HTTP/2 headers. A script that throws stops the request before anything is dialled, and the failure is reported as itself. `req.getUrl()` and `req.getHeaders()` read the substituted target and the request's own headers; credentials the transport computes are not among them, because auth is applied after the script. The one thing not honoured is `req.setBody()`, which warns instead: neither transport sends a single body — a WebSocket session sends a list of messages and a unary gRPC call sends one typed message — so there is nothing for one value to replace, and guessing would put bytes on the wire the file never authored.
 
 Both transports are loaded lazily, and that is enforced rather than asserted: a test records every module the real server resolves and fails if an HTTP-only run names `@grpc/grpc-js` or `ws`. Measured, an HTTP-only run loads `undici` and neither of them.
 
@@ -572,6 +608,8 @@ Operator escape hatches, all off by default:
 | `BRUNO_INSECURE_TLS_HOSTS` | Hosts allowed to skip certificate verification |
 | `BRUNO_DNS_TIMEOUT_MS` | DNS resolution timeout |
 | `BRUNO_WORKSPACE_PATH` | Where to find Bruno's `workspace.yml` |
+
+An allowlist entry matches a target's **exact spelling**. An allowlisted hostname is never resolved — the operator vouched for the name, not for whatever it points at today — so it does not cover the addresses behind it, and an allowlisted address does not cover a name that resolves to it. `localhost` and `127.0.0.1` are therefore two entries, and allowing one while a request uses the other looks like an inconsistent guard when it is a missing entry. Refusals say so.
 
 This constrains what `run_collection` will fetch. An agent with shell access can reach the network anyway, so treat it as one layer, not a boundary.
 

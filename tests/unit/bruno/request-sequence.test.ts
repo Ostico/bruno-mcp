@@ -121,7 +121,7 @@ describe('nextRequestSequence', () => {
   it('ignores a sequence that is not a usable number', async () => {
     // `seq: abc` comes back from the parser as `undefined`, not as NaN or as the
     // string — checked against both dialects rather than guessed, which is why
-    // there is no revalidation in readSequence.
+    // there is no revalidation in readRequestSequence.
     fsWith('/c', {
       'junk.bru': 'meta {\n  name: R\n  type: http\n  seq: abc\n}\n\nget {\n  url: https://x\n}\n',
       'a.bru': bru(6),

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- **How to assert on a gRPC or WebSocket result.** `res.getBody()` on a WebSocket request
+  is the transcript array, and `res.getStatus()` is always `0` — a test written against the
+  status asserts on a constant and cannot fail. The outcome is `res.statusText`, carrying
+  the stop reason. Said once at the end of a paragraph about close codes before; now its own
+  section with an example, and stated in the `run_collection` description where a caller
+  writing assertions will meet it. gRPC's own shape is spelled out alongside.
+- **`includePayloads` gates the result, not the script.** A test script always sees the real
+  payloads, exactly as `res.body` always carries a full HTTP body while `response_body` is
+  gated by `includeResponseBody`. That makes `includePayloads: false` plus content
+  assertions the intended shape for CI — the assertions check the frames, and what comes
+  back holds only direction, timing and sizes. Previously discoverable only from the source.
+- **Simultaneity across separate `run_collection` calls is not promised.** Calls issued
+  together may overlap or may serialise; runs meant to be concurrent have been seen starting
+  more than twenty seconds apart, each passing its own assertions. A test that depends on two
+  things happening at once must be one call with a parallel group.
+
 ### Added
 
 - **`atob` and `btoa` inside the script sandbox.** A fresh V8 context carries the ECMAScript
@@ -18,6 +36,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   realm rather than as host functions placed on the context, because a host function's
   `constructor` is a live route back to the host global. `Buffer` remains absent by design; a
   bare reference throws and names itself.
+
+- **`move_request` relocates a request, within a collection or between two of them.** There
+  was no way to reorganise a collection through this server: a request could be created,
+  modified, read and deleted, but never moved, so the only route was delete-and-recreate —
+  which loses anything the recreating call did not restate. The new tool moves the file's
+  bytes verbatim rather than parsing and regenerating them, so nothing a request declares
+  can be lost on the way, including the `.bru` blocks this server does not model. It takes
+  `targetFolder` for a folder inside the collection and `targetCollectionPath` to move
+  between collections, creates a missing target folder and says so, and takes `copy: true`
+  to duplicate instead of move. Two things it deliberately does not do: it does not rename
+  the file, which is `modify_request`'s job, and it does not renumber `seq` — a request
+  landing on a sequence a sibling already claims is reported, because rewriting the file to
+  change one number is the round-trip this avoids, and Bruno breaks such a tie by filename.
+  A request that lands in a collection whose dialect does not read its extension is warned
+  about, on the same terms as everywhere else.
+
+- **`modify_request` can rename a request's file.** Renaming a request only ever changed the
+  name inside the file, which is what Bruno's own rename-name path does — but Bruno pairs it
+  with a second path that moves the file, and this server had no equivalent, so a renamed
+  request kept a filename contradicting it with no way to correct it. Since every other tool
+  addresses a request by path, that drift was actively misleading. `filename` now moves the
+  file, and stays independent of `name` the way both are in Bruno: pass both to keep them in
+  step. It takes a basename in the request's own folder, appends the collection's extension
+  when none is given and refuses the other dialect's, refuses the characters and reserved
+  names upstream's filename validator refuses, and refuses a target another file already
+  holds — while still allowing a rename that only changes letter case. The response reports
+  the path the file moved to.
+
 - **A guide to execution groups and parallelism**, at `docs/execution-groups.md` and linked
   from the README. It documents what a group owns and that nothing crosses its boundary, the
   two independent `parallel` flags and why a group never inherits the run's, ordering within
@@ -27,6 +73,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   needs to predict what a call will do.
 
 ### Changed
+
+- **An SSRF refusal now says that an allowlist entry matches one spelling of a target.** An
+  allowlisted hostname is deliberately never resolved — the operator vouched for the name, not
+  for whatever it points at today — so it does not cover the addresses behind it, and an
+  allowlisted address does not cover a name that resolves to it. Nothing said so, which made
+  the consequence look like a defect: a caller that reached a service at `http://localhost` and
+  was then refused at `http://127.0.0.1` read the guard as inconsistent between name and
+  address, rather than as one allowlist entry present and the other missing. The refusal and
+  the README now state the rule, and name that pair as the case it explains.
 
 - **A lost MCP registry listing can be republished without cutting a release.** The release
   workflow now takes a manual run with a version to list, which runs the registry job on
@@ -38,6 +93,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `release-workflow.test.ts` holds both halves of that in place.
 
 ### Fixed
+
+- **`create_collection` said nothing about the collection being invisible to
+  `list_collections`.** `workspace.yml` is Bruno's own registry; this server reads it and
+  does not write it, so a collection created here exists on disk, works with every other
+  tool by path, and appears in neither `list_collections` nor the Bruno GUI's sidebar until
+  someone opens it there once. The success message and the tool description now say so, and
+  say what to do instead — pass the returned path as `collectionPath`. Nothing about where
+  the collection is written has changed; what changed is that the caller is told, at the
+  moment it decides what to do next, rather than discovering it from an empty list.
+
+- **A pre-request script did not run at all on a gRPC or WebSocket request.** Both transports
+  are executed by a branch that returned before the pre-request phase began, so on either of
+  them `bru.setVar` wrote nothing, `req.setUrl` and `req.setHeader` changed nothing, and a
+  script that threw did not stop the request. Post-response and test scripts always did run,
+  which is what hid it: the missing phase was the one whose whole purpose is to happen before
+  substitution, so a script that computed a room name or a topic and then dialled it silently
+  dialled the template instead. A script's variable now reaches that request's own
+  `{{placeholders}}`, `req.setUrl` replaces the target, `req.setHeader` writes the transport's
+  own header surface — handshake headers for WebSocket, metadata for gRPC — and a script that
+  throws stops the request before anything is dialled. `req.setBody` is refused with a warning
+  rather than guessed at: neither transport sends a single body, so there is no one value for
+  it to replace.
+
+- **An oauth2 request sent no credential when its own pre-request script set a variable.**
+  Writing any variable from a pre-request script rebuilds the request from its original
+  templates, so the new value can reach that request's own `{{placeholders}}`. The rebuild
+  was not handed the access token that had already been fetched, and the token is not part
+  of any template — so the `Authorization` header vanished and the request went out
+  unauthenticated. It was not refused and not warned about, which made it the failure the
+  refusal path exists to prevent: against an endpoint permitting anonymous access it passes,
+  proving only that anonymous access works. A collection whose login writes a variable — the
+  ordinary shape — could report a green authorization suite having never presented a
+  credential.
 
 - **The MCP registry manifest's description was too long to publish.** `server.json`
   carried a 126-character description and the registry accepts 100, so publishing 2.3.0
