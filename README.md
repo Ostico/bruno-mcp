@@ -93,7 +93,7 @@ On the fork parent specifically, since this project owes it its existence: [maca
 
 **Authoring**
 
-- **Collections** — create and organise them, or discover the ones Bruno already knows from its `workspace.yml`
+- **Collections** — create and organise them, or discover the ones Bruno already knows from its `workspace.yml`. A collection this server creates is written to disk and not registered in that file, so `list_collections` will not show it and the Bruno GUI will not list it until someone opens it there once — everything else takes the path directly
 - **Requests** — every HTTP method, with headers, query and path params, bodies, auth, assertions, vars and settings
 - **Read back** — `read_request` and `read_environment` return structured JSON, identical for `.bru` and `.yml`, so an agent can inspect before it edits
 - **Partial-merge edits** — `modify_request` changes only the fields you pass and leaves the rest of the file alone
@@ -215,7 +215,7 @@ See [INTEGRATION.md](./INTEGRATION.md) for worked examples, Docker, and troubles
 
 | Tool | What it does |
 |---|---|
-| `create_collection` | New collection. `format: "yaml"` (default) or `"bru"` |
+| `create_collection` | New collection. `format: "yaml"` (default) or `"bru"`. On disk only — not registered in `workspace.yml` |
 | `list_collections` | Find collections from Bruno's `workspace.yml` |
 | `get_collection_stats` | Counts by method, folders, environments, request list |
 | `create_request` | Write a request: method, url, headers, query, body, auth, scripts, settings. `kind: "websocket"` or `kind: "grpc"` for those transports |
