@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`get_collection_stats` reports each request's URL, and can be asked for less.** The URL is
+  the field most wanted when triaging an unfamiliar collection — two requests named "Create"
+  say nothing, their targets say everything — and it was the one field missing, so learning a
+  URL meant reading every file back. It comes from whichever transport block carries one, so a
+  gRPC or WebSocket request reports its target too. Because the per-request array is the bulk
+  of the response and grows with the collection, the call now takes `folder` (nested folders
+  included), `method` (case-insensitive, and the kinds that have no method match under `GRPC`
+  or `WS`), `nameContains`, and `includeRequests: false` for counts only. A filter never
+  touches the counts: `totalRequests` and `requestsByMethod` keep describing the whole
+  collection, and a filtered call adds `matchedRequests` so the two cannot be confused.
+
 - **A guide to execution groups and parallelism**, at `docs/execution-groups.md` and linked
   from the README. It documents what a group owns and that nothing crosses its boundary, the
   two independent `parallel` flags and why a group never inherits the run's, ordering within

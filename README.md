@@ -217,7 +217,7 @@ See [INTEGRATION.md](./INTEGRATION.md) for worked examples, Docker, and troubles
 |---|---|
 | `create_collection` | New collection. `format: "yaml"` (default) or `"bru"` |
 | `list_collections` | Find collections from Bruno's `workspace.yml` |
-| `get_collection_stats` | Counts by method, folders, environments, request list |
+| `get_collection_stats` | Counts by method, folders, environments, request list with URLs — filterable by `folder`, `method`, `nameContains`, or `includeRequests: false` for counts only |
 | `create_request` | Write a request: method, url, headers, query, body, auth, scripts, settings. `kind: "websocket"` or `kind: "grpc"` for those transports |
 | `modify_request` | Partial-merge edit — only the fields you pass change |
 | `read_request` | Read one request back as JSON, same shape for `.bru` and `.yml` |
