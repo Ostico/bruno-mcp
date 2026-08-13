@@ -193,6 +193,31 @@ describe('modify_request tool handler', () => {
       expect(updates).not.toHaveProperty('headers');
     });
 
+    it('passes filename through, and leaves name out when only the file moves', async () => {
+      await handler({
+        filePath: '/workspace/collection/get-users.yml',
+        filename: 'list-users',
+      });
+
+      const [, updates] = mockUpdateRequest.mock.calls[0];
+      expect(updates).toEqual({ filename: 'list-users' });
+    });
+
+    it('reports the path a renamed file moved to, since the old one is gone', async () => {
+      mockUpdateRequest.mockResolvedValue({
+        success: true,
+        path: '/workspace/collection/list-users.yml',
+      });
+
+      const res = await handler({
+        filePath: '/workspace/collection/get-users.yml',
+        filename: 'list-users',
+      });
+
+      expect(res.content[0].text).toContain('/workspace/collection/list-users.yml');
+      expect(res.content[0].text).toContain('filePath');
+    });
+
     it('defaults inline scripts to replace so repeated calls are idempotent', async () => {
       await handler({
         filePath: '/workspace/collection/get-users.yml',
