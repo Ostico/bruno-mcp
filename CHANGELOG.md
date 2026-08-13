@@ -27,6 +27,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`modify_request` can rename a request's file.** Renaming a request only ever changed the
+  name inside the file, which is what Bruno's own rename-name path does — but Bruno pairs it
+  with a second path that moves the file, and this server had no equivalent, so a renamed
+  request kept a filename contradicting it with no way to correct it. Since every other tool
+  addresses a request by path, that drift was actively misleading. `filename` now moves the
+  file, and stays independent of `name` the way both are in Bruno: pass both to keep them in
+  step. It takes a basename in the request's own folder, appends the collection's extension
+  when none is given and refuses the other dialect's, refuses the characters and reserved
+  names upstream's filename validator refuses, and refuses a target another file already
+  holds — while still allowing a rename that only changes letter case. The response reports
+  the path the file moved to.
+
 - **A guide to execution groups and parallelism**, at `docs/execution-groups.md` and linked
   from the README. It documents what a group owns and that nothing crosses its boundary, the
   two independent `parallel` flags and why a group never inherits the run's, ordering within

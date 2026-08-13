@@ -8,6 +8,7 @@ import { writeFileAtomic } from './atomic-write.js';
 import { withPathLock } from './path-mutex.js';
 import { nextRequestSequence } from './request-sequence.js';
 import { isYamlRequestFile, isBruRequestFile } from './request-extensions.js';
+import { ensureRenameTargetFree, resolveRenameTarget } from './request-filename.js';
 import { join, dirname, isAbsolute, relative } from 'path';
 import { realpathSync } from 'fs';
 import { assertProtoImportsConfined, confineProtoPath } from './proto-path.js';
@@ -19,6 +20,7 @@ import {
   YamlHeader,
   YamlAuth,
   CreateRequestInput,
+  UpdateRequestInput,
   FileOperationResult,
   BrunoError,
   BruFileError,
@@ -203,14 +205,32 @@ export class RequestBuilder {
   /**
    * Update an existing request
    */
-  async updateRequest(filePath: string, updates: Partial<CreateRequestInput>): Promise<FileOperationResult> {
+  async updateRequest(filePath: string, updates: UpdateRequestInput): Promise<FileOperationResult> {
     // The file is read, merged with `updates`, and written back. Hold the lock
     // across the pair so a concurrent update is not silently discarded.
     return withPathLock(filePath, () => this.updateRequestLocked(filePath, updates));
   }
 
-  private async updateRequestLocked(filePath: string, updates: Partial<CreateRequestInput>): Promise<FileOperationResult> {
+  private async updateRequestLocked(filePath: string, updates: UpdateRequestInput): Promise<FileOperationResult> {
     try {
+      // Settle the rename before writing anything. The write happens first
+      // either way, so refusing the filename afterwards would report a failure
+      // over edits that are already on disk.
+      let renameTo: string | undefined;
+      if (updates.filename !== undefined) {
+        const resolved = resolveRenameTarget(filePath, updates.filename);
+        if (!resolved.ok) {
+          return { success: false, error: `Cannot rename the file: ${resolved.reason}.` };
+        }
+        if (resolved.target !== filePath) {
+          const free = await ensureRenameTargetFree(filePath, resolved.target);
+          if (!free.ok) {
+            return { success: false, error: `Cannot rename the file: ${free.reason}.` };
+          }
+          renameTo = resolved.target;
+        }
+      }
+
       if (isYamlRequestFile(filePath)) {
         const content = await fs.readFile(filePath, 'utf-8');
         const yamlReq = parseYamlRequest(content);
@@ -297,9 +317,16 @@ export class RequestBuilder {
         );
       }
 
+      if (renameTo !== undefined) {
+        // The lock covers the old path only. A caller that took the target's
+        // lock instead is not excluded from this move, which is the same window
+        // Bruno's own rename leaves open.
+        await fs.rename(filePath, renameTo);
+      }
+
       return {
         success: true,
-        path: filePath
+        path: renameTo ?? filePath
       };
 
     } catch (error) {

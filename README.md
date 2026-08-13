@@ -219,7 +219,7 @@ See [INTEGRATION.md](./INTEGRATION.md) for worked examples, Docker, and troubles
 | `list_collections` | Find collections from Bruno's `workspace.yml` |
 | `get_collection_stats` | Counts by method, folders, environments, request list |
 | `create_request` | Write a request: method, url, headers, query, body, auth, scripts, settings. `kind: "websocket"` or `kind: "grpc"` for those transports |
-| `modify_request` | Partial-merge edit — only the fields you pass change |
+| `modify_request` | Partial-merge edit — only the fields you pass change. `filename` renames the file |
 | `read_request` | Read one request back as JSON, same shape for `.bru` and `.yml` |
 | `list_requests` | Every request file in the collection, as absolute paths |
 | `delete_request` | Delete a request file. Needs `confirm: true` |
@@ -253,6 +253,8 @@ Notable options:
 - `auth.type` — `bearer`, `basic`, `api-key`, `digest`, `oauth2`, `inherit`, `none`
 - `scripts` — inline `pre-request`, `post-response`, `tests` (no separate `add_test_script` call needed)
 - `settings.timeout` — script and request timeout in ms
+
+`name` and `filename` are independent, as they are in Bruno itself: `name` changes the request's name inside the file and `filename` moves the file, so pass both to keep them in step. A `filename` is a basename in the request's own folder, its extension is optional and must match the collection's format if given, and a name already taken by another file is refused. The path it moved to comes back in the response — use it as `filePath` from then on.
 
 `modify_request` **replaces** a script of the same type by default, so repeating a call is idempotent. Pass `scriptMode: "append"` to concatenate. `add_test_script` appends by default, being an add.
 
