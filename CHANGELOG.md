@@ -27,6 +27,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`bail` stops a run at the first failure.** A chain of dependent requests behind a login
+  that stopped working produced one failure for the cause and one for every consequence of
+  it, with the cause the least visible of them. `bail: true` on `run_collection` stops at the
+  first request that fails or whose tests fail; everything the run did not reach is reported
+  in place with `skipped: true` and `skipReason: "bail"`, carrying the method and URL it
+  would have sent, and later groups are skipped whole. A skipped request is counted in a new
+  `summary.skipped` and in neither `passed` nor `failed`, so `passed + failed` still equals
+  `total` and a truncated run cannot read as a shorter one that went green. The run gains a
+  `bail` object naming the reason (`request failure` or `test failure`), the request it
+  stopped at, that request's file and group, and how many were skipped. JUnit reports the
+  skipped requests as skipped rather than as having verified nothing, and the HTML page
+  counts them out of both totals. Nothing cancels a request already in flight, so a
+  concurrent run skips only what had not started and says so in `warnings` instead of
+  leaving the shortfall to be inferred.
+
 - **`move_request` relocates a request, within a collection or between two of them.** There
   was no way to reorganise a collection through this server: a request could be created,
   modified, read and deleted, but never moved, so the only route was delete-and-recreate —
