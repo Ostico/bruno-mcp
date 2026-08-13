@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`move_request` relocates a request, within a collection or between two of them.** There
+  was no way to reorganise a collection through this server: a request could be created,
+  modified, read and deleted, but never moved, so the only route was delete-and-recreate —
+  which loses anything the recreating call did not restate. The new tool moves the file's
+  bytes verbatim rather than parsing and regenerating them, so nothing a request declares
+  can be lost on the way, including the `.bru` blocks this server does not model. It takes
+  `targetFolder` for a folder inside the collection and `targetCollectionPath` to move
+  between collections, creates a missing target folder and says so, and takes `copy: true`
+  to duplicate instead of move. Two things it deliberately does not do: it does not rename
+  the file, which is `modify_request`'s job, and it does not renumber `seq` — a request
+  landing on a sequence a sibling already claims is reported, because rewriting the file to
+  change one number is the round-trip this avoids, and Bruno breaks such a tie by filename.
+  A request that lands in a collection whose dialect does not read its extension is warned
+  about, on the same terms as everywhere else.
+
 - **A guide to execution groups and parallelism**, at `docs/execution-groups.md` and linked
   from the README. It documents what a group owns and that nothing crosses its boundary, the
   two independent `parallel` flags and why a group never inherits the run's, ordering within

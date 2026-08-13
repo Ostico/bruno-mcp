@@ -220,6 +220,7 @@ See [INTEGRATION.md](./INTEGRATION.md) for worked examples, Docker, and troubles
 | `get_collection_stats` | Counts by method, folders, environments, request list |
 | `create_request` | Write a request: method, url, headers, query, body, auth, scripts, settings. `kind: "websocket"` or `kind: "grpc"` for those transports |
 | `modify_request` | Partial-merge edit — only the fields you pass change |
+| `move_request` | Move or copy a request to another folder or collection |
 | `read_request` | Read one request back as JSON, same shape for `.bru` and `.yml` |
 | `list_requests` | Every request file in the collection, as absolute paths |
 | `delete_request` | Delete a request file. Needs `confirm: true` |
@@ -257,6 +258,14 @@ Notable options:
 `modify_request` **replaces** a script of the same type by default, so repeating a call is idempotent. Pass `scriptMode: "append"` to concatenate. `add_test_script` appends by default, being an add.
 
 In `.yml` collections `post-response` and `tests` share Bruno's single `after-response` slot, so replacing either overwrites both.
+
+### Moving requests
+
+`move_request` relocates a request file — into another folder, or into another collection with `targetCollectionPath`. Pass `copy: true` to duplicate it instead.
+
+The bytes are moved verbatim, never parsed and rewritten, so nothing a request declares can be lost on the way. Two consequences follow from that. The file keeps its name, so a copy needs a different folder or collection; renaming is `modify_request`. And `seq` arrives unchanged, so the request can land next to a sibling claiming the same number — that is reported rather than repaired, because renumbering means rewriting the file. Bruno breaks such a tie by filename, so the order is defined either way.
+
+A missing target folder is created, and reported: a folder with no settings file carries no folder-level auth, headers or scripts.
 
 ## Running
 
