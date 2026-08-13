@@ -20,7 +20,12 @@ export function registerCreateCollectionTool(ctx: ToolContext): void {
     'create_collection',
     {
       title: 'Create Bruno Collection',
-      description: 'Create a new Bruno API testing collection with configuration',
+      description: 'Create a new Bruno API testing collection with configuration. '
+        + 'WRITES TO DISK ONLY: the new collection is NOT registered in Bruno\'s workspace.yml, '
+        + 'so it will not appear in list_collections and will not be in the Bruno GUI\'s sidebar '
+        + 'until someone opens it there once. That registration is not needed to use it — pass '
+        + 'the returned path straight to every other tool as collectionPath. Do not call '
+        + 'list_collections to find a collection you just created: it will not be there.',
       inputSchema: {
         name: z.string().min(1, 'Collection name is required'),
         description: z.string().optional(),
@@ -56,7 +61,17 @@ export function registerCreateCollectionTool(ctx: ToolContext): void {
             content: [
               {
                 type: 'text',
-                text: `✅ Bruno collection "${args.name}" created successfully at: ${result.path}`
+                // Said here and not only in the description, because this is the
+                // moment a caller decides what to do next — and the obvious next
+                // move, calling list_collections to find what it just made, comes
+                // back empty. workspace.yml is Bruno's own registry: this server
+                // reads it and does not write it, so nothing here registers the
+                // new directory.
+                text: `✅ Bruno collection "${args.name}" created successfully at: ${result.path}\n\n`
+                  + 'Not registered in Bruno\'s workspace.yml, so it will not appear in '
+                  + 'list_collections, and the Bruno GUI will not show it until someone opens it '
+                  + 'there once. Nothing else needs that: pass the path above as collectionPath to '
+                  + 'every other tool.'
               }
             ]
           };
