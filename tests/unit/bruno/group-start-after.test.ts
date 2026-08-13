@@ -104,6 +104,21 @@ describe('a gated group', () => {
     expect(sent.indexOf('trigger-first')).toBeGreaterThan(sent.indexOf('listener-first'));
   });
 
+  it('may itself be unnamed, since nothing needs to wait on a waiter', async () => {
+    const root = await collection();
+
+    const result = await RequestExecutor.executeCollection(root, {
+      ...RUN,
+      groups: [
+        { name: 'listener', requests: ['listener/first.bru'] },
+        { requests: ['trigger'], startAfter: { group: 'listener' } },
+      ],
+    });
+
+    expect(result.summary.failed).toBe(0);
+    expect(sent.indexOf('trigger-first')).toBeGreaterThan(sent.indexOf('listener-first'));
+  });
+
   it('holds a chain in order', async () => {
     const root = await collection();
 
@@ -227,6 +242,47 @@ describe('a gate that could never open', () => {
       { name: 'trigger', requests: ['trigger'], startAfter: { group: 'listener' } },
     ]);
     expect(message).toContain('iterates over rows');
+  });
+
+  it('is refused when it asks for a position that is not one', async () => {
+    const message = await refusal([
+      { name: 'listener', requests: ['listener'] },
+      { name: 'trigger', requests: ['trigger'], startAfter: { group: 'listener', requestsCompleted: 0 } },
+    ]);
+    // The tool schema rejects this before it arrives, but the executor is also a
+    // public API, and a zero would otherwise be a gate that opens before the run.
+    expect(message).toContain('not a position in a group');
+    expect(message).toContain('group "trigger"');
+  });
+
+  it('is refused when it asks for part of a request', async () => {
+    const message = await refusal([
+      { name: 'listener', requests: ['listener'] },
+      { name: 'trigger', requests: ['trigger'], startAfter: { group: 'listener', requestsCompleted: 1.5 } },
+    ]);
+    // A fraction is not a position either, and rounding it silently would make
+    // the gate open somewhere the caller did not ask for.
+    expect(message).toContain('not a position in a group');
+  });
+
+  it('points at an unnamed group by its position in the list', async () => {
+    const message = await refusal([
+      { name: 'listener', requests: ['listener'] },
+      { requests: ['trigger'], startAfter: { group: 'listener', requestsCompleted: 0 } },
+    ]);
+    // A group with no name still has to be identifiable, or the caller cannot
+    // tell which entry to edit.
+    expect(message).toContain('group "1"');
+  });
+
+  it('names a single request in the singular when the group runs none', async () => {
+    const message = await refusal([
+      // A reference nothing resolves to leaves the group with no requests and no
+      // error of its own, which is the one way a gate of 1 is unsatisfiable.
+      { name: 'listener', requests: ['listener/absent.bru'] },
+      { name: 'trigger', requests: ['trigger'], startAfter: { group: 'listener', requestsCompleted: 1 } },
+    ]);
+    expect(message).toContain('waits for 1 request of group "listener", which runs 0');
   });
 
   it('is refused when the run does not fan its groups out', async () => {
