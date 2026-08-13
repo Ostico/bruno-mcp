@@ -17,6 +17,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   README described the shape of a call; this describes the model, which is what a caller
   needs to predict what a call will do.
 
+### Fixed
+
+- **The SSRF allowlist no longer depends on how a target is spelled.** An operator who
+  allowlisted `127.0.0.1` still had `http://localhost:8888` refused, because a denylisted name
+  is rejected before anything resolves — the same listener reachable or not according to how it
+  was written, which half-blocked one real dev environment that defines both spellings. A
+  normally-blocked name is now permitted when *every* address it resolves to is allowlisted,
+  which is exactly what an address entry vouches for; a name whose addresses are only partly
+  covered stays refused, and so does one whose resolution fails, since a DNS message would hide
+  why the name was denied. The permitted name still carries its resolved addresses to the
+  caller, so the connection remains pinned to them. The refusal text now also states which
+  spelling each kind of entry matches, which was previously impossible to work out from inside.
+
 ### Changed
 
 - **A lost MCP registry listing can be republished without cutting a release.** The release

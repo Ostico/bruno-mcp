@@ -549,7 +549,7 @@ Operator escape hatches, all off by default:
 
 | Variable | Effect |
 |---|---|
-| `BRUNO_SSRF_ALLOWLIST` | Comma-separated exact hostnames, IP literals and/or CIDR ranges allowed despite being private. Read once at startup and never influenced by tool arguments; wildcards are rejected |
+| `BRUNO_SSRF_ALLOWLIST` | Comma-separated exact hostnames, IP literals and/or CIDR ranges allowed despite being private. A hostname entry is matched against the spelling in the URL; an address entry is matched against the address the URL resolves to, and also permits an otherwise-blocked name such as `localhost` when every address it resolves to is allowlisted. Read once at startup and never influenced by tool arguments; wildcards are rejected |
 | `BRUNO_UPLOAD_DIRS` | Extra directories uploads may read from |
 | `BRUNO_PROXY_HOSTS` | Hosts allowed to use a collection's proxy |
 | `BRUNO_INSECURE_TLS_HOSTS` | Hosts allowed to skip certificate verification |
