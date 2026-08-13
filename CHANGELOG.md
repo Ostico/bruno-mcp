@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`atob` and `btoa` inside the script sandbox.** A fresh V8 context carries the ECMAScript
+  intrinsics and nothing else, so both of those and `Buffer` were absent: a test could not
+  decode the JWT payload a login had just returned, and the workaround was an extra HTTP
+  request for a value already in hand. Both names are the ones upstream's sandbox allows
+  through, so a script written for the Bruno app works unchanged, and both script kinds get
+  them — building an Authorization header is `btoa`. Written as JavaScript that runs inside the
+  realm rather than as host functions placed on the context, because a host function's
+  `constructor` is a live route back to the host global. `Buffer` remains absent by design; a
+  bare reference throws and names itself.
 - **A guide to execution groups and parallelism**, at `docs/execution-groups.md` and linked
   from the README. It documents what a group owns and that nothing crosses its boundary, the
   two independent `parallel` flags and why a group never inherits the run's, ordering within
