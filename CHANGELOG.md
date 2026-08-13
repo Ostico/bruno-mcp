@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- **How to assert on a gRPC or WebSocket result.** `res.getBody()` on a WebSocket request
+  is the transcript array, and `res.getStatus()` is always `0` — a test written against the
+  status asserts on a constant and cannot fail. The outcome is `res.statusText`, carrying
+  the stop reason. Said once at the end of a paragraph about close codes before; now its own
+  section with an example, and stated in the `run_collection` description where a caller
+  writing assertions will meet it. gRPC's own shape is spelled out alongside.
+- **`includePayloads` gates the result, not the script.** A test script always sees the real
+  payloads, exactly as `res.body` always carries a full HTTP body while `response_body` is
+  gated by `includeResponseBody`. That makes `includePayloads: false` plus content
+  assertions the intended shape for CI — the assertions check the frames, and what comes
+  back holds only direction, timing and sizes. Previously discoverable only from the source.
+- **Simultaneity across separate `run_collection` calls is not promised.** Calls issued
+  together may overlap or may serialise; runs meant to be concurrent have been seen starting
+  more than twenty seconds apart, each passing its own assertions. A test that depends on two
+  things happening at once must be one call with a parallel group.
+
 ### Added
 
 - **A guide to execution groups and parallelism**, at `docs/execution-groups.md` and linked
@@ -38,6 +56,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   say what to do instead — pass the returned path as `collectionPath`. Nothing about where
   the collection is written has changed; what changed is that the caller is told, at the
   moment it decides what to do next, rather than discovering it from an empty list.
+
+- **A pre-request script did not run at all on a gRPC or WebSocket request.** Both transports
+  are executed by a branch that returned before the pre-request phase began, so on either of
+  them `bru.setVar` wrote nothing, `req.setUrl` and `req.setHeader` changed nothing, and a
+  script that threw did not stop the request. Post-response and test scripts always did run,
+  which is what hid it: the missing phase was the one whose whole purpose is to happen before
+  substitution, so a script that computed a room name or a topic and then dialled it silently
+  dialled the template instead. A script's variable now reaches that request's own
+  `{{placeholders}}`, `req.setUrl` replaces the target, `req.setHeader` writes the transport's
+  own header surface — handshake headers for WebSocket, metadata for gRPC — and a script that
+  throws stops the request before anything is dialled. `req.setBody` is refused with a warning
+  rather than guessed at: neither transport sends a single body, so there is no one value for
+  it to replace.
+
+- **An oauth2 request sent no credential when its own pre-request script set a variable.**
+  Writing any variable from a pre-request script rebuilds the request from its original
+  templates, so the new value can reach that request's own `{{placeholders}}`. The rebuild
+  was not handed the access token that had already been fetched, and the token is not part
+  of any template — so the `Authorization` header vanished and the request went out
+  unauthenticated. It was not refused and not warned about, which made it the failure the
+  refusal path exists to prevent: against an endpoint permitting anonymous access it passes,
+  proving only that anonymous access works. A collection whose login writes a variable — the
+  ordinary shape — could report a green authorization suite having never presented a
+  credential.
 
 - **The MCP registry manifest's description was too long to publish.** `server.json`
   carried a 126-character description and the registry accepts 100, so publishing 2.3.0

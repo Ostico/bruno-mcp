@@ -139,6 +139,19 @@ export interface WebsocketExecutionInput {
   rootChain?: RootChain;
   oauth2Token?: string;
   options?: WebsocketRunOptions;
+  /**
+   * A target a pre-request script set with `req.setUrl`, replacing the block's
+   * own. Applied instead of substituting the template, not over the substituted
+   * result: the script was handed the substituted target and what it gives back
+   * is a finished URL, so expanding it again would treat response data as a
+   * template.
+   */
+  urlOverride?: string;
+  /**
+   * Headers a pre-request script set with `req.setHeader`, applied over the
+   * request's own and over auth's — last writer wins, as on the HTTP path.
+   */
+  headerOverrides?: Record<string, string>;
 }
 
 /**
@@ -280,8 +293,15 @@ function framesToSend(request: YamlRequest, subst: (value: string) => string): P
   return { frames, warnings };
 }
 
-/** The handshake headers: the request's own, plus whatever auth placed. */
-function handshakeHeaders(
+/**
+ * The handshake headers: the request's own, plus whatever auth placed.
+ *
+ * Exported so the pre-request phase can seed `req.getHeaders()` from the same
+ * implementation that produces what is sent, rather than from a second copy of
+ * this loop that could drift from it. That caller passes no auth headers: auth
+ * is applied here, after the script has run.
+ */
+export function handshakeHeaders(
   request: YamlRequest,
   subst: (value: string) => string,
   authHeaders: Record<string, string>,
@@ -376,7 +396,7 @@ function handshakeTerms(headers: Record<string, string>, warnings: string[]): Ha
 export async function executeWebsocketRequest(
   input: WebsocketExecutionInput,
 ): Promise<TransportOutcome> {
-  const { request, vars, rootChain, oauth2Token, options = {} } = input;
+  const { request, vars, rootChain, oauth2Token, options = {}, urlOverride, headerOverrides } = input;
   const block = request.websocket;
   const warnings: string[] = [];
   const subst = (value: string) => substitute(value, vars);
@@ -385,7 +405,7 @@ export async function executeWebsocketRequest(
     return refuse(request, '', 'Cannot execute a WebSocket request with no websocket block', warnings);
   }
 
-  const target = subst(block.url ?? '').trim();
+  const target = (urlOverride ?? subst(block.url ?? '')).trim();
   if (target.length === 0) {
     return refuse(request, '', 'Cannot execute a WebSocket request with an empty target', warnings);
   }
@@ -524,7 +544,10 @@ export async function executeWebsocketRequest(
   // target it refused; this now does too.
   let upgradeHeaders: ResponseHeaders | undefined;
   let socket: InstanceType<typeof WebSocket>;
-  const headers = handshakeHeaders(request, subst, authHeaders);
+  // The script's headers last, and before the terms are read, so a script that
+  // set Sec-WebSocket-Protocol is extracted to the constructor like any other
+  // author of that header rather than aborting the handshake as a bare header.
+  const headers = { ...handshakeHeaders(request, subst, authHeaders), ...(headerOverrides ?? {}) };
   const terms = handshakeTerms(headers, warnings);
   try {
     socket = new WebSocket(dialUrl, terms.protocols, {
