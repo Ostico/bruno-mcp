@@ -33,6 +33,23 @@ export interface ExecutionOptions {
    * number of racers.
    */
   maxConcurrency?: number;
+  /**
+   * Stop the run at the first request that errors or registers a failing test.
+   * Off by default, which is what every run before this option did.
+   *
+   * Named as upstream names it: `bruno-cli` calls this `--bail`.
+   *
+   * What "stop" reaches is bounded by what has already been started, and the
+   * boundary is worth knowing before choosing the flag. Requests not yet started
+   * are skipped, in the failing group and in every group after it, each reported
+   * as a result with `skipped: true` rather than omitted — a truncated run that
+   * simply returned fewer results would be indistinguishable from a shorter one.
+   * Requests already in flight are not cancelled: a `parallel` group starts all
+   * of its own at once, and concurrent groups likewise, so with fan-out this
+   * skips the tail rather than the remainder. A run that combines the two says
+   * so in its warnings.
+   */
+  bail?: boolean;
   includeResponseBody?: boolean;
   maxResponseBodyBytes?: number;
   /**
