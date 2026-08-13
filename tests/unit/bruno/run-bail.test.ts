@@ -339,6 +339,44 @@ describe('stopping while running concurrently', () => {
     expect((result.warnings ?? []).join('\n')).toContain('needs a serial run');
   });
 
+  it('reports the failure that stopped the run, not the last one to resolve', async () => {
+    // Two requests are already in flight and both fail. Only the serial path is
+    // protected by the skip guard; here the second failure arrives after the run
+    // has already stopped, and reporting it would name a request that is a
+    // consequence of the stop rather than its cause.
+    setupFs(THREE_FILES);
+
+    let loginSettled = (): void => {};
+    const loginDone = new Promise<void>((resolve) => { loginSettled = resolve; });
+
+    mockFetch.mockImplementation(async (target: unknown) => {
+      const url = String(target);
+      if (url.endsWith('/login')) {
+        // A macrotask, so the run records this failure before the wait below is
+        // released — the ordering the test is about, made deterministic.
+        setImmediate(loginSettled);
+        throw new Error('ECONNREFUSED');
+      }
+      if (url.endsWith('/third')) {
+        await loginDone;
+        throw new Error('ECONNREFUSED later');
+      }
+      return okResponse();
+    });
+
+    const result = await RequestExecutor.executeCollection('/c', {
+      bail: true,
+      parallel: true,
+      groups: [{ name: 'both', requests: ['Login.yml', 'Third.yml'], parallel: true }],
+    });
+
+    expect(result.bail?.at).toBe('Login');
+    // The one that lost the race still reports its own failure as a failure.
+    const third = result.groups[0]?.results.find((r) => r.name === 'Third');
+    expect(third?.skipped).toBeUndefined();
+    expect(third?.error).toContain('ECONNREFUSED later');
+  });
+
   it('says nothing about concurrency when the run was serial', async () => {
     setupFs(THREE_FILES);
     mockFetch.mockResolvedValue(okResponse());
