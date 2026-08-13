@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`create_collection` now registers the collection it created.** `list_collections` reads
+  the workspace registry rather than the disk, so a newly created collection was invisible
+  to it and to the Bruno app until something else wrote that file — and the success message
+  mentioned neither, which read as silent failure. The new collection is added to the same
+  workspace `list_collections` resolves (`workspacePath`, then `BRUNO_WORKSPACE_PATH`, then
+  the platform default), `registerInWorkspace: false` skips it, and the result always says
+  what happened: registered, already listed, or not registered and why.
+  The workspace file is edited a line at a time rather than parsed and re-serialised,
+  because it belongs to the Bruno app: it quotes every scalar and can carry keys such as an
+  empty `specs:` that a YAML round-trip would rewrite. A registry in a shape that cannot be
+  extended that way is left untouched and reported.
+
 ### Added
 
 - **A guide to execution groups and parallelism**, at `docs/execution-groups.md` and linked
