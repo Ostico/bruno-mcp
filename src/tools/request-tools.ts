@@ -14,7 +14,9 @@ import {
   AuthType,
 } from '../bruno/types.js';
 import { createReader } from '../bruno/format-factory.js';
+import { detectFormat, findCollectionRoot, findCollectionRootFromDirectory } from '../bruno/format-detector.js';
 import { toRequestView } from '../bruno/request-view.js';
+import { moveRequestFile } from '../bruno/request-move.js';
 import { validateToolPath, resolveRequestFile } from './tool-path.js';
 import { collectionDialectWarnings } from '../bruno/request-extensions.js';
 import { declaredFormat } from '../bruno/request-discovery.js';
@@ -280,6 +282,117 @@ export function registerModifyRequestTool(ctx: ToolContext): void {
             }
           ],
           isError: true
+        };
+      }
+    }
+  );
+}
+
+export function registerMoveRequestTool(ctx: ToolContext): void {
+  ctx.server.registerTool(
+    'move_request',
+    {
+      title: 'Move Request',
+      description: 'Relocate a request file to another folder, or to another collection entirely. '
+        + 'Pass copy:true to duplicate it instead of moving it. The bytes are moved verbatim and '
+        + 'nothing is parsed and rewritten, so no part of the request can be lost on the way — '
+        + 'which also means seq arrives unchanged and may tie with a request already there; that '
+        + 'is reported, and Bruno breaks such a tie by filename. The file keeps its name: use '
+        + 'modify_request with filename to rename it. The new path comes back in the response.',
+      inputSchema: {
+        filePath: z.string().min(1, 'File path is required')
+          .describe('Absolute path to the .yml or .bru request file to move. Get from list_requests or get_collection_stats.'),
+        targetCollectionPath: z.string().optional()
+          .describe('Absolute path to the collection it should land in. Omit to move within the '
+            + "request's own collection."),
+        targetFolder: z.string().optional()
+          .describe('Folder inside the target collection, relative to its root, e.g. "auth/login". '
+            + 'Omit for the collection root. Created if it does not exist.'),
+        copy: z.boolean().optional()
+          .describe('Leave the original in place and write a duplicate at the destination. Since '
+            + 'the file keeps its name, a copy needs a different folder or collection.'),
+      }
+    },
+    async (args) => {
+      try {
+        const resolved = await resolveRequestFile(args.filePath, 'filePath');
+        if (!resolved.ok) {
+          return {
+            content: [{ type: 'text', text: resolved.message }],
+            isError: true,
+          };
+        }
+
+        // One expression for both cases so the "not a collection" answer has a
+        // single reachable check: a targetCollectionPath with no manifest and a
+        // source whose root has gone away both land here.
+        let targetRoot: string | null;
+        if (args.targetCollectionPath !== undefined) {
+          const targetCheck = validateToolPath(args.targetCollectionPath);
+          if (!targetCheck.valid) {
+            return {
+              content: [{ type: 'text', text: `Invalid targetCollectionPath: ${targetCheck.reason}` }],
+              isError: true,
+            };
+          }
+          // From the directory, not from a file inside it: the marker usually
+          // sits in the very directory the caller named.
+          targetRoot = await findCollectionRootFromDirectory(targetCheck.resolved);
+        } else {
+          targetRoot = await findCollectionRoot(args.filePath);
+        }
+        if (targetRoot === null) {
+          return {
+            content: [{
+              type: 'text',
+              text: 'Could not determine the target collection: no opencollection.yml or '
+                + 'bruno.json found within 10 parent directories. Pass targetCollectionPath as '
+                + "the collection's root directory.",
+            }],
+            isError: true,
+          };
+        }
+
+        const result = await moveRequestFile({
+          filePath: args.filePath,
+          targetCollectionPath: targetRoot,
+          targetFolder: args.targetFolder,
+          copy: args.copy,
+        });
+
+        if (!result.success || result.path === undefined) {
+          return {
+            content: [{ type: 'text', text: `Failed to move request: ${result.error}` }],
+            isError: true,
+          };
+        }
+
+        // Read against the collection it landed in, not the one it left: moving a
+        // .yml request into a bruno.json collection is the very state this
+        // warning exists for. Reported and not refused, as everywhere else — the
+        // file's own extension stays authoritative, and the repair is a rename.
+        const detection = await detectFormat(targetRoot);
+        const arrivalWarnings = collectionDialectWarnings([result.path], detection.format);
+
+        return {
+          content: [{
+            type: 'text',
+            text: [
+              `${args.copy === true ? 'Copied' : 'Moved'} request `
+                + `"${path.basename(args.filePath)}" to ${result.path}`
+                + (args.copy === true ? '.' : '; pass that as filePath from now on.'),
+              ...result.warnings,
+              ...arrivalWarnings,
+            ].join('\n\n'),
+          }],
+        };
+      } catch (error) {
+        return {
+          content: [{
+            type: 'text',
+            text: `❌ Error moving request: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          }],
+          isError: true,
         };
       }
     }

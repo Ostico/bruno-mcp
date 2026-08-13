@@ -131,6 +131,16 @@ exports[`MCP tool surface contract matches the recorded surface exactly (titles,
     },
     "title": "Modify Request",
   },
+  "move_request": {
+    "description": "Relocate a request file to another folder, or to another collection entirely. Pass copy:true to duplicate it instead of moving it. The bytes are moved verbatim and nothing is parsed and rewritten, so no part of the request can be lost on the way — which also means seq arrives unchanged and may tie with a request already there; that is reported, and Bruno breaks such a tie by filename. The file keeps its name: use modify_request with filename to rename it. The new path comes back in the response.",
+    "schema": {
+      "copy": "boolean?",
+      "filePath": "string",
+      "targetCollectionPath": "string?",
+      "targetFolder": "string?",
+    },
+    "title": "Move Request",
+  },
   "read_environment": {
     "description": "Read an environment back as structured JSON: every variable with its value, plus its disabled and secret flags. Omit "name" to list the collection's environments instead. Secret variables are returned by name only — Bruno stores no value for a secret in either file format, so there is none to return.",
     "schema": {
