@@ -102,6 +102,20 @@ describe('Server tool handlers', () => {
       expect(result.isError).toBeUndefined();
     });
 
+    it('says the new collection is not in the registry list_collections reads', async () => {
+      // The collection exists on disk and is fully usable by path, but nothing
+      // here writes Bruno's workspace.yml — so a caller that creates one and then
+      // calls list_collections to find it gets an empty answer. Saying so in the
+      // success message is the only place that lands before the caller acts.
+      getManagerMock(server, 'collectionManager', 'createCollection')
+        .mockResolvedValue({ success: true, path: '/ws/my-api' });
+      const handler = getHandler(server, 'create_collection');
+      const result = await handler({ name: 'my-api', outputPath: '/ws' });
+      expect(result.content[0].text).toContain('workspace.yml');
+      expect(result.content[0].text).toContain('list_collections');
+      expect(result.content[0].text).toContain('collectionPath');
+    });
+
     it('should return error on failure', async () => {
       getManagerMock(server, 'collectionManager', 'createCollection')
         .mockResolvedValue({ success: false, error: 'disk full' });

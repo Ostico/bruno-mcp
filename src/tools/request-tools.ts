@@ -9,6 +9,7 @@ import path from 'path';
 import { readFile, unlink } from 'node:fs/promises';
 import {
   CreateRequestInput,
+  UpdateRequestInput,
   HttpMethod,
   AuthType,
 } from '../bruno/types.js';
@@ -138,10 +139,17 @@ export function registerModifyRequestTool(ctx: ToolContext): void {
     'modify_request',
     {
       title: 'Modify Request',
-      description: 'Update an existing Bruno request file with partial-merge semantics. Only provided fields are updated; all other fields are preserved. Supports multipart/form-data with file uploads and per-part contentType. Inline scripts REPLACE the existing script of the same type by default (idempotent — repeated calls do not accumulate duplicate blocks); pass scriptMode:"append" to concatenate instead. Use remove_script to clear a script entirely.',
+      description: 'Update an existing Bruno request file with partial-merge semantics. Only provided fields are updated; all other fields are preserved. Supports multipart/form-data with file uploads and per-part contentType. Inline scripts REPLACE the existing script of the same type by default (idempotent — repeated calls do not accumulate duplicate blocks); pass scriptMode:"append" to concatenate instead. Use remove_script to clear a script entirely. RENAMING: name and filename are independent, as they are in Bruno itself — name changes the request\'s name inside the file and filename moves the file. Pass both to keep them in step, and read the new path back from the response.',
       inputSchema: {
         filePath: z.string().min(1, 'File path is required').describe('Absolute path to the .yml or .bru request file to modify. Get from list_requests or get_collection_stats.'),
-        name: z.string().optional(),
+        name: z.string().optional()
+          .describe('The request\'s name inside the file. Does NOT rename the file — pass filename for that.'),
+        filename: z.string().optional()
+          .describe('Renames the file, keeping it in its own folder. Basename only, no path '
+            + 'separators. The extension is optional and must match the collection\'s format if '
+            + 'given, since a collection carries one format only. Refused if another file of that '
+            + 'name already exists. The new path comes back in the response; use it as filePath '
+            + 'from then on, because the old one is gone.'),
         method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']).optional(),
         url: z.string().optional(),
         headers: z.record(z.string()).optional(),
@@ -196,8 +204,9 @@ export function registerModifyRequestTool(ctx: ToolContext): void {
         }
 
         // 5. Build partial update input from provided fields
-        const updates: Partial<CreateRequestInput> = {};
+        const updates: UpdateRequestInput = {};
         if (args.name !== undefined) updates.name = args.name;
+        if (args.filename !== undefined) updates.filename = args.filename;
         if (args.method !== undefined) updates.method = args.method as HttpMethod;
         if (args.url !== undefined) updates.url = args.url;
         if (args.headers !== undefined) updates.headers = args.headers;
@@ -232,12 +241,22 @@ export function registerModifyRequestTool(ctx: ToolContext): void {
           // file was modified, and the caller still needs to know Bruno will not
           // see it. Appended to the message the caller already reads, because a
           // second content block is easy to drop.
+          // The path is read back rather than rebuilt from `filename`, because
+          // the builder normalises the extension and may have left the file
+          // where it was. Both halves of the test are needed: a caller that
+          // asked for no rename cannot have had one, and a case-only rename
+          // that resolved to the same path did not move anything.
+          const newPath = result.path ?? args.filePath;
           return {
             content: [
               {
                 type: 'text',
                 text: [
-                  `Successfully modified request "${path.basename(args.filePath)}"`,
+                  args.filename === undefined || newPath === args.filePath
+                    ? `Successfully modified request "${path.basename(args.filePath)}"`
+                    : `Successfully modified request "${path.basename(args.filePath)}" and `
+                      + `renamed the file to "${path.basename(newPath)}". It now lives at `
+                      + `${newPath}; pass that as filePath from now on, because the old path is gone.`,
                   ...resolvedFile.warnings,
                 ].join('\n\n')
               }
