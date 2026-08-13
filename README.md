@@ -318,7 +318,7 @@ A group is an isolated run inside one call. It owns its request list, environmen
 }
 ```
 
-Group fields: `name`, `requests`, `environment`, `variables`, `parallel`, `data`, `dataFile`.
+Group fields: `name`, `requests`, `environment`, `variables`, `parallel`, `startAfter`, `data`, `dataFile`.
 
 [docs/execution-groups.md](./docs/execution-groups.md) covers the whole model: what a group
 owns, the two `parallel` flags and their defaults, ordering, iterations over data rows, the
@@ -327,6 +327,7 @@ concurrency ceiling, and what a failure looks like at each level.
 - Omit `requests` to run the **whole collection** under that group's identity. An empty `[]` runs nothing.
 - `environment` **replaces** the run-level one; `variables` **merge** over the run-level ones, group winning.
 - Set `parallel` on a group to run its own requests concurrently. They share that group's store, so they can genuinely contend on a `bru.setVar` — the point when reproducing a race. Give `maxConcurrency` at least as many slots as racers, or the cap serialises them quietly.
+- `startAfter: { group, requestsCompleted }` holds a group until another has got that far — a listener connected before a trigger fires, without a `bru.sleep` tuned to that day's latency. Needs run-level `parallel`; a request that failed still counts as a position reached; cycles and gates that could never open are refused before anything runs.
 
 ## Results
 

@@ -17,6 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   README described the shape of a call; this describes the model, which is what a caller
   needs to predict what a call will do.
 
+- **A group can wait for another to reach a given point, via `startAfter`.** `parallel` starts
+  groups together but says nothing about one being *ready* before another acts, so a listener
+  that had to be connected before a trigger fired could only be arranged with a `bru.sleep`
+  tuned to whatever the latency was that day. `startAfter: { group, requestsCompleted }` names a
+  position in another group instead — a fact about the run rather than about the network. It
+  needs `parallel: true` on the run; chains are allowed; a request that failed still counts as a
+  position reached, since waiting for a verdict would hang the run rather than report the
+  failure; and cycles, self-references, unknown names, gates asking for more requests than the
+  group runs, and gates on a group that iterates over rows are all refused before anything runs.
+  If the group being waited on ends early, the waiting group does not start and reports that as
+  its error, naming what it was still waiting for.
+
 ### Changed
 
 - **A lost MCP registry listing can be republished without cutting a release.** The release

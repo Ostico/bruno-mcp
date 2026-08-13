@@ -107,6 +107,45 @@ An omitted `requests` list means the whole collection. A list that is present an
 not the same thing: you said which requests you wanted and the answer was none of them, so
 the group reports a warning rather than quietly running everything.
 
+## Waiting for another group
+
+`parallel` starts groups together; it says nothing about one group being *ready* before another
+acts. A listener that must be connected before a trigger fires needs that, and the only way to
+express it used to be `bru.sleep`, tuned to whatever the latency was the day it was written.
+
+`startAfter` names a position in another group instead:
+
+```json
+{
+  "parallel": true,
+  "groups": [
+    { "name": "listener", "requests": ["ws/connect.yml", "ws/subscribe.yml"] },
+    { "name": "trigger",  "requests": ["api/post-message.yml"],
+      "startAfter": { "group": "listener", "requestsCompleted": 2 } }
+  ]
+}
+```
+
+The trigger sends nothing until the listener has completed both of its requests. `startAfter`
+needs `parallel: true` on the run — with groups running one after another a gate is either
+already satisfied or can never open, and a caller who asked for a barrier should not silently
+get the first.
+
+What counts, and what does not:
+
+- **A request that failed still counts.** The gate marks a position in the group, not a verdict
+  on it. Waiting for a verdict would hang the run instead of reporting the failure.
+- **`requestsCompleted` defaults to 1**, the usual meaning of "once it is up".
+- **Chains are allowed.** A waits on B, which waits on C.
+- **Cycles, self-references, unknown names, and gates asking for more requests than the group
+  runs are refused before anything runs.** A gate that cannot open is a caller mistake, and the
+  honest place to say so is before the first request.
+- **A group that iterates over rows cannot be waited on.** It runs as several groups under one
+  name, and which of them the gate should watch has no answer.
+- **If the group being waited on ends early** — it crashed, or a named request of its own could
+  not be read — the waiting group does not start. It reports that as its error, naming what it
+  was still waiting for, rather than hanging.
+
 ## Order within a group
 
 A group's requests run in the order they are listed. A reference to a directory expands in
