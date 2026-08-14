@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import { join } from 'path';
 import { listCollectionsHandler } from '../bruno/list-collections-handler.js';
-import { getCollectionStats } from '../bruno/collection-stats.js';
+import { getCollectionStats, filterCollectionStats } from '../bruno/collection-stats.js';
 import { collectionDialectWarnings } from '../bruno/request-extensions.js';
 import { declaredFormat } from '../bruno/request-discovery.js';
 import {
@@ -229,9 +229,13 @@ export function registerGetCollectionStatsTool(ctx: ToolContext): void {
     'get_collection_stats',
     {
       title: 'Get Collection Statistics',
-      description: 'Get statistics about a Bruno collection — request counts by method, folders, environments, and per-request details including file paths. environmentDetails lists each environment with the NAMES of the variables it declares (values are withheld), so you can see what an environment already defines before merging into it with set_environment_variable. Use filePath values as entries in the requests list of run_collection.',
+      description: 'Get statistics about a Bruno collection — request counts by method, folders, environments, and per-request details including each request\'s file path and URL. environmentDetails lists each environment with the NAMES of the variables it declares (values are withheld), so you can see what an environment already defines before merging into it with set_environment_variable. Use filePath values as entries in the requests list of run_collection.\n\nSIZE: the per-request array is the bulk of the response and grows with the collection — a few hundred requests run to tens of kilobytes. Narrow it with folder, method or nameContains, or pass includeRequests: false for counts only. The counts always describe the WHOLE collection; a filtered call adds matchedRequests so the two cannot be confused.',
       inputSchema: {
-        collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to collection directory. Use the path returned by list_collections.')
+        collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to collection directory. Use the path returned by list_collections.'),
+        folder: z.string().optional().describe('Report only requests in this folder, path relative to the collection root. Nested folders are included, so "auth" also matches "auth/oauth2".'),
+        method: z.string().optional().describe('Report only requests with this method, case-insensitive. A request that has no method is bucketed under its kind, so "GRPC" and "WS" work here too.'),
+        nameContains: z.string().optional().describe('Report only requests whose name contains this text, case-insensitive.'),
+        includeRequests: z.boolean().optional().default(true).describe('Set false to drop the per-request array and return only the counts, folders and environments.')
       }
     },
     async (args) => {
@@ -251,16 +255,27 @@ export function registerGetCollectionStatsTool(ctx: ToolContext): void {
         // Bruno itself would report, so the same warning the reading tools give
         // belongs on the counts. It goes in its own block: the first one is a
         // JSON document.
+        // Computed from the unfiltered scan, before the filter narrows anything:
+        // the dialect of a file the caller filtered out is still the dialect of
+        // a file in this collection, and a warning that disappears when someone
+        // asks a narrower question is a warning nobody ever sees.
         const warnings = collectionDialectWarnings(
           stats.requests.map((request) => request.filePath).filter((p): p is string => !!p),
           await declaredFormat(args.collectionPath),
         );
 
+        const reported = filterCollectionStats(stats, {
+          folder: args.folder,
+          method: args.method,
+          nameContains: args.nameContains,
+          includeRequests: args.includeRequests,
+        });
+
         return {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(stats, null, 2),
+              text: JSON.stringify(reported, null, 2),
             },
             ...warnings.map((warning) => ({ type: 'text' as const, text: warning })),
           ]
