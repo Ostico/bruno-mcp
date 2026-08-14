@@ -19,10 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gated by `includeResponseBody`. That makes `includePayloads: false` plus content
   assertions the intended shape for CI — the assertions check the frames, and what comes
   back holds only direction, timing and sizes. Previously discoverable only from the source.
-- **Simultaneity across separate `run_collection` calls is not promised.** Calls issued
-  together may overlap or may serialise; runs meant to be concurrent have been seen starting
-  more than twenty seconds apart, each passing its own assertions. A test that depends on two
-  things happening at once must be one call with a parallel group.
+- **Simultaneity across separate `run_collection` calls is not promised.** Nothing here
+  serialises them, but nothing here decides when a second call starts either: runs meant to
+  be concurrent have been seen starting more than twenty seconds apart, each passing its own
+  assertions. A test that depends on two things happening at once must be one call with a
+  parallel group.
 
 ### Added
 - **`get_collection_stats` reports each request's URL, and can be asked for less.** The URL is
@@ -96,19 +97,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   README described the shape of a call; this describes the model, which is what a caller
   needs to predict what a call will do.
 
-- **A group can wait for another to reach a given point, via `startAfter`.** `parallel` starts
-  groups together but says nothing about one being *ready* before another acts, so a listener
-  that had to be connected before a trigger fired could only be arranged with a `bru.sleep`
-  tuned to whatever the latency was that day. `startAfter: { group, requestsCompleted }` names a
-  position in another group instead — a fact about the run rather than about the network. It
-  needs `parallel: true` on the run; chains are allowed; a request that failed still counts as a
-  position reached, since waiting for a verdict would hang the run rather than report the
-  failure; and cycles, self-references, unknown names, gates asking for more requests than the
-  group runs, and gates on a group that iterates over rows are all refused before anything runs.
-  If the group being waited on ends early, the waiting group does not start and reports that as
-  its error, naming what it was still waiting for.
-
 ### Changed
+- **`run_collection` now says where simultaneity comes from.** Its description and the
+  execution-groups guide both state that groups plus `parallel` are the only way to make two
+  things happen at the same moment: separate calls are not serialised by this server, but
+  nothing here decides when a second call starts, so a client that issues tool calls one at a
+  time produces runs seconds apart and no single result shows the gap. A test holds the
+  first half of that in place, failing if two concurrent runs ever stop overlapping.
+
 - **An SSRF refusal now says that an allowlist entry matches one spelling of a target.** An
   allowlisted hostname is deliberately never resolved — the operator vouched for the name, not
   for whatever it points at today — so it does not cover the addresses behind it, and an

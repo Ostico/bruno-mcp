@@ -107,6 +107,20 @@ An omitted `requests` list means the whole collection. A list that is present an
 not the same thing: you said which requests you wanted and the answer was none of them, so
 the group reports a warning rather than quietly running everything.
 
+### Simultaneity is per call
+
+Groups plus `parallel` are the only way to make two things happen at the same moment. Two
+separate `run_collection` calls are not serialised by this server — nothing here queues the
+second behind the first — but nothing here decides when the second one *starts* either. That
+is the caller's scheduling, and a client that issues tool calls one at a time produces runs
+seconds or tens of seconds apart. No single run's result shows that gap, because each result
+describes only its own run.
+
+The distinction matters for any test whose point is coincidence: one identity listening while
+another triggers, two writers racing for the same variable, a lock held while a second caller
+asks for it. Those belong in **one** call as parallel groups. Across calls, the wall-clock gap
+is not something this server can close.
+
 ## Waiting for another group
 
 `parallel` starts groups together; it says nothing about one group being *ready* before another
