@@ -22,6 +22,7 @@ import { bruFileToYamlRequest, bruAuthToYamlAuth } from './bru-to-yaml.js';
 import type { ExecutionOptions } from './execution-options.js';
 import { type ParsedRequest } from './request-discovery.js';
 import { buildRunPlan, type ResolvedGroup } from './run-plan.js';
+import { createGateRegistry } from './group-gates.js';
 import { createSemaphore } from './concurrency.js';
 import { applyDerivedConcurrency, withReservedConcurrency } from './sandbox-host.js';
 import { createRootLoader, type RootChain, type RootLoader } from './collection-roots.js';
@@ -998,6 +999,8 @@ export class RequestExecutor {
       }
     };
 
+    const gates = createGateRegistry(plan.groups);
+
     // Set by the first failure `bail` catches, and read by everything that has
     // not started yet. `skipped` is filled in at the end, once the results say
     // how many requests it actually cost — counting it here would mean
@@ -1036,6 +1039,13 @@ export class RequestExecutor {
       // and costing no other group its results.
       if (group.error !== undefined) {
         throw new Error(group.error);
+      }
+
+      // Held here rather than before the error check above: a group that cannot
+      // run should say so, not wait first. Rejects if the gate can no longer
+      // open, which becomes this group's error.
+      if (group.startAfter !== undefined) {
+        await gates.waitFor(group.startAfter);
       }
 
       const groupStart = Date.now();
@@ -1084,6 +1094,11 @@ export class RequestExecutor {
         // `parallel` group too: those requests are all handed out at once, but a
         // concurrency cap means the tail of them has not begun, and this is the
         // point each one passes on its way in.
+        //
+        // Returning here skips the gate bookkeeping below, so a group waiting on
+        // this one is left short. That is what `recordGroupEnd` is for: it fails
+        // the waiter with the count it never reached instead of leaving it to
+        // hang, and the group ending is exactly what a bail means.
         if (bail !== undefined) {
           return located(skippedRequestResult(req));
         }
@@ -1095,6 +1110,11 @@ export class RequestExecutor {
           const result = located(crashedRequestResult(req, reason));
           recordBail(result, group.index);
           return result;
+        } finally {
+          // A gate marks a position in a group, so a request that failed still
+          // counts as reached: waiting for a verdict instead would hang the run
+          // rather than report the failure.
+          gates.recordCompletion(group);
         }
       };
 
@@ -1126,10 +1146,21 @@ export class RequestExecutor {
     // on a malformed `settings.proxy`, for example — escapes as a rejection.
     // Reported as that group's `error` rather than thrown, so one bad group
     // cannot hide the results of every other one.
+    // Every way a group can end goes through here, so a group waiting on it is
+    // released — or told it never will be — whether that group finished, threw,
+    // or never started because of its own gate.
+    const runGroupTracked = async (group: ResolvedGroup): Promise<GroupRunResult> => {
+      try {
+        return await runGroup(group);
+      } finally {
+        gates.recordGroupEnd(group);
+      }
+    };
+
     const settled = await withReservedConcurrency(options?.maxConcurrency, async () =>
       options?.parallel
-        ? await Promise.allSettled(plan.groups.map(runGroup))
-        : await runGroupsInOrder(plan.groups, runGroup),
+        ? await Promise.allSettled(plan.groups.map(runGroupTracked))
+        : await runGroupsInOrder(plan.groups, runGroupTracked),
     );
 
     const groups: GroupRunResult[] = settled.map((outcome, index) =>
@@ -1205,6 +1236,7 @@ export class RequestExecutor {
     };
   }
 }
+
 
 /**
  * Run groups one after another, settling each so a rejection is reported in
