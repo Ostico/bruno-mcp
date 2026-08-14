@@ -39,6 +39,11 @@ jest.mock('../../../src/bruno/list-collections-handler', () => ({
 }));
 jest.mock('../../../src/bruno/collection-stats', () => ({
   getCollectionStats: jest.fn(),
+  // Kept real: it is a pure function over the result, and a mocked one returns
+  // undefined, which turns every stats response into an error about a document
+  // that could not be serialised.
+  filterCollectionStats: jest.requireActual('../../../src/bruno/collection-stats')
+    .filterCollectionStats,
 }));
 jest.mock('../../../src/bruno/request-executor', () => ({
   RequestExecutor: { executeCollection: jest.fn() },
