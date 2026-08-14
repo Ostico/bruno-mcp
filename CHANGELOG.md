@@ -5,27 +5,20 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Documentation
-- **How to assert on a gRPC or WebSocket result.** `res.getBody()` on a WebSocket request
-  is the transcript array, and `res.getStatus()` is always `0` — a test written against the
-  status asserts on a constant and cannot fail. The outcome is `res.statusText`, carrying
-  the stop reason. Said once at the end of a paragraph about close codes before; now its own
-  section with an example, and stated in the `run_collection` description where a caller
-  writing assertions will meet it. gRPC's own shape is spelled out alongside.
-- **`includePayloads` gates the result, not the script.** A test script always sees the real
-  payloads, exactly as `res.body` always carries a full HTTP body while `response_body` is
-  gated by `includeResponseBody`. That makes `includePayloads: false` plus content
-  assertions the intended shape for CI — the assertions check the frames, and what comes
-  back holds only direction, timing and sizes. Previously discoverable only from the source.
-- **Simultaneity across separate `run_collection` calls is not promised.** Nothing here
-  serialises them, but nothing here decides when a second call starts either: runs meant to
-  be concurrent have been seen starting more than twenty seconds apart, each passing its own
-  assertions. A test that depends on two things happening at once must be one call with a
-  parallel group.
+## [2.4.0] - 2026-08-14
 
 ### Added
+- **A group can wait for another to reach a given point, via `startAfter`.** `parallel` starts
+  groups together but says nothing about one being *ready* before another acts, so a listener
+  that had to be connected before a trigger fired could only be arranged with a `bru.sleep`
+  tuned to whatever the latency was that day. `startAfter: { group, requestsCompleted }` names a
+  position in another group instead — a fact about the run rather than about the network. It
+  needs `parallel: true` on the run; chains are allowed; a request that failed still counts as a
+  position reached, since waiting for a verdict would hang the run rather than report the
+  failure; and cycles, self-references, unknown names, gates asking for more requests than the
+  group runs, and gates on a group that iterates over rows are all refused before anything runs.
+  If the group being waited on ends early, the waiting group does not start and reports that as
+  its error, naming what it was still waiting for.
 - **`get_collection_stats` reports each request's URL, and can be asked for less.** The URL is
   the field most wanted when triaging an unfamiliar collection — two requests named "Create"
   say nothing, their targets say everything — and it was the one field missing, so learning a
@@ -98,6 +91,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   needs to predict what a call will do.
 
 ### Changed
+- **A `.bru` WebSocket message is sent only if it says `selected: true`, as Bruno reads it.**
+  That dialect states the flag only when it is set — upstream's writer emits nothing for a
+  deselected message and its reader resolves the absence to `false` — so a run that sent
+  every unflagged message was sending frames Bruno's own UI would not. The runner now
+  follows Bruno, and names each message it skips in the result's warnings, so a request that
+  stops sending says why instead of reporting an empty session. A `.bru` request written by
+  this server has always carried the flag and is unaffected; a hand-written one that omits it
+  needs the line added. Authoring a deselected message into a `.bru` collection is no longer
+  refused: it is written without the flag, which is the only way that format has of recording
+  it and the same thing Bruno writes.
 - **`run_collection` now says where simultaneity comes from.** Its description and the
   execution-groups guide both state that groups plus `parallel` are the only way to make two
   things happen at the same moment: separate calls are not serialised by this server, but
@@ -183,6 +186,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   description is now 97 characters, and `registry-manifest.test.ts` asserts the limit, so
   the next occurrence is a local test failure rather than a 4xx nobody can undo. The npm
   description is a separate field with no such limit, which is why nothing else noticed.
+
+### Documentation
+- **How to assert on a gRPC or WebSocket result.** `res.getBody()` on a WebSocket request
+  is the transcript array, and `res.getStatus()` is always `0` — a test written against the
+  status asserts on a constant and cannot fail. The outcome is `res.statusText`, carrying
+  the stop reason. Said once at the end of a paragraph about close codes before; now its own
+  section with an example, and stated in the `run_collection` description where a caller
+  writing assertions will meet it. gRPC's own shape is spelled out alongside.
+- **`includePayloads` gates the result, not the script.** A test script always sees the real
+  payloads, exactly as `res.body` always carries a full HTTP body while `response_body` is
+  gated by `includeResponseBody`. That makes `includePayloads: false` plus content
+  assertions the intended shape for CI — the assertions check the frames, and what comes
+  back holds only direction, timing and sizes. Previously discoverable only from the source.
+- **Simultaneity across separate `run_collection` calls is not promised.** Nothing here
+  serialises them, but nothing here decides when a second call starts either: runs meant to
+  be concurrent have been seen starting more than twenty seconds apart, each passing its own
+  assertions. A test that depends on two things happening at once must be one call with a
+  parallel group.
 
 ## [2.3.0] - 2026-08-12
 
