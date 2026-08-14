@@ -178,7 +178,22 @@ export function bruFileToYamlRequest(bru: BruFile): YamlRequest {
         // Ordinary headers, not a transport-specific block: this is the same list
         // the http path uses, already polarity-flipped above.
         ...(headers ? { headers } : {}),
-        ...(bru.ws.messages ? { messages: bru.ws.messages } : {}),
+        // `.bru` states `selected` only when it is true: upstream's writer emits the
+        // line for a selected message and omits it otherwise, and its reader resolves
+        // a missing pair to false. Our parser keeps only the true case, so that a
+        // rewrite cannot invent a line the file never had. An absence therefore means
+        // the same thing here that it means to Bruno — the message is not sent —
+        // which the boolean below states outright, so the transport does not have to
+        // guess. This is the seam where the runtime view is built and no file is
+        // written from it, so resolving the flag here leaves write fidelity alone.
+        ...(bru.ws.messages
+          ? {
+            messages: bru.ws.messages.map((message) => ({
+              ...message,
+              selected: message.selected === true,
+            })),
+          }
+          : {}),
         ...(bru.ws.extra ? { extra: bru.ws.extra } : {}),
       }
       : undefined,

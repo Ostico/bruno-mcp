@@ -531,6 +531,30 @@ describe('pacing the messages a session sends', () => {
     expect(result.warnings).toContainEqual(expect.stringContaining('"third"'));
   });
 
+  it('names each message it skips for not being selected', async () => {
+    drive = () => {};
+
+    const result = await call(
+      {
+        messages: [
+          { name: 'sent', content: 'a', selected: true },
+          { name: 'held', content: 'b', selected: false },
+          { content: 'c', selected: false },
+        ],
+      },
+      new Map(),
+      { idleTimeoutMs: 50 },
+    );
+
+    expect(sentOffsets(result)).toHaveLength(1);
+    // A `.bru` message says "send me" only by carrying `selected: true`, and that
+    // format cannot tell an omitted flag from a deliberate false. Skipping silently
+    // would let a request that now sends nothing report a clean session with no
+    // reason anywhere in it.
+    expect(result.warnings).toContainEqual(expect.stringContaining('Message "held" is not selected'));
+    expect(result.warnings).toContainEqual(expect.stringContaining('Message at index 2 is not selected'));
+  });
+
   it('does not let the idle bound end a sequence that is still going out', async () => {
     drive = () => {};
 

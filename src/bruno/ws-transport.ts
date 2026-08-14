@@ -239,10 +239,12 @@ interface PlannedFrames {
 /**
  * The frames this session sends, in order, and the reasons some were not sent.
  *
- * `selected: false` is honoured and only `.yml` websocket variants can express it;
- * a `.bru` message has no such flag, so every message in that dialect is sent.
- * Filtering on `!== false` rather than on `=== true` is what keeps the two
- * dialects sending the same frames from equivalent files.
+ * A message that is not selected is not sent, and both dialects reach here with the
+ * flag resolved to a boolean: `.yml` states it either way, and `.bru` states it only
+ * when true, so an absence there means the same thing Bruno reads it as — not sent.
+ * Because `.bru` cannot distinguish an omitted flag from a deliberate `selected: false`,
+ * a skip is announced rather than silent: a request whose messages all lack the flag
+ * now sends nothing, and it says so instead of reporting an empty green session.
  *
  * Two things are refused here rather than sent badly. A type this transport cannot
  * honour is reported instead of being quietly downgraded to a text frame, because
@@ -259,10 +261,17 @@ function framesToSend(request: YamlRequest, subst: (value: string) => string): P
   const warnings: string[] = [];
 
   (request.websocket?.messages ?? []).forEach((message, index) => {
-    if (message.selected === false) return;
-
     const named = message.name !== undefined && message.name.length > 0;
     const label = named ? `"${message.name}"` : `at index ${index}`;
+
+    if (message.selected === false) {
+      warnings.push(
+        `Message ${label} is not selected, so it was not sent. In .bru a message is selected `
+          + 'only by carrying `selected: true`; the format cannot express the difference between '
+          + 'an omitted flag and a deliberate `selected: false`, so both read as not selected.',
+      );
+      return;
+    }
 
     const declared = message.type ?? 'text';
     if (!HONOURED_MESSAGE_TYPES.has(declared)) {

@@ -128,14 +128,27 @@ describe('the .bru funnel carries the new kinds into the run model', () => {
     const model = bruFileToYamlRequest(parseBruRequest(BRU_WS));
     expect(model.info.type).toBe('ws');
     expect(model.websocket?.url).toBe('ws://localhost:8080');
+    // The fixture states no `selected` line, which is how `.bru` says "not selected":
+    // its writer emits the line only for a selected message. The run model resolves it
+    // to an outright false, so the transport sends nothing for this request.
     expect(model.websocket?.messages).toEqual([
-      { name: 'hello', type: 'binary', content: 'cGF5' },
+      { name: 'hello', type: 'binary', content: 'cGF5', selected: false },
     ]);
     // WebSocket credentials are ordinary headers, so they arrive from headersList
     // rather than a transport-specific block.
     expect(model.websocket?.headers).toEqual([
       { name: 'authorization', value: 'Bearer live' },
       { name: 'x-off', value: 'nope', disabled: true },
+    ]);
+  });
+
+  // The other half of the same resolution: a stated flag has to survive it, or the
+  // funnel would report every `.bru` message as one to skip and no session would
+  // ever send anything.
+  it('resolves a stated selected flag to true', () => {
+    const src = BRU_WS.replace('  name: hello\n', '  name: hello\n  selected: true\n');
+    expect(bruFileToYamlRequest(parseBruRequest(src)).websocket?.messages).toEqual([
+      { name: 'hello', type: 'binary', content: 'cGF5', selected: true },
     ]);
   });
 

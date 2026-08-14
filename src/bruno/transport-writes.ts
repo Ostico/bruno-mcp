@@ -83,13 +83,13 @@ export function buildGrpcMessages(
 /**
  * Build the `.bru` `body:ws` messages from an authoring input.
  *
- * A deselected message is refused instead of written. `.bru` expresses only the
- * true half of the flag — upstream writes no line for a deselected message and
- * its reader resolves the absence to `false`, so nothing this writer emits can
- * tell "deselected" apart from "not stated". Since the WebSocket transport
- * sends a message that says nothing, writing the request as asked would produce
- * a file whose run sends a frame the caller excluded. `.yml` carries the false
- * explicitly and has no such limit.
+ * A deselected message is written as a message with no `selected` line, which is
+ * what upstream's own writer emits for one. `.bru` expresses only the true half of
+ * the flag, so the file cannot distinguish "deselected" from "not stated" — but
+ * both are read as not sent, by Bruno and by this runner alike, so the behaviour
+ * the caller asked for is the behaviour the file produces. What is lost is only
+ * the report: reading the request back finds the flag absent rather than false.
+ * `.yml` carries the false explicitly and loses nothing.
  */
 export function buildBruWebsocketMessages(
   messages: CreateWebsocketMessageInput[] | undefined,
@@ -97,23 +97,16 @@ export function buildBruWebsocketMessages(
   if (!messages || messages.length === 0) return undefined;
 
   return messages.map((message, index) => {
-    if (message.selected === false) {
-      throw new BrunoError(
-        `Cannot author a deselected WebSocket message ("${transportMessageTitle(message.title, index)}") `
-          + 'in a .bru collection: the dialect has no way to record it, and the message would be sent. '
-          + 'Leave it out of the request, or use a .yml collection, which carries the flag',
-        'VALIDATION_ERROR',
-      );
-    }
-
     const out: BruTransportMessage = {
       name: transportMessageTitle(message.title, index),
       content: message.content,
-      // Every authored message is one to send, and `.bru` says so only by
-      // writing the line: Bruno's own reader treats its absence as deselected,
-      // so a file authored without it would open in Bruno with nothing to send.
-      selected: true,
     };
+    // `.bru` says "send this" only by carrying the line, since Bruno's reader
+    // treats its absence as deselected: a message authored without it would open
+    // in Bruno with nothing to send. So the line is written for every message the
+    // caller wants sent, and omitted for a deselected one — the only way this
+    // dialect has of recording that, and the same thing upstream's writer emits.
+    if (message.selected !== false) out.selected = true;
     if (message.type !== undefined) out.type = message.type;
     return out;
   });

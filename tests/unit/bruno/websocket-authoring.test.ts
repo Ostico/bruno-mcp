@@ -359,20 +359,38 @@ describe('fields a WebSocket request cannot carry', () => {
     expect(result.error).toContain('HTTP method is required');
   });
 
-  it('refuses a deselected message in .bru, which cannot record one', async () => {
-    const message = await refusal('bru', {
-      websocket: { messages: [{ title: 'held', content: 'pong', selected: false }] },
+  it('writes a deselected message with no selected line, which is all .bru can record', async () => {
+    const content = await author('bru', {
+      websocket: {
+        messages: [
+          { title: 'sent', content: 'ping' },
+          { title: 'held', content: 'pong', selected: false },
+        ],
+      },
     });
 
-    expect(message).toContain('deselected WebSocket message ("held")');
-    expect(message).toContain('.yml');
+    const blocks = content.split('body:ws {').slice(1);
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0]).toContain('name: sent');
+    expect(blocks[0]).toContain('selected: true');
+    // Nothing marks the second message. That is the whole of what this dialect can
+    // say, and it is enough: Bruno and this runner both read an unflagged message as
+    // one not to send, which is what the caller asked for. Writing `selected: false`
+    // would be a line upstream's writer never emits and its reader collapses to the
+    // same absence.
+    expect(blocks[1]).toContain('name: held');
+    expect(blocks[1]).not.toContain('selected');
   });
 
-  it('names a deselected untitled message by its position when refusing it', async () => {
-    const message = await refusal('bru', {
+  it('numbers untitled messages and marks only the ones to send', async () => {
+    const content = await author('bru', {
       websocket: { messages: [{ content: 'first' }, { content: 'second', selected: false }] },
     });
 
-    expect(message).toContain('("message 2")');
+    const blocks = content.split('body:ws {').slice(1);
+    expect(blocks[0]).toContain('name: message 1');
+    expect(blocks[0]).toContain('selected: true');
+    expect(blocks[1]).toContain('name: message 2');
+    expect(blocks[1]).not.toContain('selected');
   });
 });

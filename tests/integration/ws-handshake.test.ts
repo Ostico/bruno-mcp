@@ -91,6 +91,7 @@ ${authBlock}
 body:ws {
   name: first
   type: text
+  selected: true
   content: hello
 }
 `;
