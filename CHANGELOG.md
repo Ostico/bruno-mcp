@@ -19,10 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gated by `includeResponseBody`. That makes `includePayloads: false` plus content
   assertions the intended shape for CI — the assertions check the frames, and what comes
   back holds only direction, timing and sizes. Previously discoverable only from the source.
-- **Simultaneity across separate `run_collection` calls is not promised.** Calls issued
-  together may overlap or may serialise; runs meant to be concurrent have been seen starting
-  more than twenty seconds apart, each passing its own assertions. A test that depends on two
-  things happening at once must be one call with a parallel group.
+- **Simultaneity across separate `run_collection` calls is not promised.** Nothing here
+  serialises them, but nothing here decides when a second call starts either: runs meant to
+  be concurrent have been seen starting more than twenty seconds apart, each passing its own
+  assertions. A test that depends on two things happening at once must be one call with a
+  parallel group.
 
 ### Added
 - **`get_collection_stats` reports each request's URL, and can be asked for less.** The URL is
