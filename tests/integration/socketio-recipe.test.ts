@@ -104,12 +104,14 @@ ws {
 body:ws {
   name: join-default-namespace
   type: text
+  selected: true
   content: 40
 }
 
 body:ws {
   name: emit-probe
   type: text
+  selected: true
   content: 42["probe",{"n":1}]
 }
 `;

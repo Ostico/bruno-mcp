@@ -518,11 +518,11 @@ export interface RequestSettingsInput {
 /**
  * One authored WebSocket message.
  *
- * `selected` is kept as an explicit `false` rather than folded into absence,
- * because for a session that sends several messages the difference between "not
- * selected" and "not stated" decides what reaches the wire. The `.bru` dialect has
- * no field for it at all, which is refused rather than dropped — see
- * `validateRequestInput`.
+ * `selected` is kept as an explicit `false` rather than folded into absence, so that
+ * an input says outright which messages a session sends. On disk the two dialects
+ * differ in what they can record: `.yml` writes the false, while `.bru` can only omit
+ * the flag — which both Bruno and this runner read as not sent, so the behaviour
+ * survives the write even though a read-back reports the flag as absent.
  */
 export interface CreateWebsocketMessageInput {
   /** The message's title, which is how a warning or a transcript entry names it. */

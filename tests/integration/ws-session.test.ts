@@ -104,6 +104,7 @@ ws {
 body:ws {
   name: first
   type: text
+  selected: true
   content: ${body}
 }
 `;
@@ -196,6 +197,29 @@ describe('a connect-send-receive-close cycle, in both dialects', () => {
         maxDurationMs: 400,
       });
       expect(harness.received).toEqual(['hello']);
+    } finally {
+      await stop(harness);
+    }
+  });
+
+  it('does not send a .bru message that never says it is selected', async () => {
+    const harness = await startServer(() => {});
+    try {
+      const results = await run(
+        await collection({
+          // The same fixture with its one `selected` line taken out, which is how a
+          // hand-written request or an older Bruno file arrives.
+          'bru.bru': bruWs('127.0.0.1', harness.port).replace('  selected: true\n', ''),
+        }),
+        { maxDurationMs: 400 },
+      );
+      // Bruno reads an unflagged message as deselected and so does this runner, so the
+      // session connects and says nothing. The warning is the only thing separating
+      // that from a request whose author meant to send nothing.
+      expect(harness.received).toEqual([]);
+      expect(results[0]?.warnings ?? []).toContainEqual(
+        expect.stringContaining('Message "first" is not selected'),
+      );
     } finally {
       await stop(harness);
     }

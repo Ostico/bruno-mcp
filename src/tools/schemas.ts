@@ -191,9 +191,10 @@ export const websocketAuthoringSchema = z.object({
       .describe('The payload, sent verbatim after variable substitution.'),
     selected: z.boolean().optional()
       .describe(
-        'Whether the message is sent. Defaults to true, and is always written, because a ' +
-        '.yml message without it is one Bruno will not send. A false is refused in a .bru ' +
-        'collection, which cannot record it.',
+        'Whether the message is sent. Defaults to true, and is written for every message ' +
+        'that is sent, because a message without it is one Bruno will not send. A false is ' +
+        'written as such in .yml; .bru can only record it by omitting the flag, which reads ' +
+        'back as absent rather than false.',
       ),
   })).optional()
     .describe('Messages sent in order once the socket is open.'),

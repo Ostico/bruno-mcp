@@ -54,11 +54,12 @@ export interface BruTransportMessage {
    * arrive here as the same value and cannot be told apart.
    *
    * So this field is populated only when the file said `selected: true`, and is
-   * left absent otherwise. Absent means "not stated", which the WebSocket
-   * transport still sends — the alternative would silently stop sending every
-   * message of every hand-written `.bru` WebSocket request. For the same reason
-   * the authoring path refuses to author a deselected message in this dialect
-   * rather than write a file whose behaviour disagrees with the request.
+   * left absent otherwise. Absent means not selected, the same reading Bruno
+   * itself takes, and `bruFileToYamlRequest` resolves it to `false` when it builds
+   * the runtime view — so a hand-written `.bru` message is sent only if it says
+   * `selected: true`, and the transport warns by name about each one it skips.
+   * The authoring path refuses to author a deselected message in this dialect
+   * rather than write a file that cannot state what it was asked to state.
    */
   selected?: boolean;
 }

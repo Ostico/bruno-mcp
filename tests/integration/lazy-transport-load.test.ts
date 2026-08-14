@@ -110,6 +110,7 @@ ws {
 body:ws {
   name: first
   type: text
+  selected: true
   content: {"hello":1}
 }
 `;
