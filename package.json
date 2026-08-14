@@ -1,7 +1,7 @@
 {
   "name": "@ostico/bruno-mcp",
   "mcpName": "io.github.Ostico/bruno-mcp-studio",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "description": "Author, edit and run Bruno API collections from an AI agent: non-destructive .bru/.yml editing at byte parity, execution groups, multi-identity auth testing, gRPC and WebSocket. No bru CLI.",
   "main": "dist/index.js",
   "bin": {
