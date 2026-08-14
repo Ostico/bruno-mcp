@@ -12,6 +12,7 @@ import {
   runAssertionsInContext,
   runPostResponseVarsInContext,
 } from './sandbox-assert.js';
+import { SANDBOX_BASE64_LIB } from './sandbox-base64.js';
 import { SANDBOX_EXPECT_LIB } from './sandbox-expect-lib.js';
 import { SANDBOX_CLOCK_LIB, runScriptWithClock } from './sandbox-clock.js';
 import { sandboxQueryLib } from './sandbox-query.js';
@@ -522,6 +523,10 @@ export function runPreRequestJob(
           // user script, which may await it.
           SANDBOX_CLOCK_LIB +
           '\n' +
+          // A pre-request script needs these as much as a post-response one:
+          // building an Authorization header from a credential pair is btoa.
+          SANDBOX_BASE64_LIB +
+          '\n' +
           buildPreRequestSandboxScript(request) +
           '\n' +
           buildSeedVarsScript(variables),
@@ -676,6 +681,8 @@ export function runTestJob(
         SANDBOX_BRU_LIB +
           '\n' +
           SANDBOX_CLOCK_LIB +
+          '\n' +
+          SANDBOX_BASE64_LIB +
           '\n' +
           SANDBOX_EXPECT_LIB +
           '\n' +
