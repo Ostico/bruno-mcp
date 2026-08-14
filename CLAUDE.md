@@ -60,6 +60,25 @@ Otherwise, use your native memory capabilities (MEMORY.md, auto memory, etc.).
 Use **npm**, never yarn. `yarn.lock` is stale, and a yarn-installed tree makes `tsc` run out
 of memory. CI is `npm ci`.
 
+## Changelog entries
+
+A pull request must not touch `CHANGELOG.md` at all. Every entry goes at the top of the same
+`## [Unreleased]` section, so any two open branches conflict there by construction — and the
+work of resolving that grows with the square of how many are open, for a file that changes
+nothing about how the server behaves. Worse, each merge re-conflicts the branches whose
+conflicts were already resolved.
+
+Write the entry while you still understand the work, but write it to `.changelog-pending.md`
+in the repository root instead. That file is uncommitted and stays that way: `.gitignore`
+ignores everything matching `.*`. Head each block with the branch it came from, so an entry
+can be checked against the code that landed. Nothing in CI reads the changelog —
+`tests/unit/meta/source-archive.test.ts` only requires the file to ship — so a branch that
+leaves it alone passes every gate.
+
+If a branch already carries changelog edits when this is noticed, drop them:
+`git checkout origin/main -- CHANGELOG.md`, prove it with
+`git diff --quiet origin/main -- CHANGELOG.md`, and move the text to the pending file.
+
 ## Cutting a release
 
 The tag is what publishes. `.github/workflows/release.yml` fires on a pushed `v*` tag and
@@ -67,9 +86,14 @@ runs `npm publish` with provenance plus a GitHub release; nothing about merging 
 publishes anything. So a release is a normal PR followed by one tag push.
 
 1. **Branch** `chore/release-X.Y.Z` off `origin/main`.
-2. **Roll the changelog.** `## [Unreleased]` becomes `## [X.Y.Z] - YYYY-MM-DD`. Do not
-   reorder or rewrite the entries — they were written when the work landed, by whoever
-   understood it.
+2. **Write the changelog.** Merge every block in `.changelog-pending.md` into
+   `## [Unreleased]`, under the right `### Added` / `### Fixed` / `### Documentation`
+   heading, then rename that section to `## [X.Y.Z] - YYYY-MM-DD` and empty the pending
+   file. Order entries by what they mean to a caller — data loss first, then new
+   capability, then corrections — not by the order the work landed. Do not rewrite the
+   entries themselves: each was written by whoever understood that change. Check the
+   pending file against `git log vPREVIOUS..origin/main --merges` and account for every
+   merge, since nothing enforces that an entry was ever written.
 3. **Bump the version in four places**, which must agree: `package.json`,
    `package-lock.json` (both via `npm version X.Y.Z --no-git-tag-version`), the literal
    in `src/server.ts` that the server reports to its client on connect, and both version
@@ -80,8 +104,11 @@ publishes anything. So a release is a normal PR followed by one tag push.
    `npm run build`. Check the suite *count*, not just "0 failures" — a broken build drops
    whole suites silently.
 5. **Open the PR** as a draft, with a body that says what ships and that merging publishes
-   nothing. Wait for all five CI gates (test 22.x, test 24.x, build, Test adequacy gate,
-   Test-Guard). The user merges it; never merge or force-push.
+   nothing. Wait for all six CI gates (test 22.x, test 24.x, build, Test adequacy gate,
+   Test-Guard, GitGuardian Security Checks). Poll them with
+   `gh pr checks` or `--json statusCheckRollup` reading `status`, not `state`: a check still
+   running reports `state: null` and `conclusion: ""`, which a naive poll calls green. The
+   user merges it; never merge or force-push.
 6. **Tag main after the merge**, annotated and pointing at the merge commit — that is where
    `v2.0.0` and `v2.1.0` point:
    `git tag -a vX.Y.Z <merge-sha> -F <message-file>` then `git push origin vX.Y.Z`.
