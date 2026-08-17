@@ -35,6 +35,21 @@ describe('redactMetadata', () => {
   it('passes undefined through', () => {
     expect(redactMetadata(undefined)).toBeUndefined();
   });
+
+  // A CSRF or XSRF token is a credential for the next request, and one arriving
+  // on a WebSocket upgrade or in gRPC metadata is written into the result and
+  // into any report the run was asked for.
+  it.each([
+    'xsrf-token',
+    'x-xsrf-token',
+    'csrf-token',
+    'x-csrf-token',
+    'x-amz-security-token',
+  ])('masks %s while keeping the name', (name) => {
+    expect(redactMetadata({ [name]: 'eyJhbGciOiJIUzI1NiJ9.token' })).toEqual({
+      [name]: REDACTED,
+    });
+  });
 });
 
 describe('the transcript does not leak an interpolated secret', () => {

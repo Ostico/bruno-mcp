@@ -92,6 +92,28 @@ describe('rejecting contradictory input', () => {
     expect(result.content[0]!.text).toContain('groups');
     expect(mockedExecute).not.toHaveBeenCalled();
   });
+
+  // The refusal is about which keys the caller wrote, not how many entries they
+  // hold. An empty array is what a caller gets when whatever assembled the
+  // selection found nothing, and running the groups instead answers a question
+  // that was never asked.
+  it.each([
+    ['an empty requests array', { requests: [], groups: [{ requests: ['b.bru'] }] }],
+    ['an empty groups array', { requests: ['a.bru'], groups: [] }],
+    ['both empty', { requests: [], groups: [] }],
+  ])('refuses %s as well', async (_label, selection) => {
+    const result = await handler({ collectionPath: '/c', ...selection });
+
+    expect(result.isError).toBe(true);
+    expect(mockedExecute).not.toHaveBeenCalled();
+  });
+
+  it('still accepts each key on its own', async () => {
+    await handler({ collectionPath: '/c', requests: ['a.bru'] });
+    await handler({ collectionPath: '/c', groups: [{ requests: ['b.bru'] }] });
+
+    expect(mockedExecute).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('a group that lists no requests', () => {
