@@ -35,7 +35,13 @@ export class TestRunner {
     options?: TestRunnerOptions,
   ): Promise<PreRequestScriptResult> {
     const timeout = options?.timeout ?? DEFAULT_TIMEOUT;
-    return runPreRequestJob(script, request, timeout, options?.variables);
+    return runPreRequestJob(
+      script,
+      request,
+      timeout,
+      options?.variables,
+      options?.envVariables,
+    );
   }
 
   static async runScript(
@@ -51,6 +57,7 @@ export class TestRunner {
       options?.variables,
       options?.assertions,
       options?.postResponseVars,
+      options?.envVariables,
     );
   }
 }

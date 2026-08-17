@@ -261,9 +261,24 @@ const SANDBOX_BRU_LIB = `
   // read-only script from silently re-emitting the whole environment.
   var store = Object.create(null);
   var written = Object.create(null);
+  //   envStore - the environment layer alone, read by getEnvVar/hasEnvVar.
+  // Its values are also in 'store', because this server's getVar deliberately
+  // resolves the environment too. It is kept apart so a runtime variable that
+  // shadows an environment variable of the same name cannot change what
+  // getEnvVar answers, which is how Bruno's two stores behave.
+  var envStore = Object.create(null);
   var api = Object.create(null);
   api.setVar = function(name, value) { store[name] = value; written[name] = value; };
   api.getVar = function(name) { return store[name]; };
+  api.getEnvVar = function(name) { return envStore[name]; };
+  // Distinguishes an environment variable set to an empty string from one that
+  // was never set, which getEnvVar alone cannot: both read back as falsy.
+  api.hasEnvVar = function(name) {
+    return Object.prototype.hasOwnProperty.call(envStore, name);
+  };
+  // No setEnvVar. A write would have to reach the environment file to mean what
+  // it means upstream, and nothing here writes one, so the honest surface is
+  // read-only rather than a setter whose effect vanishes with the process.
   // Seed external variables the script may read. Populates 'store' only. Values
   // arrive as a JSON string embedded in the per-job prelude source (see
   // buildSeedVarsScript) and are parsed in-context, so no host object crosses
@@ -277,6 +292,18 @@ const SANDBOX_BRU_LIB = `
     var keys = Object.keys(parsed);
     for (var i = 0; i < keys.length; i++) {
       if (keys[i] !== '__proto__') { store[keys[i]] = parsed[keys[i]]; }
+    }
+  };
+  // The same, for the environment layer. Populates 'envStore' only: the merged
+  // seed above already put these values within getVar's reach, and seeding them
+  // twice would say nothing new.
+  __bruSeedEnv = function(json) {
+    var parsed;
+    try { parsed = JSON.parse(json); } catch (e) { return; }
+    if (parsed === null || typeof parsed !== 'object') { return; }
+    var keys = Object.keys(parsed);
+    for (var i = 0; i < keys.length; i++) {
+      if (keys[i] !== '__proto__') { envStore[keys[i]] = parsed[keys[i]]; }
     }
   };
   // Plain assignment, deliberately not "var". A top-level var creates a
@@ -306,6 +333,21 @@ const SANDBOX_BRU_LIB = `
  * circular value, which must surface as a failed script, not a rejected call.
  */
 function buildSeedVarsScript(variables?: Record<string, unknown>): string {
+  return buildSeedCall('__bruSeed', variables);
+}
+
+/**
+ * The same for the environment layer, which `bru.getEnvVar` reads.
+ *
+ * A separate call rather than a second argument to the one above, so a job that
+ * seeds no environment emits no environment seed at all and the prelude stays
+ * byte-identical to what it was.
+ */
+function buildSeedEnvVarsScript(envVariables?: Record<string, unknown>): string {
+  return buildSeedCall('__bruSeedEnv', envVariables);
+}
+
+function buildSeedCall(fn: string, variables?: Record<string, unknown>): string {
   if (!variables) {
     return '';
   }
@@ -313,7 +355,7 @@ function buildSeedVarsScript(variables?: Record<string, unknown>): string {
   if (keys.length === 0) {
     return '';
   }
-  return `__bruSeed(${JSON.stringify(JSON.stringify(variables))});`;
+  return `${fn}(${JSON.stringify(JSON.stringify(variables))});`;
 }
 
 /**
@@ -470,6 +512,15 @@ export interface SandboxJob {
    */
   variables?: Record<string, unknown>;
   /**
+   * The environment layer on its own, for bru.getEnvVar and bru.hasEnvVar.
+   *
+   * Overlaps `variables` in content and not in meaning: upstream answers
+   * getEnvVar from the environment and getVar from what a script set, so a
+   * runtime variable shadowing an environment one of the same name must not
+   * change what getEnvVar reports.
+   */
+  envVariables?: Record<string, unknown>;
+  /**
    * Declared assertions to evaluate, present when kind is 'test'. Already
    * filtered to the enabled ones by the caller: a disabled assertion never
    * crosses, so nothing on this side can evaluate or report one.
@@ -502,6 +553,7 @@ export function runPreRequestJob(
   request: MockRequestData,
   timeout: number,
   variables?: Record<string, unknown>,
+  envVariables?: Record<string, unknown>,
 ): PreRequestScriptResult {
     if (!script || script.trim().length === 0) {
       return { variables: {}, mutations: {} };
@@ -529,7 +581,9 @@ export function runPreRequestJob(
           '\n' +
           buildPreRequestSandboxScript(request) +
           '\n' +
-          buildSeedVarsScript(variables),
+          buildSeedVarsScript(variables) +
+          '\n' +
+          buildSeedEnvVarsScript(envVariables),
         { filename: 'bruno-sandbox-prelude.js' },
       );
 
@@ -648,6 +702,10 @@ export function runTestJob(
   variables?: Record<string, unknown>,
   assertions?: readonly SandboxAssertion[],
   postResponseVars?: readonly SandboxAssertion[],
+  // Last rather than beside `variables`, so every existing caller keeps its
+  // argument list. It is not merged into `variables` because the two answer
+  // different questions: see SandboxJob.envVariables.
+  envVariables?: Record<string, unknown>,
 ): ScriptResult {
     // Variables are passed in so an operand's {{var}} resolves the way Bruno's
     // assert runtime resolves it, against the same merged map the URL uses.
@@ -692,6 +750,8 @@ export function runTestJob(
           buildSandboxSetupScript(response) +
           '\n' +
           buildSeedVarsScript(variables) +
+          '\n' +
+          buildSeedEnvVarsScript(envVariables) +
           '\n' +
           SANDBOX_ASSERT_LIB +
           '\n' +
@@ -878,6 +938,7 @@ export function runJob(job: SandboxJob): SandboxJobResult {
         job.request as MockRequestData,
         job.timeout,
         job.variables,
+        job.envVariables,
       ),
     };
   }
@@ -890,6 +951,7 @@ export function runJob(job: SandboxJob): SandboxJobResult {
       job.variables,
       job.assertions,
       job.postResponseVars,
+      job.envVariables,
     ),
   };
 }

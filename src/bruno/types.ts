@@ -1113,6 +1113,20 @@ export interface TestRunnerOptions {
    */
   variables?: Record<string, unknown>;
   /**
+   * The environment layer alone, for `bru.getEnvVar` and `bru.hasEnvVar`.
+   *
+   * A subset of `variables` by value but not by meaning, and that is the whole
+   * reason it travels separately. Upstream keeps environment variables and
+   * runtime variables in two stores: `getEnvVar` reads the environment, `getVar`
+   * reads what a script set. Seeding one merged store and aliasing `getEnvVar`
+   * onto it would answer with a runtime variable that shadows an environment one
+   * of the same name — a divergence from Bruno that a collection cannot see.
+   *
+   * `variables` stays the merged view, because this server's `getVar` resolving
+   * the environment as well is a deliberate widening a caller relies on.
+   */
+  envVariables?: Record<string, unknown>;
+  /**
    * Declared assertions to evaluate alongside the script. Already filtered to
    * the enabled ones.
    */

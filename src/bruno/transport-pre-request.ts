@@ -52,6 +52,12 @@ export interface TransportPreRequestInput {
   baseVars: Map<string, string>;
   /** The effective variables the transport substitutes with. */
   vars: Map<string, string>;
+  /**
+   * The environment layer alone, read by `bru.getEnvVar`. Narrower than
+   * `baseVars`, which already has `vars:pre-request` folded in, and narrower
+   * again than `vars`.
+   */
+  envVars: Map<string, string>;
   label: TransportLabel;
   /** The target, already substituted, as the script should see it. */
   url: string;
@@ -87,7 +93,9 @@ export interface TransportPreRequestResult {
 export async function runTransportPreRequest(
   input: TransportPreRequestInput,
 ): Promise<TransportPreRequestResult> {
-  const { yaml, rootChain, scriptRunner, variableStore, baseVars, vars, label, url, headers } = input;
+  const {
+    yaml, rootChain, scriptRunner, variableStore, baseVars, vars, envVars, label, url, headers,
+  } = input;
 
   const preScript = mergePreRequest(rootChain?.scripts ?? [], ownPreRequestScript(yaml));
   if (!preScript) return { vars, warnings: [] };
@@ -109,6 +117,11 @@ export async function runTransportPreRequest(
     // entry as an own data property, so a variable named `__proto__` is a plain
     // key rather than a prototype write.
     variables: Object.fromEntries(vars),
+    // The environment layer on its own, which is what `bru.getEnvVar` answers
+    // from. A transport request's script gets it for the same reason an HTTP
+    // one does: the question "was this configured" is asked in a negative
+    // control more often than anywhere else.
+    envVariables: Object.fromEntries(envVars),
   });
 
   const warnings: string[] = [];
