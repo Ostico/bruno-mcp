@@ -4,6 +4,7 @@
  */
 
 import type { BruGrpc, BruWs, YamlGrpc, YamlWebsocket } from './transport-requests.js';
+import type { SessionOutcome } from './transport-results.js';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS';
 
@@ -1074,6 +1075,18 @@ export interface MockResponseData {
   responseTime: number;
   /** Raw response text before any JSON parsing (consumed once from the stream). */
   rawBody?: string;
+  /**
+   * A session's outcome, for a transport whose result is not a status and a
+   * body. Present only for a WebSocket session that opened; absent on an HTTP
+   * response, which is one exchange and has no outcome beyond its status.
+   *
+   * `body` stays the transcript. The outcome is what a transcript cannot state:
+   * "the peer closed with 1008" and "this recording stops short of the session"
+   * are not frames, so a script reading only frames had to infer them from the
+   * absence of something — which is exactly the assertion that passes when the
+   * session failed in a new way.
+   */
+  session?: SessionOutcome;
   /** Every Set-Cookie value, preserved individually — the flat
    * `headers` map comma-joins them, which is lossy because cookie values may
    * contain commas. Present only when the response set at least one cookie. */

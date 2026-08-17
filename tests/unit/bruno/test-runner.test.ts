@@ -203,6 +203,66 @@ describe('TestRunner', () => {
       expect(results[0].status).toBe('pass');
     });
 
+    it('should provide the session outcome of a websocket response', async () => {
+      const script = `test("session", function() {
+        expect(res.getStopReason()).to.equal("timeout");
+        expect(res.getCloseCode()).to.equal(1008);
+        expect(res.getSessionTruncated()).to.equal(true);
+        expect(res.stopReason).to.equal("timeout");
+        expect(res.sessionTruncated).to.equal(true);
+      });`;
+      const mockResponse = {
+        status: 0,
+        statusText: 'timeout',
+        headers: {},
+        body: [],
+        responseTime: 10,
+        session: { stopReason: 'timeout' as const, closeCode: 1008, truncated: true },
+      };
+
+      const { results } = await TestRunner.runScript(script, mockResponse);
+
+      expect(results).toHaveLength(1);
+      expect(results[0].status).toBe('pass');
+    });
+
+    it('should answer the session accessors emptily on an HTTP response', async () => {
+      // An exchange with no session did not stop for a reason, so 'closed' would
+      // answer a question that was never asked.
+      const script = `test("no session", function() {
+        expect(res.getStopReason()).to.equal(null);
+        expect(res.getCloseCode()).to.equal(null);
+        expect(res.getSessionTruncated()).to.equal(false);
+      });`;
+      const mockResponse = { status: 200, statusText: 'OK', headers: {}, body: null, responseTime: 10 };
+
+      const { results } = await TestRunner.runScript(script, mockResponse);
+
+      expect(results).toHaveLength(1);
+      expect(results[0].status).toBe('pass');
+    });
+
+    it('should report no close code for a session that ended without one', async () => {
+      const script = `test("no close", function() {
+        expect(res.getCloseCode()).to.equal(null);
+        expect(res.getStopReason()).to.equal("count");
+        expect(res.getSessionTruncated()).to.equal(true);
+      });`;
+      const mockResponse = {
+        status: 0,
+        statusText: 'count',
+        headers: {},
+        body: [],
+        responseTime: 10,
+        session: { stopReason: 'count' as const, truncated: true },
+      };
+
+      const { results } = await TestRunner.runScript(script, mockResponse);
+
+      expect(results).toHaveLength(1);
+      expect(results[0].status).toBe('pass');
+    });
+
     it('should provide res.getSetCookies() with each Set-Cookie value intact', async () => {
       // Headers.forEach comma-joins Set-Cookie, and a cookie value may itself
       // contain a comma, so getHeader('set-cookie') cannot be split safely.

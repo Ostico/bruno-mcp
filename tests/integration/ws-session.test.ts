@@ -329,6 +329,53 @@ describe('each bound stops the session and names itself', () => {
     }
   }, 10000);
 
+  it('lets a script read the same outcome the result reports', async () => {
+    // The pair, end to end, over a real session: the script's assertions run in
+    // the sandbox against `res`, and the expectations below read the result.
+    // Either half breaking makes this fail, which is the property — an assertion
+    // that passes while the result says something else is the bug this closes.
+    const scripted = (host: string, port: number) => `info:
+  name: Outcome
+  type: websocket
+  seq: 1
+websocket:
+  url: ws://${host}:${port}
+  message:
+    - title: first
+      selected: true
+      message:
+        type: text
+        data: hello
+runtime:
+  scripts:
+    - type: tests
+      code: |
+        test("the session closed with the code the peer sent", function() {
+          expect(res.getStopReason()).to.equal("closed");
+          expect(res.getCloseCode()).to.equal(1008);
+          expect(res.getSessionTruncated()).to.equal(false);
+        });
+`;
+
+    const harness = await startServer((socket) => socket.close(1008, 'policy'));
+    try {
+      const [result] = await run(
+        await collection({ 'outcome.yml': scripted('127.0.0.1', harness.port) }),
+        { maxDurationMs: 2000 },
+      );
+
+      expect(result.error).toBeUndefined();
+      expect(result.tests).toEqual([
+        { description: 'the session closed with the code the peer sent', status: 'pass' },
+      ]);
+      expect(result.websocket?.stop_reason).toBe('closed');
+      expect(result.websocket?.truncated).toBe(false);
+      expect(result.websocket?.transcript.at(-1)?.close_code).toBe(1008);
+    } finally {
+      await stop(harness);
+    }
+  }, 10000);
+
   it('reports a peer-initiated close as closed, not as truncation', async () => {
     const harness = await startServer((socket) => socket.close());
     try {

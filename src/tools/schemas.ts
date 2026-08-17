@@ -18,6 +18,9 @@ export const inlineScriptsSchema = z.object({
   'expect() at the top level still runs, but a passing one records nothing, so run_collection ' +
   'reports "tests": [] and the request looks green with no assertions. Available in scripts: ' +
   'res.getStatus()/getStatusText()/getHeader(name)/getHeaders()/getBody()/getResponseTime(), ' +
+  'res.getStopReason()/getCloseCode()/getSessionTruncated() on a websocket request, which report ' +
+  'the same session outcome the result does (all null or false on an HTTP response, which has no ' +
+  'session), ' +
   'bru.setVar(name, value)/getVar(name)/getEnvVar(name)/hasEnvVar(name), and expect(actual) '
   + 'with .to.equal/.contain/.include, ' +
   '.to.have.property/.lengthOf, .to.be.a/.an, ' +

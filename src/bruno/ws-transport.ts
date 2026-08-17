@@ -815,6 +815,11 @@ export async function executeWebsocketRequest(
 
   const durationMs = Date.now() - startedAt;
 
+  // Built once and used twice: the result reports it, and the script's `res`
+  // outcome is derived from this same object. Two separate constructions from
+  // the same locals would compile and could still disagree.
+  const detail = toWebsocketDetail(transcript, stopReason);
+
   return {
     result: {
       name: request.info.name,
@@ -826,7 +831,7 @@ export async function executeWebsocketRequest(
       duration_ms: durationMs,
       tests: [],
       ...(warnings.length > 0 ? { warnings } : {}),
-      websocket: toWebsocketDetail(transcript, stopReason),
+      websocket: detail,
       // The same field an HTTP result uses, carrying the same thing: what the
       // server answered with. Absent when the handshake never completed.
       ...(upgradeHeaders ? { response_headers: upgradeHeaders } : {}),
@@ -835,6 +840,6 @@ export async function executeWebsocketRequest(
     // A session that opened is verifiable even when it ended badly: "the peer
     // closed before answering" is a thing an author should be able to assert on,
     // so the failure branch is not excluded here.
-    response: websocketResponse(scriptFrames, stopReason, durationMs),
+    response: websocketResponse(detail, scriptFrames, durationMs),
   };
 }

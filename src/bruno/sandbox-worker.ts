@@ -59,6 +59,8 @@ function buildSandboxSetupScript(responseData: MockResponseData): string {
     // into the sandbox until res.getSetCookies() needed it. An accessor over a
     // field nobody serialised would have returned [] forever.
     setCookies: responseData.setCookies,
+    // A WebSocket session's own outcome. Absent for HTTP, where there is none.
+    session: responseData.session,
   });
 
   return `
@@ -113,6 +115,34 @@ res.getSetCookies = function() {
   return Array.isArray(__resData.setCookies) ? __resData.setCookies : [];
 };
 
+// A transport session's outcome: what a transcript of frames cannot say.
+//
+// getBody() stays the transcript, and these three answer the questions the
+// frames leave open -- which bound ended collection, what code the peer closed
+// with, and whether the recording stops short of the session. Each returns the
+// value the RESULT reports for the same session, because both read one object.
+//
+// null on an HTTP response rather than a default: an exchange that has no
+// session did not stop for a reason, and 'closed' would be an answer to a
+// question that was never asked.
+res.getStopReason = function() {
+  return __resData.session ? __resData.session.stopReason : null;
+};
+// null when the session ended with no close frame, which is the ordinary case
+// for a run that stopped on its own bound and terminated the socket.
+res.getCloseCode = function() {
+  return (__resData.session && __resData.session.closeCode !== undefined)
+    ? __resData.session.closeCode
+    : null;
+};
+// Named for the session, not shortened to getTruncated(), because a result also
+// carries response_body_truncated and that is a different thing: the body cap
+// bounds what a RESULT reports and never what a script reads, so a script that
+// believed this flag meant its own body would be asserting on nothing.
+res.getSessionTruncated = function() {
+  return __resData.session ? __resData.session.truncated === true : false;
+};
+
 // Bruno's response object carries the same five values as plain properties as
 // well as getters, and a declared assert block reaches for the properties:
 // "res.status: eq 200", not "res.getStatus(): eq 200". Without these, every
@@ -124,6 +154,15 @@ res.statusText = __resData.statusText;
 res.headers = __resData.headers;
 res.body = __resData.body;
 res.responseTime = __resData.responseTime;
+// The session's outcome as properties too, for the same reason: a declared
+// assert block reaches for "res.stopReason: eq timeout", where a call is not
+// valid syntax. Absent rather than null-filled on HTTP, so an assertion written
+// against a session cannot quietly evaluate against a request/response exchange.
+if (__resData.session) {
+  res.stopReason = __resData.session.stopReason;
+  res.closeCode = __resData.session.closeCode;
+  res.sessionTruncated = __resData.session.truncated === true;
+}
 
 var __pending = 0;
 
