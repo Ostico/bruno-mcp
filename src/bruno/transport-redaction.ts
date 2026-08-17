@@ -21,10 +21,19 @@ import type {
 /**
  * Metadata and handshake-header names whose values are never recorded.
  *
- * Same vocabulary as the cross-origin redirect strip list in
- * `request-redaction.ts`, plus the gRPC-specific spellings. Kept as names rather
- * than patterns: masking by name says which field was withheld without leaking a
- * prefix of its value.
+ * A superset of the cross-origin redirect strip list in `request-redaction.ts`,
+ * which withholds only what a redirect to another origin must not carry. This
+ * list answers a wider question — what must not be written down at all — so it
+ * also covers the gRPC spellings, the vendor session tokens, and the names a
+ * server mints a token *under* rather than reads one from: a CSRF or XSRF token
+ * arriving on a response is a credential for the next request, and a run result
+ * is not the only place it would land. The same names reach an HTML or JUnit
+ * report, which is a file someone commits.
+ *
+ * Kept as names rather than patterns: masking by name says which field was
+ * withheld without leaking a prefix of its value. Only the reported copy is
+ * masked — a script still reads the response's own headers, so a token can be
+ * captured and chained without the report carrying it.
  */
 const CREDENTIAL_NAMES: readonly string[] = [
   'authorization',
@@ -36,6 +45,11 @@ const CREDENTIAL_NAMES: readonly string[] = [
   'apikey',
   'x-auth-token',
   'grpc-authorization',
+  'xsrf-token',
+  'x-xsrf-token',
+  'csrf-token',
+  'x-csrf-token',
+  'x-amz-security-token',
 ];
 
 export const REDACTED = '[redacted]';

@@ -113,7 +113,12 @@ export function registerRunCollectionTool(ctx: ToolContext): void {
 
         // Refused rather than resolved by a precedence rule: the two express
         // different intentions and silently honouring one drops the other.
-        if (args.requests?.length && args.groups?.length) {
+        //
+        // Presence, not length. An empty `requests` array beside `groups` is
+        // still a caller who wrote both keys, and the likeliest reason the array
+        // is empty is that whatever built it found nothing — running the groups
+        // anyway answers a question that was never asked.
+        if (args.requests !== undefined && args.groups !== undefined) {
           return {
             content: [{
               type: 'text',

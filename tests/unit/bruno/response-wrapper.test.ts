@@ -434,3 +434,39 @@ describe('wrapFetchResponse — body handling', () => {
     warn.mockRestore();
   });
 });
+
+describe('wrapFetchResponse — a response that sets two cookies', () => {
+  const SESSION = 'session=a,b; Path=/; HttpOnly';
+  const PERSISTENT = 'persistent=t0ken; Expires=Wed, 09 Sep 2026 10:00:00 GMT';
+
+  function twoCookies(): Response {
+    const headers = new Headers();
+    headers.append('set-cookie', SESSION);
+    headers.append('set-cookie', PERSISTENT);
+    // Repeated non-cookie headers take the other path: the header list combines
+    // them itself, so this one arrives joined without anything being done to it.
+    headers.append('via', '1.1 edge');
+    headers.append('via', '1.1 origin');
+    return new Response('', { headers });
+  }
+
+  it('carries each cookie as its own list entry', async () => {
+    const out = await wrapFetchResponse(twoCookies(), 1);
+    expect(out.setCookies).toEqual([SESSION, PERSISTENT]);
+  });
+
+  // The flat map is the surface a script's res.getHeader() and a declared
+  // assert block read. Iterating the header list yields set-cookie once per
+  // cookie instead of combining them, so assigning each in turn used to leave
+  // only whichever came last, and asking whether login set the persistent-login
+  // cookie could not be answered.
+  it('leaves neither cookie out of the flat header map', async () => {
+    const out = await wrapFetchResponse(twoCookies(), 1);
+    expect(out.headers['set-cookie']).toBe(`${SESSION}, ${PERSISTENT}`);
+  });
+
+  it('joins a repeated ordinary header the same way', async () => {
+    const out = await wrapFetchResponse(twoCookies(), 1);
+    expect(out.headers['via']).toBe('1.1 edge, 1.1 origin');
+  });
+});

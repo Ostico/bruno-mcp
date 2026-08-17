@@ -103,12 +103,12 @@ res.getHeader = function(name) {
 };
 res.getBody = function() { return __resData.body; };
 res.getResponseTime = function() { return __resData.responseTime; };
-// Each Set-Cookie value, unparsed and unjoined. Headers.forEach comma-joins
-// them into one lossy string, so res.getHeader('set-cookie') cannot be split
-// safely -- a cookie value may contain a comma. Always an array, so a script
-// can iterate without a guard. Not a Bruno API: it exposes what the response
-// already captured, for scripts that want the raw values even though the run
-// now relays cookies on its own.
+// Each Set-Cookie value, unparsed and unjoined. res.getHeader('set-cookie')
+// gives the same cookies comma-joined into one string, and that string cannot
+// be split safely -- an Expires attribute contains a comma. Always an array,
+// so a script can iterate without a guard. Not a Bruno API: it exposes what the
+// response already captured, for scripts that want the raw values even though
+// the run now relays cookies on its own.
 res.getSetCookies = function() {
   return Array.isArray(__resData.setCookies) ? __resData.setCookies : [];
 };

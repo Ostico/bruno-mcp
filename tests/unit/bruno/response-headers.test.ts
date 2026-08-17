@@ -41,6 +41,23 @@ describe('collectResponseHeaders', () => {
     expect(headers['x-request-id']).toBe('req-7');
   });
 
+  // The asymmetry this closes: a login that returns its CSRF token in a header
+  // and its session in a cookie had one masked and the other in plaintext, in
+  // the result and in any report the run wrote.
+  it('masks a token minted under a CSRF header name', () => {
+    const headers = collectResponseHeaders({
+      headers: {
+        'x-xsrf-token': 'eyJhbGciOiJIUzI1NiJ9.payload.signature',
+        'xsrf-token': 'eyJhbGciOiJIUzI1NiJ9.other.signature',
+      },
+    });
+
+    expect(headers).toEqual({
+      'x-xsrf-token': '[redacted]',
+      'xsrf-token': '[redacted]',
+    });
+  });
+
   it('keeps every cookie attribute while withholding the value', () => {
     const headers = collectResponseHeaders({
       headers: { 'set-cookie': 'session=s3cret; Path=/; HttpOnly; Secure; SameSite=Lax' },

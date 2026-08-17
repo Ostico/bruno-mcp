@@ -189,10 +189,21 @@ export async function wrapFetchResponse(
     headers[key.toLowerCase()] = value;
   });
 
-  // Headers.forEach comma-joins multiple Set-Cookie into one value, which
-  // is lossy (cookie values may contain commas). getSetCookie() preserves each.
+  // `getSetCookie()` is the only way to see every cookie. `forEach` walks the
+  // sorted-and-combined header list, which combines repeated headers into one
+  // comma-joined value for every name except `set-cookie` — that one it yields
+  // once per cookie, so the loop above assigned each in turn and the flat map
+  // was left holding whichever came last. A login setting a session cookie and
+  // a persistent-login cookie lost one of them, and nothing said so.
   const setCookies =
     typeof response.headers.getSetCookie === 'function' ? response.headers.getSetCookie() : [];
+
+  // The flat map gets the joined form, so a script asking `res.getHeader
+  // ('set-cookie')` sees every cookie rather than one of them. Splitting that
+  // string back apart is still not safe — an `Expires` attribute contains a
+  // comma — which is why the list is carried beside it for `res.getSetCookies()`
+  // and for the reported headers to use in preference.
+  if (setCookies.length > 0) headers['set-cookie'] = setCookies.join(', ');
 
   const { text: rawText, truncated } = await readBodyCapped(response, maxBytes);
   if (truncated) {
