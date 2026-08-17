@@ -78,9 +78,20 @@ interface SandboxJob {
   request?: MockRequestData;    // present when kind === 'pre-request'
   response?: MockResponseData;  // present when kind === 'test'
   variables?: Record<string, unknown>;   // env/collection vars the script may read
+  envVariables?: Record<string, unknown>; // the environment layer alone; bru.getEnvVar
   assertions?: SandboxAssertion[];       // declared assert entries; kind === 'test'
+  postResponseVars?: SandboxAssertion[]; // declared vars:post-response; kind === 'test'
 }
 ```
+
+`variables` and `envVariables` are two stores, not one store sent twice. Upstream
+answers `bru.getVar` from what a script set and `bru.getEnvVar` from the
+environment; this server widens `getVar` to resolve environment and collection
+variables as well, so aliasing `getEnvVar` onto the same store would let a
+runtime variable of the same name silently change its answer. The narrower field
+is what keeps the two accessors independent, and it is why there is no
+`setEnvVar` to send in the other direction — nothing here writes an environment
+file.
 
 `variables` and `assertions` are plain JSON-serialisable data in both directions:
 the worker treats `variables` as values to seed into the sandbox's read store,

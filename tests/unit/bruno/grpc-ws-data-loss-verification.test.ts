@@ -199,7 +199,7 @@ describe('an unrelated edit no longer destroys the transport block', () => {
     expect(view.seq).toBe(42);
     const block = view.grpc ?? view.websocket;
     expect(block?.url).toMatch(/^(grpc|ws):\/\/localhost:/);
-    expect(block?.messages).toBe(2);
+    expect(block?.messages).toHaveLength(2);
     expect(label).toBeDefined();
   });
 

@@ -469,6 +469,7 @@ export function createForkingScriptRunner(
           request,
           timeout: options?.timeout ?? DEFAULT_TIMEOUT,
           variables: options?.variables,
+          envVariables: options?.envVariables,
         },
         { workerPath },
       );
@@ -496,6 +497,7 @@ export function createForkingScriptRunner(
           response,
           timeout: options?.timeout ?? DEFAULT_TIMEOUT,
           variables: options?.variables,
+          envVariables: options?.envVariables,
           assertions,
           postResponseVars,
         },

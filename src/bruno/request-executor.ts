@@ -2,7 +2,11 @@ import { loadEnvironment, substitute } from './env-loader.js';
 import { resetUploadDirsCache } from './upload-path.js';
 import { forkingScriptRunner, type ScriptRunner } from './sandbox-host.js';
 import { wrapFetchResponse } from './response-wrapper.js';
-import { collectResponseHeaders } from './response-headers.js';
+import {
+  applyHeaderCapture,
+  collectResponseHeaders,
+  resolveHeaderCapture,
+} from './response-headers.js';
 import { validateUrl, ssrfRemediation } from './url-validator.js';
 import { VariableStore } from './variable-store.js';
 import { prepareVariables } from './variable-preparation.js';
@@ -172,9 +176,18 @@ async function runVerification(params: {
   scriptRunner: ScriptRunner;
   variableStore?: VariableStore;
   baseVars: Map<string, string>;
+  /**
+   * The environment layer alone, for `bru.getEnvVar`. `baseVars` already
+   * contains these values and more, so this is not a fallback for it: it is the
+   * narrower question a script asks when it means "what was configured", not
+   * "what is in scope".
+   */
+  envVars: Map<string, string>;
   response: MockResponseData;
 }): Promise<VerificationOutcome> {
-  const { yaml, rootChain, scriptRunner, variableStore, baseVars, response } = params;
+  const {
+    yaml, rootChain, scriptRunner, variableStore, baseVars, envVars, response,
+  } = params;
 
   const testScript = mergePostResponse(
     rootChain?.scripts ?? [],
@@ -219,6 +232,7 @@ async function runVerification(params: {
     variables: Object.fromEntries(
       variableStore ? variableStore.merge(baseVars) : prepareVariables(baseVars, new Map()),
     ),
+    envVariables: Object.fromEntries(envVars),
     assertions,
     postResponseVars,
   });
@@ -265,6 +279,7 @@ async function verifyTransport(params: {
   scriptRunner: ScriptRunner;
   variableStore?: VariableStore;
   baseVars: Map<string, string>;
+  envVars: Map<string, string>;
   extraWarnings: string[];
 }): Promise<RequestExecutionResult> {
   const { outcome, extraWarnings, ...rest } = params;
@@ -394,6 +409,7 @@ async function executeSingleRequest(
         variableStore,
         baseVars: grpcBase,
         vars: grpcVars,
+        envVars: vars,
         label: 'GRPC',
         url: grpcUrl,
         headers: buildMetadata(yaml, (value) => substitute(value, grpcVars)),
@@ -421,6 +437,7 @@ async function executeSingleRequest(
         // The post-script set, so a post-response script and an assertion read the
         // variables a pre-request script wrote rather than the stale ones.
         baseVars: pre.vars,
+        envVars: vars,
         extraWarnings: grpcWarnings,
       });
     }
@@ -442,6 +459,7 @@ async function executeSingleRequest(
         variableStore,
         baseVars: wsBase,
         vars: wsVars,
+        envVars: vars,
         label: 'WS',
         url: wsUrl,
         // No auth headers: they are applied inside the transport, after this.
@@ -466,6 +484,7 @@ async function executeSingleRequest(
         scriptRunner,
         variableStore,
         baseVars: pre.vars,
+        envVars: vars,
         extraWarnings: pre.warnings,
       });
     }
@@ -537,6 +556,12 @@ async function executeSingleRequest(
       // property (so a variable literally named "__proto__" is a plain key, not
       // a prototype write); the sandbox seeder then skips that key.
       variables: Object.fromEntries(effectiveVars),
+      // `vars` as it arrived is the environment layer exactly: the environment
+      // file plus this group's overrides, before `vars:pre-request` and before
+      // the runtime store are merged in above. That is what bru.getEnvVar must
+      // answer from, and why it is a separate seed rather than a second name for
+      // the merged set.
+      envVariables: Object.fromEntries(vars),
     });
 
     // Feed variables the script set into the store FIRST, so they are visible
@@ -875,6 +900,7 @@ async function executeSingleRequest(
       scriptRunner,
       variableStore,
       baseVars,
+      envVars: vars,
       response: wrappedResponse,
     });
     const tests = verification.tests;
@@ -943,6 +969,8 @@ export class RequestExecutor {
       maxResponseBodyBytes: options?.maxResponseBodyBytes ?? DEFAULT_MAX_RESPONSE_BODY_BYTES,
     };
 
+    const headerCapture = resolveHeaderCapture(options);
+
     // Fails closed: omitting scriptRunner gets the process boundary, not a
     // silent opt-out of it. The in-process runner is reachable only by naming
     // it, and a caller that names it in production is visible in review.
@@ -990,9 +1018,12 @@ export class RequestExecutor {
     ): Promise<RequestExecutionResult> => {
       const release = await slots.acquire();
       try {
-        return await executeSingleRequest(
-          req.yaml, vars, scriptRunner, store, bodyCapture, collectionPath,
-          jar, await rootLoader.forRequest(req.filePath), tokenCache, options?.websocket,
+        return applyHeaderCapture(
+          await executeSingleRequest(
+            req.yaml, vars, scriptRunner, store, bodyCapture, collectionPath,
+            jar, await rootLoader.forRequest(req.filePath), tokenCache, options?.websocket,
+          ),
+          headerCapture,
         );
       } finally {
         release();

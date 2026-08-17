@@ -712,7 +712,7 @@ export function registerReadRequestTool(ctx: ToolContext): void {
     'read_request',
     {
       title: 'Read Bruno Request',
-      description: 'Read a single request file back as structured JSON: method, url, headers, query and path params, body, auth mode, scripts, assertions, vars, settings and docs. Works on both .bru and .yml and returns the same shape for each, so the on-disk format stays invisible. Use this before modify_request to see current state, and after create_request to confirm what was written. A "notes" array reports anything the file declares that the runner will not act on.',
+      description: 'Read a single request file back as structured JSON: method, url, headers, query and path params, body, auth mode, scripts, assertions, vars, settings and docs. Works on both .bru and .yml and returns the same shape for each, so the on-disk format stays invisible. Use this before modify_request to see current state, and after create_request to confirm what was written. A websocket or grpc request also carries its stored messages in full — title, content, and for a websocket the type and whether the runner will send it — under websocket.messages or grpc.messages, keyed as create_request accepts them. A "notes" array reports anything the file declares that the runner will not act on.',
       inputSchema: {
         filePath: z.string().min(1, 'File path is required')
           .describe('Absolute path to the .bru or .yml request file. Use the path returned by create_request or list_requests rather than rebuilding it: request filenames are lowercased on write.'),

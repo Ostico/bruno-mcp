@@ -19,7 +19,11 @@ import {
   websocketResponse,
   grpcCodeName,
 } from '../../../src/bruno/transport-verification';
-import type { WebsocketTranscriptEntry } from '../../../src/bruno/transport-results';
+import { toWebsocketDetail } from '../../../src/bruno/transport-redaction';
+import type {
+  WebsocketResultDetail,
+  WebsocketTranscriptEntry,
+} from '../../../src/bruno/transport-results';
 
 describe('a gRPC call as res', () => {
   const detail = (over: Partial<{ code: number; details: string }> = {}) => ({
@@ -99,31 +103,75 @@ describe('a websocket session as res', () => {
     { direction: 'received', offset_ms: 4, bytes: 11, payload: 'echo:hello' },
   ];
 
+  const asRes = (
+    stopReason: WebsocketResultDetail['stop_reason'],
+    transcript: WebsocketTranscriptEntry[] = frames,
+    responseTime = 20,
+  ) => websocketResponse(toWebsocketDetail(transcript, stopReason), transcript, responseTime);
+
   it('hands the script the transcript itself, not its JSON text', () => {
-    const res = websocketResponse(frames, 'count', 20);
+    const res = asRes('count');
 
     expect(Array.isArray(res.body)).toBe(true);
     expect((res.body as WebsocketTranscriptEntry[])[1].payload).toBe('echo:hello');
   });
 
   it('serialises the same frames into rawBody', () => {
-    expect(websocketResponse(frames, 'count', 20).rawBody).toBe(JSON.stringify(frames));
+    expect(asRes('count').rawBody).toBe(JSON.stringify(frames));
   });
 
   it('reports the stop reason as the status text', () => {
     // A session has no status, so the field that would carry one carries the
     // thing that actually ended it.
-    expect(websocketResponse(frames, 'timeout', 20).statusText).toBe('timeout');
+    expect(asRes('timeout').statusText).toBe('timeout');
   });
 
   it('leaves status at 0 rather than inventing a successful HTTP one', () => {
-    expect(websocketResponse(frames, 'closed', 20).status).toBe(0);
+    expect(asRes('closed').status).toBe(0);
   });
 
   it('describes an empty session without failing', () => {
-    const res = websocketResponse([], 'closed', 3);
+    const res = asRes('closed', [], 3);
 
     expect(res.body).toEqual([]);
     expect(res.responseTime).toBe(3);
+  });
+
+  // One value read twice, never two constructions of it. Every stop reason is
+  // exercised because the pair is only as safe as its worst case, and `idle` is
+  // the one whose truncation answer differs from its neighbours'.
+  const STOP_REASONS: WebsocketResultDetail['stop_reason'][] = [
+    'count', 'timeout', 'bytes', 'closed', 'error', 'idle',
+  ];
+
+  it.each(STOP_REASONS)('reports the same outcome the result does, stopped by %s', (reason) => {
+    const detail = toWebsocketDetail(frames, reason);
+    const res = websocketResponse(detail, frames, 20);
+
+    expect(res.session?.stopReason).toBe(detail.stop_reason);
+    expect(res.session?.truncated).toBe(detail.truncated);
+    // The stop reason is reachable two ways and both must say the same thing:
+    // statusText predates the session object and assertions were written on it.
+    expect(res.statusText).toBe(detail.stop_reason);
+  });
+
+  it('carries the close code the transcript recorded', () => {
+    const closed: WebsocketTranscriptEntry[] = [
+      ...frames,
+      { direction: 'received', offset_ms: 9, bytes: 2, type: 'close', close_code: 1008 },
+    ];
+
+    const detail = toWebsocketDetail(closed, 'closed');
+
+    expect(websocketResponse(detail, closed, 20).session?.closeCode).toBe(1008);
+  });
+
+  it('reports no close code for a session that ended without a close frame', () => {
+    // A run stopped by its own bound terminates the socket, so there is usually
+    // no close to report. 1000 would claim an ordinary goodbye that never came.
+    const res = asRes('count');
+
+    expect(res.session?.closeCode).toBeUndefined();
+    expect(Object.keys(res.session!)).not.toContain('closeCode');
   });
 });

@@ -16,7 +16,12 @@
  * response does not acquire a 200.
  */
 import type { MockResponseData, RequestExecutionResult } from './types.js';
-import type { GrpcResultDetail, WebsocketTranscriptEntry } from './transport-results.js';
+import type {
+  GrpcResultDetail,
+  WebsocketResultDetail,
+  WebsocketTranscriptEntry,
+} from './transport-results.js';
+import { toSessionOutcome } from './transport-redaction.js';
 
 /** The content type that makes `res.getBody()` hand a script parsed structure. */
 const JSON_CONTENT_TYPE = 'application/json';
@@ -108,17 +113,24 @@ function parsedOrRaw(body: string): unknown {
  * variable and surface it, as it can on HTTP; that is the author's own act.
  *
  * `status` is 0 because a WebSocket session has no status and inventing one would
- * be worse than having none. The session's outcome is in `statusText`, which
- * carries the stop reason.
+ * be worse than having none. The session's outcome is in `session` — and in
+ * `statusText`, which keeps carrying the stop reason for the assertions written
+ * against it before `session` existed.
+ *
+ * The outcome is derived from the `detail` the RESULT reports, not assembled
+ * here from the same ingredients: one value read twice cannot disagree with
+ * itself, and "the script asserted the session timed out while the result says
+ * it closed" is the failure this shape makes impossible.
  */
 export function websocketResponse(
+  detail: WebsocketResultDetail,
   transcript: WebsocketTranscriptEntry[],
-  stopReason: string,
   responseTime: number,
 ): MockResponseData {
   return {
     status: 0,
-    statusText: stopReason,
+    statusText: detail.stop_reason,
+    session: toSessionOutcome(detail),
     headers: { 'content-type': JSON_CONTENT_TYPE },
     // The array itself, not its JSON text: `res.getBody()` is relayed verbatim by
     // the sandbox, so a script must receive the structure the HTTP path would give

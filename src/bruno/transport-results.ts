@@ -66,6 +66,26 @@ export interface WebsocketTranscriptEntry {
   payload?: string;
 }
 
+/**
+ * A session's outcome as a script sees it, on `res`.
+ *
+ * The same three values the result reports, in the shape the sandbox relays.
+ * Derived from the result detail rather than assembled beside it — see
+ * `toSessionOutcome` — because a script asserting on the outcome and a caller
+ * reading it must not be able to disagree about what happened.
+ */
+export interface SessionOutcome {
+  stopReason: WebsocketResultDetail['stop_reason'];
+  /**
+   * The close code the peer sent, absent when the session ended without a close
+   * frame — a run that stopped on its own bound terminates the socket, so there
+   * is often no close to report and inventing 1000 would claim an ordinary
+   * goodbye that never happened.
+   */
+  closeCode?: number;
+  truncated: boolean;
+}
+
 /** A recorded WebSocket session's own outcome. */
 export interface WebsocketResultDetail {
   transcript: WebsocketTranscriptEntry[];

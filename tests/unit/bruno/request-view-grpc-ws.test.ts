@@ -94,7 +94,98 @@ body:ws {
   name: hello
   type: binary
   content: cGF5
+  selected: true
 }
+`;
+
+/**
+ * The same request with the flag omitted, which `.bru` cannot distinguish from a
+ * deliberate `selected: false` — so the runner treats both as not sent, and the
+ * view has to report what the runner will do rather than what the file spells.
+ */
+const BRU_WS_UNSELECTED = `meta {
+  name: Socket
+  type: ws
+  seq: 2
+}
+
+ws {
+  url: ws://localhost:8080
+  body: ws
+  auth: none
+}
+
+body:ws {
+  name: hello
+  type: text
+  content: hi
+}
+`;
+
+/**
+ * Two messages in each dialect, for the assertion that matters most here: the
+ * payloads come back verbatim and in order, so a caller can tell `40` from `4O`
+ * without running the request.
+ */
+const BRU_WS_PAIR = `meta {
+  name: Socket
+  type: ws
+  seq: 2
+}
+
+ws {
+  url: ws://localhost:8080
+  body: ws
+  auth: none
+}
+
+body:ws {
+  name: subscribe
+  type: json
+  content: {"op":"subscribe","id":40}
+  selected: true
+}
+
+body:ws {
+  name: ping
+  type: text
+  content: ping
+}
+`;
+
+const YML_WS_PAIR = `info:
+  name: Socket
+  type: websocket
+  seq: 2
+websocket:
+  url: ws://localhost:8080
+  message:
+    - title: subscribe
+      selected: true
+      message:
+        type: json
+        data: '{"op":"subscribe","id":40}'
+    - title: ping
+      selected: false
+      message:
+        type: text
+        data: ping
+`;
+
+/**
+ * The shape this server's own `.yml` writer emits for a single untitled message:
+ * a flat `message:` rather than a list. A reader that only understood the list
+ * form would report no messages for a file it had written itself.
+ */
+const YML_WS_FLAT = `info:
+  name: Socket
+  type: websocket
+  seq: 2
+websocket:
+  url: ws://localhost:8080
+  message:
+    type: text
+    data: hi
 `;
 
 const YML_WS = `info:
@@ -145,8 +236,22 @@ describe('the view shows a gRPC request', () => {
   it.each([
     ['bru', BRU_GRPC],
     ['yaml', YML_GRPC],
-  ] as const)('reports how many messages are stored (%s)', (format, source) => {
-    expect(grpcView(source, format).grpc?.messages).toBe(2);
+  ] as const)('reports the stored messages themselves, in order (%s)', (format, source) => {
+    expect(grpcView(source, format).grpc?.messages).toEqual([
+      { title: 'm1', content: '{"a":1}' },
+      { title: 'm2', content: '{"b":2}' },
+    ]);
+  });
+
+  it.each([
+    ['bru', BRU_GRPC],
+    ['yaml', YML_GRPC],
+  ] as const)('gives a gRPC message no type and no selected flag (%s)', (format, source) => {
+    // Neither dialect stores either for gRPC, and reporting a default would
+    // invent a fact about the file.
+    const first = grpcView(source, format).grpc?.messages[0];
+    expect(first).not.toHaveProperty('type');
+    expect(first).not.toHaveProperty('selected');
   });
 
   it.each([
@@ -171,11 +276,13 @@ describe('the view shows a gRPC request', () => {
 });
 
 describe('the view shows a WebSocket request', () => {
-  it('reports the target and the message count from a .bru file', () => {
+  it('reports the target and the messages from a .bru file', () => {
     const view = toRequestView(parseBruRequest(BRU_WS), 'bru', 'socket.bru');
     expect(view.type).toBe('ws');
     expect(view.websocket?.url).toBe('ws://localhost:8080');
-    expect(view.websocket?.messages).toBe(1);
+    expect(view.websocket?.messages).toEqual([
+      { title: 'hello', type: 'binary', content: 'cGF5', selected: true },
+    ]);
   });
 
   it('reports the same from a .yml file, whose token is spelled differently', () => {
@@ -184,7 +291,46 @@ describe('the view shows a WebSocket request', () => {
     // caller matching on it does not have to know both spellings.
     expect(view.type).toBe('ws');
     expect(view.websocket?.url).toBe('ws://localhost:8080');
-    expect(view.websocket?.messages).toBe(1);
+    expect(view.websocket?.messages).toEqual([
+      { title: 'hello', type: 'binary', content: 'cGF5', selected: true },
+    ]);
+  });
+
+  it.each([
+    ['bru', BRU_WS_PAIR, 'socket.bru'],
+    ['yaml', YML_WS_PAIR, 'socket.yml'],
+  ] as const)('returns both payloads verbatim and in order (%s)', (format, source, path) => {
+    const view = format === 'bru'
+      ? toRequestView(parseBruRequest(source), 'bru', path)
+      : toRequestView(parseYamlRequest(source), 'yaml', path);
+
+    // Byte-level: a caller confirming what it authored has to be able to tell
+    // `"id":40` from `"id":4O`, which a count cannot answer.
+    expect(view.websocket?.messages).toEqual([
+      {
+        title: 'subscribe',
+        type: 'json',
+        content: '{"op":"subscribe","id":40}',
+        selected: true,
+      },
+      { title: 'ping', type: 'text', content: 'ping', selected: false },
+    ]);
+  });
+
+  it('reads a .bru message with no selected flag back as one the runner will not send', () => {
+    const view = toRequestView(parseBruRequest(BRU_WS_UNSELECTED), 'bru', 'socket.bru');
+    expect(view.websocket?.messages).toEqual([
+      { title: 'hello', type: 'text', content: 'hi', selected: false },
+    ]);
+  });
+
+  it('reads the flat single-message .yml shape this server writes', () => {
+    const view = toRequestView(parseYamlRequest(YML_WS_FLAT), 'yaml', 'socket.yml');
+    // Untitled, so no title key — and selected, because a `.yml` message is sent
+    // unless it says otherwise.
+    expect(view.websocket?.messages).toEqual([
+      { type: 'text', content: 'hi', selected: true },
+    ]);
   });
 
   it('shows its credentials as ordinary headers, not as metadata', () => {

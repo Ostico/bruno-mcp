@@ -15,6 +15,7 @@
 import type {
   WebsocketFrameType,
   WebsocketTranscriptEntry,
+  SessionOutcome,
   WebsocketResultDetail,
 } from './transport-results.js';
 
@@ -222,5 +223,30 @@ export function toWebsocketDetail(
     // quiet. Marking it truncated would put the flag on almost every session that
     // finished early and normally, which is how a warning stops being read.
     truncated: stopReason === 'count' || stopReason === 'timeout' || stopReason === 'bytes',
+  };
+}
+
+/**
+ * The outcome a script reads, taken FROM the detail the result reports.
+ *
+ * Deriving it rather than assembling it beside the detail is the whole point:
+ * `res.getStopReason()` and `result.websocket.stop_reason` are one value read
+ * twice, so an assertion cannot pass against an outcome the result denies. The
+ * close code is read from the transcript for the same reason — it is where the
+ * result already carries it, so there is no second copy to drift.
+ *
+ * The LAST close entry wins. A session records at most one, and taking the last
+ * means a reader gets the code the session actually ended on if that ever stops
+ * being true.
+ */
+export function toSessionOutcome(detail: WebsocketResultDetail): SessionOutcome {
+  const closes = detail.transcript.filter(
+    (entry) => entry.type === 'close' && entry.close_code !== undefined,
+  );
+  const closeCode = closes[closes.length - 1]?.close_code;
+  return {
+    stopReason: detail.stop_reason,
+    ...(closeCode !== undefined ? { closeCode } : {}),
+    truncated: detail.truncated,
   };
 }
