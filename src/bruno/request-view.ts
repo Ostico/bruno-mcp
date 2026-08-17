@@ -108,20 +108,45 @@ export interface RequestView {
 }
 
 /**
- * What a gRPC request holds, as read back.
+ * One stored message of a gRPC or WebSocket request.
  *
- * `messages` is a count rather than the payloads themselves: a stored message can
- * be an arbitrarily large body, and a read tool that inlined every one of them
- * would make listing a collection expensive in exactly the case — a streaming
- * request with many saved messages — where the caller asked only what is there.
+ * The payloads themselves, not a count of them. For these two kinds the messages
+ * ARE the request — the way a body is for an http one — so a read that returned
+ * only how many there were could not answer whether the request says what its
+ * author meant, which is the question this tool exists for. The count used to be
+ * all that was reported, on the reasoning that inlining every message would make
+ * reading a whole collection expensive; nothing reads this view but `read_request`,
+ * which is asked about one named request at a time.
+ *
+ * `title` rather than `name` because that is what `create_request` and
+ * `modify_request` accept, so the value reads back under the key it was written
+ * with and a message can be edited by copying it out of here.
  */
+export interface RequestViewMessage {
+  /** Bruno defaults an untitled message to "message N" by position. */
+  title?: string;
+  content: string;
+  /** WebSocket only, and editor-facing: text, json or xml. Nothing validates it. */
+  type?: string;
+  /**
+   * WebSocket only. Whether the runner will send this message — resolved, not
+   * copied, because the two dialects express the same fact differently: `.bru`
+   * can only say "selected" by carrying the flag, so an omitted flag there means
+   * not sent, while a `.yml` message is sent unless it states `selected: false`.
+   * Reporting the key exactly as the file spells it would make the same request
+   * read differently in each format, which is the difference this layer hides.
+   */
+  selected?: boolean;
+}
+
+/** What a gRPC request holds, as read back. */
 export interface RequestViewGrpc {
   url: string;
   method?: string;
   protoPath?: string;
   methodType?: string;
-  /** How many messages are stored, not the messages themselves. */
-  messages: number;
+  /** The stored request messages, in order. A unary call uses the first. */
+  messages: RequestViewMessage[];
   /** gRPC's own credential block. Only this kind has one. */
   metadata?: RequestViewEntry[];
 }
@@ -133,11 +158,45 @@ export interface RequestViewGrpc {
  */
 export interface RequestViewWebsocket {
   url: string;
-  messages: number;
+  /** The messages sent in order once the socket is open. */
+  messages: RequestViewMessage[];
 }
 
 /** Auth modes stored faithfully but never turned into a credential on the wire. */
 const UNAPPLIED_AUTH_MODES = new Set(['oauth2', 'digest']);
+
+/**
+ * A message as either dialect's model holds it. Both spell the payload `content`
+ * and the label `name`; only the WebSocket half of either carries the other two.
+ */
+interface StoredMessage {
+  name?: string;
+  content?: string;
+  type?: string;
+  selected?: boolean;
+}
+
+/**
+ * One message, as read back.
+ *
+ * `selectedWhenUnstated` is the dialect's answer to a message that says nothing
+ * about being selected, and it differs by format rather than by preference — see
+ * `RequestViewMessage.selected`. Passing it in keeps the resolution here, beside
+ * the field it resolves, instead of at each caller.
+ */
+function message(stored: StoredMessage, selectedWhenUnstated?: boolean): RequestViewMessage {
+  const view: RequestViewMessage = { content: stored.content ?? '' };
+  // An empty name is how a `.yml` file spells "untitled" — the flat single-message
+  // shape this server writes has no title at all, and the parser fills in `''`.
+  // The runner reads that the same way, labelling such a message by position, so
+  // reporting `title: ""` would be a title where the file has none.
+  if (stored.name !== undefined && stored.name.length > 0) view.title = stored.name;
+  if (stored.type !== undefined) view.type = stored.type;
+  if (selectedWhenUnstated !== undefined) {
+    view.selected = stored.selected ?? selectedWhenUnstated;
+  }
+  return view;
+}
 
 function entry(name: string, value: string, disabled?: boolean): RequestViewEntry {
   return disabled ? { name, value, disabled: true } : { name, value };
@@ -186,12 +245,19 @@ function compact(view: RequestView): RequestView {
  * both polarities.
  */
 function grpcSummary(
-  block: { url: string; method?: string; protoPath?: string; methodType?: string; messages?: unknown[] },
+  block: {
+    url: string;
+    method?: string;
+    protoPath?: string;
+    methodType?: string;
+    messages?: StoredMessage[];
+  },
   metadata: RequestViewEntry[] | undefined,
 ): RequestViewGrpc {
   const summary: RequestViewGrpc = {
     url: block.url,
-    messages: block.messages?.length ?? 0,
+    // No `selected` and no `type`: a gRPC message has neither in either dialect.
+    messages: (block.messages ?? []).map((m) => message(m)),
   };
   if (block.method !== undefined) summary.method = block.method;
   if (block.protoPath !== undefined) summary.protoPath = block.protoPath;
@@ -201,9 +267,13 @@ function grpcSummary(
 }
 
 function websocketSummary(
-  block: { url: string; messages?: unknown[] },
+  block: { url: string; messages?: StoredMessage[] },
+  selectedWhenUnstated: boolean,
 ): RequestViewWebsocket {
-  return { url: block.url, messages: block.messages?.length ?? 0 };
+  return {
+    url: block.url,
+    messages: (block.messages ?? []).map((m) => message(m, selectedWhenUnstated)),
+  };
 }
 
 function bruAuthConfig(bru: BruFile): Record<string, unknown> | undefined {
@@ -288,7 +358,9 @@ function fromBru(bru: BruFile, filePath: string): RequestView {
         bru.metadata?.map((m) => entry(m.name, m.value, m.enabled === false)),
       )
       : undefined,
-    websocket: bru.ws ? websocketSummary(bru.ws) : undefined,
+    // `.bru` selects a message only by carrying the flag, so an omitted one is
+    // a message the runner will not send.
+    websocket: bru.ws ? websocketSummary(bru.ws, false) : undefined,
     headers,
     params: {
       query: bruParams(bru.params, 'query'),
@@ -381,7 +453,10 @@ function fromYaml(yaml: YamlRequest, filePath: string): RequestView {
         yaml.grpc.metadata?.map((m) => entry(m.name, m.value, m.disabled === true)),
       )
       : undefined,
-    websocket: yaml.websocket ? websocketSummary(yaml.websocket) : undefined,
+    // `.yml` states the flag either way when this server writes it, and the
+    // runner skips only on an explicit `selected: false`, so a hand-written file
+    // that omits it has a message that IS sent.
+    websocket: yaml.websocket ? websocketSummary(yaml.websocket, true) : undefined,
     // A WebSocket request's credentials are ordinary headers, but `.yml` nests
     // them inside the `websocket` block while `.bru` puts them in the top-level
     // `headers` block the http path already reads. Without this fallback the same
