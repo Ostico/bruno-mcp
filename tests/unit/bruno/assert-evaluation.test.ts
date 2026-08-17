@@ -696,3 +696,31 @@ describe('declared assertions — isolation', () => {
     expect(results[1].status).toBe('pass');
   });
 });
+
+describe('a response that set two cookies, seen from a declared assert', () => {
+  // What `wrapFetchResponse` now hands over: the flat map carries the cookies
+  // joined, and the list carries them apart. The map used to hold only the last
+  // of them, so the two surfaces disagreed about what the response had done and
+  // the shorter one was the one a declared assert reads.
+  const SESSION = 'session=a,b; Path=/; HttpOnly';
+  const PERSISTENT = 'persistent=t0ken; Expires=Wed, 09 Sep 2026 10:00:00 GMT';
+  const withCookies = response({
+    headers: { 'content-type': 'application/json', 'set-cookie': `${SESSION}, ${PERSISTENT}` },
+    setCookies: [SESSION, PERSISTENT],
+  });
+
+  it('can be asked whether the persistent-login cookie was set', () => {
+    const result = assertOne('res.headers["set-cookie"]', 'contains persistent=', withCookies);
+    expect(result.status).toBe('pass');
+  });
+
+  it('reads the same two cookies through the list', () => {
+    const { results } = runTestJob(
+      'test("both", function () { expect(res.getSetCookies().length).to.equal(2); });',
+      withCookies,
+      5000,
+    );
+
+    expect(results[0].status).toBe('pass');
+  });
+});
