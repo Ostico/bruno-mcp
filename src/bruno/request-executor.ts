@@ -2,7 +2,11 @@ import { loadEnvironment, substitute } from './env-loader.js';
 import { resetUploadDirsCache } from './upload-path.js';
 import { forkingScriptRunner, type ScriptRunner } from './sandbox-host.js';
 import { wrapFetchResponse } from './response-wrapper.js';
-import { collectResponseHeaders } from './response-headers.js';
+import {
+  applyHeaderCapture,
+  collectResponseHeaders,
+  resolveHeaderCapture,
+} from './response-headers.js';
 import { validateUrl, ssrfRemediation } from './url-validator.js';
 import { VariableStore } from './variable-store.js';
 import { prepareVariables } from './variable-preparation.js';
@@ -965,6 +969,8 @@ export class RequestExecutor {
       maxResponseBodyBytes: options?.maxResponseBodyBytes ?? DEFAULT_MAX_RESPONSE_BODY_BYTES,
     };
 
+    const headerCapture = resolveHeaderCapture(options);
+
     // Fails closed: omitting scriptRunner gets the process boundary, not a
     // silent opt-out of it. The in-process runner is reachable only by naming
     // it, and a caller that names it in production is visible in review.
@@ -1012,9 +1018,12 @@ export class RequestExecutor {
     ): Promise<RequestExecutionResult> => {
       const release = await slots.acquire();
       try {
-        return await executeSingleRequest(
-          req.yaml, vars, scriptRunner, store, bodyCapture, collectionPath,
-          jar, await rootLoader.forRequest(req.filePath), tokenCache, options?.websocket,
+        return applyHeaderCapture(
+          await executeSingleRequest(
+            req.yaml, vars, scriptRunner, store, bodyCapture, collectionPath,
+            jar, await rootLoader.forRequest(req.filePath), tokenCache, options?.websocket,
+          ),
+          headerCapture,
         );
       } finally {
         release();

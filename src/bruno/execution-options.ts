@@ -53,6 +53,24 @@ export interface ExecutionOptions {
   includeResponseBody?: boolean;
   maxResponseBodyBytes?: number;
   /**
+   * Whether each result carries the response headers it received. On by
+   * default, which is what every run before this option did.
+   *
+   * Off is for a run whose results are read in bulk: `undici` bounds ONE
+   * response's headers at its 16 KB `maxHeaderSize`, and a result set is many
+   * responses, so a run of a few dozen requests can spend more of its output on
+   * repeated header maps than on anything a caller asked about.
+   */
+  includeResponseHeaders?: boolean;
+  /**
+   * The largest a single header value may be, in UTF-8 bytes, before it is cut
+   * and the result says so. Per value rather than per map, so the cap changes
+   * how much of a long value comes back and never which headers are reported —
+   * the names are the part worth reading, and dropping a header to save bytes
+   * would take its name with it.
+   */
+  maxResponseHeaderBytes?: number;
+  /**
    * How scripts are run. Defaults to the FORKING runner, so a caller that says
    * nothing gets the process boundary: scripts come from a collection on disk
    * that the operator did not write. Pass the in-process `TestRunner` only to

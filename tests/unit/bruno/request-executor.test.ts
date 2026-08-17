@@ -345,7 +345,8 @@ describe('RequestExecutor', () => {
 
       const headers = result.groups[0]!.results[0].response_headers!;
       expect(headers['strict-transport-security']).toBe('max-age=31536000');
-      // No script authored, and no flag passed, to see either of these.
+      // No script authored to see either of these, and no flag asked for them:
+      // includeResponseHeaders defaults to on.
       expect(headers['set-cookie']).toEqual([
         'session=[redacted]; HttpOnly; Secure; SameSite=Lax',
         'csrf=[redacted]; Path=/',
@@ -365,6 +366,78 @@ describe('RequestExecutor', () => {
       expect(result.groups[0]!.results[0].response_body).toBeUndefined();
       expect(result.groups[0]!.results[0].response_headers!['content-type'])
         .toBe('application/json');
+    });
+
+    it('carries no response_headers key when includeResponseHeaders is false', async () => {
+      mockFetch.mockResolvedValueOnce(responseWithCookies());
+
+      const result = await RequestExecutor.executeCollection('/test-collection', {
+        scriptRunner: TestRunner,
+        environment: 'dev',
+        includeResponseHeaders: false,
+      });
+
+      // The key itself is absent, not present and undefined: a caller reading
+      // the JSON sees a result that never claimed to carry headers.
+      expect(Object.keys(result.groups[0]!.results[0])).not.toContain('response_headers');
+      expect(result.groups[0]!.results[0].response_headers_truncated).toBeUndefined();
+    });
+
+    it('reports the truncation of an over-cap header rather than shortening silently', async () => {
+      const headers = new Headers({
+        'content-type': 'application/json',
+        'x-long': 'a'.repeat(100),
+      });
+      mockFetch.mockResolvedValueOnce({
+        status: 200,
+        statusText: 'OK',
+        headers,
+        text: jest.fn().mockResolvedValue('{}'),
+        ok: true,
+      } as unknown as Response);
+
+      const result = await RequestExecutor.executeCollection('/test-collection', {
+        scriptRunner: TestRunner,
+        environment: 'dev',
+        maxResponseHeaderBytes: 20,
+      });
+
+      const reported = result.groups[0]!.results[0].response_headers!;
+      expect(reported['x-long']).toBe('a'.repeat(20));
+      expect(result.groups[0]!.results[0].response_headers_truncated).toBe(true);
+      // The cap bounds a value, never which headers are reported: the short one
+      // is whole and the long one's NAME is still here.
+      expect(reported['content-type']).toBe('application/json');
+    });
+
+    it('leaves the truncation flag absent when nothing was cut', async () => {
+      mockFetch.mockResolvedValueOnce(responseWithCookies());
+
+      const result = await RequestExecutor.executeCollection('/test-collection', {
+        scriptRunner: TestRunner,
+        environment: 'dev',
+        maxResponseHeaderBytes: 4096,
+      });
+
+      expect(result.groups[0]!.results[0].response_headers_truncated).toBeUndefined();
+    });
+
+    it('caps each set-cookie entry on its own', async () => {
+      mockFetch.mockResolvedValueOnce(responseWithCookies());
+
+      const result = await RequestExecutor.executeCollection('/test-collection', {
+        scriptRunner: TestRunner,
+        environment: 'dev',
+        maxResponseHeaderBytes: 12,
+      });
+
+      // Both cookies survive, each cut to the cap. Capping the list as a whole
+      // would have dropped the second one entirely.
+      expect(result.groups[0]!.results[0].response_headers!['set-cookie']).toEqual([
+        'session=[red',
+        'csrf=[redact',
+      ]);
+      expect(result.groups[0]!.results[0].response_headers_truncated).toBe(true);
     });
   });
 

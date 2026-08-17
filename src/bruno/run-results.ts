@@ -54,9 +54,17 @@ export interface RequestExecutionResult {
    * `response-headers.ts` for why that asymmetry is the point of the field.
    *
    * Not gated by `includeResponseBody`: that flag exists to keep a large body
-   * out of a result, and headers are neither large nor the thing it names.
+   * out of a result, and a body and a header map are not the same thing to
+   * bound. `includeResponseHeaders` is the flag for this field.
    */
   response_headers?: ResponseHeaders;
+  /**
+   * Set only when at least one header value in `response_headers` was cut to
+   * `maxResponseHeaderBytes`. Absent means every value is the one the server
+   * sent, so a caller that never asks about truncation is never misled by a
+   * value that is short because of this cap rather than because of the server.
+   */
+  response_headers_truncated?: boolean;
   /** Present only for a gRPC request that actually reached a server. */
   grpc?: GrpcResultDetail;
   /** Present only for a WebSocket session that actually opened. */

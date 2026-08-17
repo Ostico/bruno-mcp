@@ -908,6 +908,35 @@ websocket:
     }
   }, 10000);
 
+  // The flag is applied once, for every transport, rather than beside each place
+  // that fills the field in. A WebSocket's headers come from its 101 and an
+  // HTTP response's from the response, so a per-transport implementation is two
+  // copies of one rule; this asserts the one copy reaches the 101.
+  it('leaves out the 101 headers when includeResponseHeaders is false', async () => {
+    const harness = await startServer(
+      (socket) => { socket.on('message', (data) => socket.send(`echo:${data.toString()}`)); },
+      { handleProtocols: (protocols) => (protocols.has('superchat') ? 'superchat' : false) },
+    );
+    try {
+      const collectionRun = await RequestExecutor.executeCollection(
+        await collection({
+          'sub.yml': withProtocol('127.0.0.1', harness.port, 'chat, superchat'),
+        }),
+        {
+          scriptRunner: TestRunner,
+          includeResponseHeaders: false,
+          websocket: { maxMessages: 1, maxDurationMs: 2000 },
+        },
+      );
+
+      const [result] = collectionRun.groups.flatMap((g) => g.results);
+      expect(result.error).toBeUndefined();
+      expect(Object.keys(result)).not.toContain('response_headers');
+    } finally {
+      await stop(harness);
+    }
+  }, 10000);
+
   it('is refused, naming the mismatch, when the server picks nothing', async () => {
     const harness = await startServer(() => {}, { handleProtocols: () => false });
     try {
