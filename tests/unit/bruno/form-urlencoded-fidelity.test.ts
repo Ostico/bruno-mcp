@@ -24,6 +24,7 @@
 import { createRequestBuilder, RequestBuilder } from '../../../src/bruno/request.js';
 import { createCollectionManager } from '../../../src/bruno/collection.js';
 import { parseBruRequest, generateBruRequest } from '../../../src/bruno/bru-parser.js';
+import { toBruBody, toYamlBody } from '../../../src/bruno/request-inputs.js';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -243,6 +244,116 @@ describe('create_request authors a form-urlencoded body', () => {
 
     const raw = await fs.readFile(created.path!, 'utf-8');
     expect(raw).not.toContain('body:form-urlencoded {');
+  });
+
+  it('builds the pairs alone, not the same names again as multipart parts', () => {
+    // `formData` is the only key/value field on the body input, so it carries
+    // these pairs too, and the multipart branch used to fire on its presence
+    // alone. The file was unaffected — the writer emits the block the mode names
+    // — so this is asserted on the model the writer is handed, which is where
+    // the duplicate was.
+    const body = toBruBody({
+      type: 'form-urlencoded',
+      formData: [{ name: 'username', value: 'ada' }],
+    });
+
+    expect(body.formUrlEncoded).toEqual([{ name: 'username', value: 'ada', enabled: true }]);
+    expect(body.formData).toBeUndefined();
+  });
+
+  it('keeps the .yml body type form-urlencoded when the pairs arrive as formData', () => {
+    // The other dialect's builder tests the type first and returns on the
+    // multipart branch, so the same field reaching it decides the body type
+    // rather than adding to it: without the type test this body is written as
+    // multipart-form, and the request goes out with the wrong encoding.
+    const body = toYamlBody({
+      type: 'form-urlencoded',
+      formData: [{ name: 'username', value: 'ada' }],
+    });
+
+    expect(body.type).toBe('form-urlencoded');
+    expect(body.data).toEqual([{ name: 'username', value: 'ada', enabled: true }]);
+  });
+
+  it('accepts a pair typed as text, which is what it stores anyway', async () => {
+    const collectionPath = await makeCollection('typed-text');
+    const created = await builder.createRequest({
+      collectionPath,
+      name: 'Login',
+      method: 'POST',
+      url: 'https://api.example.com/login',
+      body: {
+        type: 'form-urlencoded',
+        formData: [{ name: 'username', value: 'ada', type: 'text' }],
+      },
+    });
+    expect(created.success).toBe(true);
+
+    const raw = await fs.readFile(created.path!, 'utf-8');
+    expect(upstream(raw).entries).toEqual([{ name: 'username', value: 'ada', enabled: true }]);
+  });
+
+  it('refuses a pair typed as a file rather than sending it as text', async () => {
+    // Accepted and dropped before: the request went out with a text pair of the
+    // same name, and nothing said the file was not attached.
+    const collectionPath = await makeCollection('typed-file');
+    const created = await builder.createRequest({
+      collectionPath,
+      name: 'Upload',
+      method: 'POST',
+      url: 'https://api.example.com/x',
+      body: {
+        type: 'form-urlencoded',
+        formData: [{ name: 'avatar', value: './a.png', type: 'file' }],
+      },
+    });
+
+    expect(created.success).toBe(false);
+    expect(created.error).toContain('avatar');
+    expect(created.error).toContain('multipart-form');
+  });
+
+  it('refuses a per-pair contentType, which the block cannot hold', async () => {
+    const collectionPath = await makeCollection('typed-ct');
+    const created = await builder.createRequest({
+      collectionPath,
+      name: 'Upload',
+      method: 'POST',
+      url: 'https://api.example.com/x',
+      body: {
+        type: 'form-urlencoded',
+        formData: [{ name: 'payload', value: '{}', contentType: 'application/json' }],
+      },
+    });
+
+    expect(created.success).toBe(false);
+    expect(created.error).toContain('contentType');
+  });
+
+  it('refuses the same two on a .yml collection, which has its own body builder', async () => {
+    // Two builders, one rule: the assert is called from both, because the .yml
+    // path dropped the fields in exactly the same way.
+    const tmpDir = await fs.mkdtemp(join(tmpdir(), 'bruno-fue-yml-'));
+    const collection = await createCollectionManager().createCollection({
+      name: 'FueYmlAPI',
+      outputPath: tmpDir,
+      format: 'yaml',
+    });
+    expect(collection.success).toBe(true);
+
+    const created = await builder.createRequest({
+      collectionPath: join(tmpDir, 'FueYmlAPI'),
+      name: 'Upload',
+      method: 'POST',
+      url: 'https://api.example.com/x',
+      body: {
+        type: 'form-urlencoded',
+        formData: [{ name: 'avatar', value: './a.png', type: 'file' }],
+      },
+    });
+
+    expect(created.success).toBe(false);
+    expect(created.error).toContain('multipart-form');
   });
 
   it('modify_request writes the same bytes', async () => {

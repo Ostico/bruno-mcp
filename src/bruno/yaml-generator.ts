@@ -507,12 +507,12 @@ export function generateYamlRequest(request: YamlRequest): string {
     // `Number(...)`, which turns an authored `inherit` into 0. This server reads
     // that value, so destroying it would change how the request runs.
     settings.timeout = resolveTimeoutSetting(modelledSettings.timeout);
-    // Not a field of this model, so an authored value arrives in `extra` and is
-    // restored by `applyExtraKeys` below. Claiming the key here first is what
-    // fixes its position: upstream writes it directly after `timeout`, and a key
-    // takes the slot of its first assignment.
-    const authored = settingsExtra?.keepAliveInterval;
-    settings.keepAliveInterval = typeof authored === 'number' ? authored : 0;
+    // Assigned rather than left to the passthrough above so that the key is
+    // present even when the model carried no value: upstream's reader produces
+    // it for every WebSocket request. Assigning it here also fixes its position,
+    // since a key takes the slot of its first assignment and upstream writes
+    // this one directly after `timeout`.
+    settings.keepAliveInterval = modelledSettings.keepAliveInterval ?? 0;
   } else if (!request.grpc) {
     settings.encodeUrl = modelledSettings.encodeUrl ?? true;
     settings.timeout = resolveTimeoutSetting(modelledSettings.timeout);

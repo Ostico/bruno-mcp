@@ -604,6 +604,10 @@ body:ws {
     cGF5
   '''
 }
+
+settings {
+  keepAliveInterval: 30000
+}
 `,
   },
   {

@@ -96,12 +96,16 @@ export const requestVarsSchema = z.object({
  */
 export const requestSettingsSchema = z.object({
   timeout: z.number().int().nonnegative().optional().describe(
-    'Milliseconds, capping two separate things. The HTTP request itself, which ' +
-    'defaults to 30000ms when unset. And the per-script budget shared by ' +
+    'Milliseconds, capping two separate things — and 0 does not mean the same to ' +
+    'both. The request itself: 0 means no deadline at all, and the 30000ms default ' +
+    'is reached only by a request whose file carries no timeout key, which a .yml ' +
+    'request written here never does (that dialect always writes a fully resolved ' +
+    'settings block, and an unset timeout is written as 0). So pass a positive value ' +
+    'if you want a deadline on a .yml request. And the per-script budget shared by ' +
     'pre-request, post-response and tests code, including time spent in bru.sleep, ' +
-    'setTimeout and setInterval, which defaults to 5000ms when unset — a script ' +
-    'that waits longer than its budget is aborted, and setting this is the only way ' +
-    'to lift that 5000ms cap. 0 means no timeout at all.'
+    'setTimeout and setInterval: that one cannot be switched off, so 0 and an unset ' +
+    'timeout both leave it at its 5000ms default, and a positive value is the only ' +
+    'way to raise it. A script that waits longer than its budget is aborted.'
   ),
   followRedirects: z.boolean().optional().describe(
     'Whether a 3xx Location is followed. REDIRECTS ARE FOLLOWED WHEN THIS IS UNSET. ' +
@@ -124,6 +128,15 @@ export const requestSettingsSchema = z.object({
     'encodeUrl encodes it (on). So adding a settings block for some other reason — ' +
     'say to set timeout on a request that had no settings before — turns URL encoding ' +
     'on as a side effect. Pass encodeUrl: false alongside to keep the URL raw.'
+  ),
+  keepAliveInterval: z.number().int().nonnegative().optional().describe(
+    'WebSocket requests only: milliseconds between the pings Bruno sends to hold the ' +
+    'connection open, where 0 means never. A .yml WebSocket request always carries the ' +
+    'key and records an unset value as 0, so this is how you change it; on .bru it is ' +
+    'written only when you supply it. It is read back by read_request either way. This ' +
+    'server\'s own runner sends no periodic pings of its own — it answers a ping the ' +
+    'peer sends and records both frames — so the value is carried for Bruno rather ' +
+    'than acted on here.'
   ),
 }).optional().describe(
   'Request-level settings: transport behaviour (timeouts, redirects, URL encoding), ' +
@@ -160,7 +173,16 @@ export const requestBodySchema = z.object({
     type: z.enum(['text', 'file']).optional(),
     contentType: z.string().optional(),
   })).optional()
-    .describe('multipart/form-data parts, for body.type "form-data" or "multipart-form".'),
+    .describe(
+      'Key/value parts, and the only field here that carries them: multipart/form-data ' +
+      'parts for body.type "form-data" or "multipart-form", and the pairs of a ' +
+      '"form-urlencoded" body, which read_request returns under formUrlEncoded rather ' +
+      'than here (a form-urlencoded body can also be given as an encoded string in ' +
+      '`content`). The per-entry type and contentType describe a multipart part and are ' +
+      'rejected on a form-urlencoded body, where every pair is text and neither field is ' +
+      'stored: pass type "file" or a contentType there and the call fails rather than ' +
+      'writing a request that drops them.',
+    ),
   variables: z.string().optional()
     .describe(
       'GraphQL variables, as raw JSON text. Kept as text end to end, so a {{placeholder}} ' +

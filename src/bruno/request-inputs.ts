@@ -195,8 +195,46 @@ export function assertGraphqlBodyHasQuery(source: NonNullable<CreateRequestInput
   );
 }
 
+/**
+ * Refuse a form-urlencoded body whose parts describe a multipart part.
+ *
+ * `formData` is the only key/value field on the body input, so it carries the
+ * pairs of a form-urlencoded body as well as the parts of a multipart one. What
+ * is stored for the two differs: a form-urlencoded pair is a name, a value and
+ * an enabled flag, and neither dialect has anywhere to put a part `type` or a
+ * `contentType`. Both were accepted and dropped, so a caller who said `type:
+ * "file"` got a text pair with the same name and no indication that the request
+ * cannot send the file.
+ *
+ * `type: "text"` is accepted, because it agrees with what is stored: it says
+ * the same thing the absent key does. Only the two fields that cannot survive
+ * are refused, and the message names the body type that can carry them.
+ */
+export function assertFormUrlEncodedPartsAreText(
+  source: NonNullable<CreateRequestInput['body']>,
+): void {
+  if (source.type !== 'form-urlencoded') return;
+  for (const field of source.formData ?? []) {
+    if (field.type !== undefined && field.type !== 'text') {
+      throw new Error(
+        `A form-urlencoded pair cannot have type "${field.type}": the body stores a name and `
+          + `a value, so "${field.name}" would go out as text. Use body.type "multipart-form" `
+          + 'for a file part.',
+      );
+    }
+    if (field.contentType !== undefined) {
+      throw new Error(
+        `A form-urlencoded pair cannot carry a contentType: "${field.name}" would lose it. The `
+          + 'body has one Content-Type of its own; use body.type "multipart-form" to type a '
+          + 'part.',
+      );
+    }
+  }
+}
+
 export function toYamlBody(source: NonNullable<CreateRequestInput['body']>): YamlBody {
   assertGraphqlBodyHasQuery(source);
+  assertFormUrlEncodedPartsAreText(source);
   if (isMultipartBodyType(source.type) && source.formData) {
     return { type: 'multipart-form', data: toMultipartData(source.formData) };
   }
@@ -245,6 +283,7 @@ export function toYamlBody(source: NonNullable<CreateRequestInput['body']>): Yam
  */
 export function toBruBody(source: NonNullable<CreateRequestInput['body']>): BruBody {
   assertGraphqlBodyHasQuery(source);
+  assertFormUrlEncodedPartsAreText(source);
   const body: BruBody = {
     type: source.type,
     content: source.content,
@@ -254,7 +293,15 @@ export function toBruBody(source: NonNullable<CreateRequestInput['body']>): BruB
     body.formUrlEncoded = toFormUrlEncodedEntries(source);
   }
 
-  if (source.formData) {
+  // Only for a body type that has multipart parts. `formData` is also how a
+  // form-urlencoded body's pairs arrive, and an unguarded test wrote them twice:
+  // once as the pairs above, and once as a `body:multipart-form` block, because
+  // upstream's `.bru` writer emits that block whenever the model holds
+  // `formData` and never looks at the mode. Bruno reads the mode from the http
+  // block, so the second block changed nothing about the request — it just sat
+  // in the file, and came back out of read_request as multipart parts the caller
+  // had not authored.
+  if (isMultipartBodyType(source.type) && source.formData) {
     body.formData = source.formData.map((field) => {
       const part: MultipartFormPart = {
         name: field.name,
@@ -544,5 +591,8 @@ export function mergeRequestSettings<T extends StoredSettings>(
   if (updates.followRedirects !== undefined) merged.followRedirects = updates.followRedirects;
   if (updates.maxRedirects !== undefined) merged.maxRedirects = updates.maxRedirects;
   if (updates.encodeUrl !== undefined) merged.encodeUrl = updates.encodeUrl;
+  if (updates.keepAliveInterval !== undefined) {
+    merged.keepAliveInterval = updates.keepAliveInterval;
+  }
   return merged;
 }

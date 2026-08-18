@@ -457,6 +457,10 @@ function parseSettings(raw: unknown): YamlSettings | undefined {
         : undefined,
     maxRedirects:
       typeof obj.maxRedirects === 'number' ? obj.maxRedirects : undefined,
+    keepAliveInterval:
+      typeof obj.keepAliveInterval === 'number'
+        ? obj.keepAliveInterval
+        : undefined,
   };
 
   const tls = parseTlsSettings(obj.tls);

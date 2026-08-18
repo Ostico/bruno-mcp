@@ -497,6 +497,9 @@ websocket:
         data: cGF5
   subprotocols:
     - graphql-ws
+settings:
+  timeout: 4000
+  keepAliveInterval: 30000
 `,
   },
 ];
