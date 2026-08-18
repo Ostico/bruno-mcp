@@ -181,8 +181,6 @@ export interface GroupRunResult {
    * this group actually set. Absent when none were asked for or none matched.
    */
   capturedVariables?: Record<string, string>;
-  /** Notes about this group rather than about one request. */
-  warnings?: string[];
   /** Set when the group itself failed, as opposed to a request within it. */
   error?: string;
   /**
@@ -278,6 +276,11 @@ export interface CollectionRunResult {
    * Notes about the run as a whole rather than about one request — a request's
    * own warnings live on its `RequestExecutionResult`. Absent when there is
    * nothing to say.
+   *
+   * A group has no warnings of its own. Groups are isolated by design, each
+   * with its own variable store, so a note about a name no store held is only
+   * true of the run: warned per group, a run of three groups said three times
+   * that a name was never set, each time listing what the other two had set.
    */
   warnings?: string[];
   /**
