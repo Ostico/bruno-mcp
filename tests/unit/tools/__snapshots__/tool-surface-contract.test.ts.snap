@@ -13,7 +13,7 @@ exports[`MCP tool surface contract matches the recorded surface exactly (titles,
     "title": "Add Test Script",
   },
   "create_collection": {
-    "description": "Create a new Bruno API testing collection with configuration. The new collection is also added to the workspace registry, because \`list_collections\` reads that registry and not the disk: a collection that is not listed there is invisible to it and to the Bruno app. The result says whether it was registered and, if not, why.",
+    "description": "Create a new Bruno API testing collection with configuration. outputPath is the PARENT directory and name is appended to it: outputPath "/work/apis" with name "Billing" creates the collection at /work/apis/Billing. Do not put the collection name in outputPath as well. The new collection is also added to the workspace registry, because \`list_collections\` reads that registry and not the disk: a collection that is not listed there is invisible to it and to the Bruno app. The result says whether it was registered and, if not, why.",
     "schema": {
       "baseUrl": "string?",
       "description": "string?",
@@ -80,6 +80,15 @@ exports[`MCP tool surface contract matches the recorded surface exactly (titles,
       "suiteName": "string",
     },
     "title": "Create Test Suite",
+  },
+  "delete_collection": {
+    "description": "Permanently delete a Bruno collection: the collection directory and everything inside it is removed from disk, and its workspace registry entry is removed with it. Nothing here can be recovered through this server. Only a directory that is itself a collection root — one holding opencollection.yml or bruno.json — can be deleted, so this cannot be pointed at an arbitrary directory. To keep the files and only stop the collection being listed, use unregister_collection instead.",
+    "schema": {
+      "collectionPath": "string",
+      "confirm": "literal(true)",
+      "workspacePath": "string?",
+    },
+    "title": "Delete Collection",
   },
   "delete_request": {
     "description": "Permanently delete a Bruno request file from a collection. Use this to remove a request created by mistake; the file is unlinked from disk and cannot be recovered through this server. Only .yml/.bru files inside a detected Bruno collection can be deleted. To clear just a script and keep the request, use remove_script instead.",
@@ -217,6 +226,14 @@ SIZE: the per-request array is the bulk of the response and grows with the colle
       "value": "union(string | number | boolean)",
     },
     "title": "Set Environment Variable",
+  },
+  "unregister_collection": {
+    "description": "Remove a collection from the workspace registry, leaving every file on disk untouched. list_collections reads that registry, so this is how an entry stops being listed — including a stale entry whose directory is gone, which is what accumulates when collections are created in temporary directories. To delete the collection itself, use delete_collection.",
+    "schema": {
+      "collectionPath": "string",
+      "workspacePath": "string?",
+    },
+    "title": "Unregister Collection",
   },
   "update_environment": {
     "description": "Partially update an existing Bruno environment by MERGING the provided variables into the existing ones. Pre-existing variables not listed are preserved (unlike create_environment, which replaces the whole file).",

@@ -5,7 +5,7 @@
  */
 
 import { z } from 'zod';
-import { join } from 'path';
+import { basename, join } from 'path';
 import { listCollectionsHandler } from '../bruno/list-collections-handler.js';
 import { getCollectionStats, filterCollectionStats } from '../bruno/collection-stats.js';
 import { collectionDialectWarnings } from '../bruno/request-extensions.js';
@@ -25,6 +25,29 @@ import type { ToolContext } from './context.js';
  * on disk, `list_collections` did not show it, and nothing in the success message
  * explained why.
  */
+/**
+ * Warn when `outputPath` already ends in the collection name.
+ *
+ * `outputPath` is the parent and `name` is appended to it, so passing the
+ * intended collection path produces the name twice — `…/Blind Retest/Blind
+ * Retest`, which then shows up as a phantom folder inside its own collection in
+ * get_collection_stats. That is a legal thing to ask for, so this is a note on a
+ * success rather than a refusal; the shape is distinctive enough to be worth
+ * naming when it appears.
+ *
+ * Case-insensitive, because a leaf differing from the name only in case is the
+ * same mistake, and on macOS it is the same directory.
+ */
+function doubledPathNote(name: string, outputPath: string, createdPath: string): string | undefined {
+  if (basename(outputPath).toLowerCase() !== name.toLowerCase()) {
+    return undefined;
+  }
+  return `Note: outputPath already ended in "${basename(outputPath)}", and name is appended to `
+    + `outputPath, so the collection is at ${createdPath} — the name twice. If you meant `
+    + `${outputPath}, pass its parent directory as outputPath instead; delete_collection removes `
+    + 'this one.';
+}
+
 async function registrationNote(
   args: { name: string; workspacePath?: string; registerInWorkspace?: boolean },
   collectionPath: string,
@@ -66,6 +89,9 @@ export function registerCreateCollectionTool(ctx: ToolContext): void {
     {
       title: 'Create Bruno Collection',
       description: 'Create a new Bruno API testing collection with configuration. '
+        + 'outputPath is the PARENT directory and name is appended to it: outputPath '
+        + '"/work/apis" with name "Billing" creates the collection at /work/apis/Billing. '
+        + 'Do not put the collection name in outputPath as well. '
         + 'The new collection is also added to the workspace registry, because '
         + '`list_collections` reads that registry and not the disk: a collection that is '
         + 'not listed there is invisible to it and to the Bruno app. The result says '
@@ -74,7 +100,7 @@ export function registerCreateCollectionTool(ctx: ToolContext): void {
         name: z.string().min(1, 'Collection name is required'),
         description: z.string().optional(),
         baseUrl: z.string().url().optional(),
-        outputPath: z.string().min(1, 'Output path is required').describe('Absolute path where the new collection directory will be created.'),
+        outputPath: z.string().min(1, 'Output path is required').describe('Absolute path of the PARENT directory to create the collection directory in. name is appended to it, so outputPath "/work/apis" with name "Billing" creates /work/apis/Billing. Passing "/work/apis/Billing" here would create /work/apis/Billing/Billing.'),
         ignore: z.array(z.string()).optional(),
         format: z.enum(['yaml', 'bru']).optional().default('yaml'),
         workspacePath: z.string().optional().describe(
@@ -122,15 +148,18 @@ export function registerCreateCollectionTool(ctx: ToolContext): void {
         const result = await ctx.collectionManager.createCollection(input);
 
         if (result.success) {
+          // The manager's path, not `outputPath`: the collection lives in a
+          // directory named after it, one level below the path asked for.
+          const createdPath = result.path ?? join(args.outputPath, args.name);
+          const doubled = doubledPathNote(args.name, args.outputPath, createdPath);
           return {
             content: [
               {
                 type: 'text',
                 text: `✅ Bruno collection "${args.name}" created successfully at: ${result.path}`
-                  // The manager's path, not `outputPath`: the collection lives in a
-                  // directory named after it, one level below the path asked for.
-                  + `\n${await registrationNote(args, result.path ?? join(args.outputPath, args.name))}`
-              }
+                  + `\n${await registrationNote(args, createdPath)}`
+              },
+              ...(doubled ? [{ type: 'text' as const, text: doubled }] : []),
             ]
           };
         } else {
@@ -201,12 +230,29 @@ export function registerListCollectionsTool(ctx: ToolContext): void {
           };
         }
 
+        // Named where the entries are listed, not only where one is read. A
+        // registry holding entries that point at directories which are gone is
+        // still a working registry, so this is a note rather than an error — but
+        // nothing said which of the listed entries were dead weight or what to do
+        // about them, and a caller reading forty-five of them has no way to tell
+        // that removing them is even possible.
+        const stale = collections.filter((c) => !c.exists);
+        const staleNote = stale.length > 0
+          ? [{
+            type: 'text' as const,
+            text: `${stale.length} of these ${stale.length === 1 ? 'entry points' : 'entries point'} at a `
+              + 'directory that no longer exists ("exists": false), so it cannot be used. Pass its path '
+              + 'to unregister_collection to take it out of the registry.',
+          }]
+          : [];
+
         return {
           content: [
             {
               type: 'text',
               text: JSON.stringify({ collections }, null, 2)
-            }
+            },
+            ...staleNote,
           ]
         };
       } catch (error) {

@@ -10,6 +10,13 @@ const shared: Config = {
   // every src file no test imports — including 455 lines of dead code — while
   // still reporting 100%.
   roots: ['<rootDir>/src', '<rootDir>/tests'],
+  // Runs in every test file's own process, before the test framework loads, and
+  // redirects the workspace registry to a throwaway file. It belongs on both
+  // lanes and not in globalSetup: globalSetup runs once for the whole invocation
+  // and integration suites run in parallel workers, so a single shared registry
+  // would have several of them appending to one file at once. The file itself
+  // documents what was leaking into the developer's real registry.
+  setupFiles: ['<rootDir>/tests/setup-workspace-isolation.ts'],
   moduleFileExtensions: ['ts', 'js', 'json'],
   transform: {
     '^.+\\.ts$': ['ts-jest', {

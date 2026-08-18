@@ -197,6 +197,45 @@ describe('a manager that reports success without a path', () => {
   });
 });
 
+describe('an outputPath that already ends in the collection name', () => {
+  it('is created, with a note that the name is now in the path twice', async () => {
+    const workspacePath = join(dir, 'workspace.yml');
+    await writeFile(workspacePath, EMPTY_WORKSPACE);
+    const doubled = join(dir, 'Fresh');
+
+    const result = await create({ outputPath: doubled, workspacePath });
+
+    // A legal thing to ask for, so it is a note on a success rather than a
+    // refusal — but this is the shape that produced a collection at
+    // `…/Blind Retest/Blind Retest`, which then read as a phantom folder inside
+    // its own collection.
+    expect(result.isError).toBeUndefined();
+    expect(result.content[1]!.text).toContain('the name twice');
+    expect(result.content[1]!.text).toContain(join(doubled, 'Fresh'));
+    expect(result.content[1]!.text).toContain('pass its parent directory');
+    expect(result.content[1]!.text).toContain('delete_collection');
+  });
+
+  it('is noted when the leaf differs only in case', async () => {
+    const workspacePath = join(dir, 'workspace.yml');
+    await writeFile(workspacePath, EMPTY_WORKSPACE);
+
+    const result = await create({ outputPath: join(dir, 'fresh'), workspacePath });
+
+    // The same mistake, and on macOS the same directory.
+    expect(result.content[1]!.text).toContain('the name twice');
+  });
+
+  it('says nothing when outputPath is the parent it is meant to be', async () => {
+    const workspacePath = join(dir, 'workspace.yml');
+    await writeFile(workspacePath, EMPTY_WORKSPACE);
+
+    const result = await create({ workspacePath });
+
+    expect(result.content).toHaveLength(1);
+  });
+});
+
 describe('a workspace path the tool will not touch', () => {
   it('is refused before anything is created', async () => {
     const result = await create({ workspacePath: `${dir}/../escape/workspace.yml` });
