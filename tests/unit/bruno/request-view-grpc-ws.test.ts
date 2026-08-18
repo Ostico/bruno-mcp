@@ -297,6 +297,24 @@ describe('the view shows a WebSocket request', () => {
   });
 
   it.each([
+    ['bru', () => parseBruRequest(`${BRU_WS}\nsettings {\n  keepAliveInterval: 30000\n}\n`)],
+    ['yaml', () => parseYamlRequest(`${YML_WS}settings:\n  keepAliveInterval: 30000\n`)],
+  ])('reports the ping interval as a settings field on %s, not as an extra key', (
+    format,
+    parse,
+  ) => {
+    // What a caller reaches first, and the point of modelling the key: reported
+    // under `extra`, it was readable and unwritable, because the settings input
+    // takes named fields only.
+    const view = toRequestView(parse(), format as 'bru' | 'yaml', `socket.${format}`);
+
+    expect(view.settings).toEqual(
+      expect.objectContaining({ keepAliveInterval: 30000 }),
+    );
+    expect((view.settings as { extra?: unknown } | undefined)?.extra).toBeUndefined();
+  });
+
+  it.each([
     ['bru', BRU_WS_PAIR, 'socket.bru'],
     ['yaml', YML_WS_PAIR, 'socket.yml'],
   ] as const)('returns both payloads verbatim and in order (%s)', (format, source, path) => {

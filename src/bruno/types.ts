@@ -6,6 +6,23 @@
 import type { BruGrpc, BruWs, YamlGrpc, YamlWebsocket } from './transport-requests.js';
 import type { SessionOutcome } from './transport-results.js';
 
+// The request-level `settings` types live in their own module. Imported for the
+// fields below that hold one, and re-exported because every caller reaches the
+// model through this file.
+import type {
+  BruRequestSettings,
+  RequestSettingsInput,
+  YamlSettings,
+} from './settings-types.js';
+
+export type {
+  TimeoutSetting,
+  BruRequestSettings,
+  RequestSettingsInput,
+  TlsSettings,
+  YamlSettings,
+} from './settings-types.js';
+
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS';
 
 /**
@@ -348,37 +365,6 @@ export interface BruAssertion {
   enabled: boolean;
 }
 
-/**
- * The request-level `settings` block.
- *
- * These are the keys Bruno's own .bru writer emits. `keepAliveInterval` is
- * websocket-only and `timeout: 'inherit'` is not modelled, so neither is
- * authorable here yet.
- */
-/**
- * An authored `settings.timeout`, in milliseconds or as the word `inherit`.
- *
- * Both dialects accept the word: `bruToJsonV2` reads it out of a `.bru` settings
- * block, and `resolveTimeoutSetting` in `bruno-common` carries it through a
- * `.yml` write instead of flattening it to a number. In Bruno's own app it means
- * "use the application-level request-timeout preference"
- * (`bruno-electron/src/utils/collection.js:860`). This server has no preference
- * layer, so what a request inherits here is the runner's own default — the same
- * value an absent timeout already gets.
- *
- * Modelling it as a union rather than narrowing it to a number at the parser is
- * what keeps the word on disk: a modelled key never reaches the passthrough bag,
- * so a parser that dropped the value deleted it on the next write.
- */
-export type TimeoutSetting = number | 'inherit';
-
-export interface BruRequestSettings {
-  encodeUrl?: boolean;
-  timeout?: TimeoutSetting;
-  /** The executor honours this; leaving it out of the model dropped it. */
-  followRedirects?: boolean;
-  maxRedirects?: number;
-}
 
 /** A `vars:pre-request` / `vars:post-response` entry. */
 export interface BruVar {
@@ -495,26 +481,6 @@ export interface RequestVarInput {
   local?: boolean;
 }
 
-/**
- * The request-level `settings` block as the MCP tools accept it.
- *
- * Unusually for this file there is no polarity or naming difference between the
- * two dialects: `.bru` writes these four as bare `key: value` lines inside a
- * `settings { }` block, `.yml` writes them as a top-level `settings:` mapping,
- * and both spell every key and type the same way. So this shape needs no
- * conversion on either path — it is carried through as-is.
- *
- * Every field is optional and an omitted field means an absent key, not a
- * default written down. A request authored with no settings at all carries no
- * settings block, which is what Bruno itself writes; the executor's fallbacks
- * (redirects followed, 10-hop cap, 5000ms script budget) then apply.
- */
-export interface RequestSettingsInput {
-  timeout?: number;
-  followRedirects?: boolean;
-  maxRedirects?: number;
-  encodeUrl?: boolean;
-}
 
 /**
  * One authored WebSocket message.
@@ -929,32 +895,6 @@ export interface YamlRuntime {
   extra?: Record<string, unknown>;
 }
 
-export interface TlsSettings {
-  rejectUnauthorized?: boolean;
-  ca?: string;
-  cert?: string;
-  key?: string;
-  /**
-   * Unmodelled keys inside the `tls` block, carried through a write.
-   *
-   * The block needs its own bag because `tls` is a modelled key of
-   * `YamlSettings`: an unrecognised field inside it never reaches the settings
-   * bag, so without this a `tls` block made of fields we do not name parsed to
-   * nothing and was deleted on the next write.
-   */
-  extra?: Record<string, unknown>;
-}
-
-export interface YamlSettings {
-  encodeUrl?: boolean;
-  timeout?: TimeoutSetting;
-  followRedirects?: boolean;
-  maxRedirects?: number;
-  tls?: TlsSettings;
-  proxy?: string;
-  /** Unmodelled `settings` keys, carried through a write. */
-  extra?: Record<string, unknown>;
-}
 
 /** An `assert` entry in a .yml request. */
 export interface YamlAssertion {

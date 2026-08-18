@@ -158,6 +158,7 @@ export const YAML_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   'timeout',
   'followRedirects',
   'maxRedirects',
+  'keepAliveInterval',
   'tls',
   'proxy',
   'extra',

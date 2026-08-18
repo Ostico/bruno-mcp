@@ -394,3 +394,77 @@ describe('fields a WebSocket request cannot carry', () => {
     expect(blocks[1]).not.toContain('selected');
   });
 });
+
+describe('the ping interval a WebSocket session holds itself open with', () => {
+  // Upstream names `keepAliveInterval` in both dialects: `bruToJsonV2` reads it
+  // out of a `.bru` settings block, and the `.yml` WebSocket writer emits it
+  // beside `timeout` for every request. It was readable here and not writable —
+  // a read returned it under `settings.extra`, and the settings input rejects an
+  // unmodelled key — so a read-modify-write could not put back what it had read.
+  it('writes an authored interval into the .bru settings block', async () => {
+    const content = await author('bru', {
+      settings: { keepAliveInterval: 30000 },
+      websocket: { messages: [{ title: 'hello', content: 'ping' }] },
+    });
+
+    expect(content).toContain('settings {\n  keepAliveInterval: 30000\n}\n');
+    expect(parseRequest(content, { format: 'bru' }).settings)
+      .toEqual(expect.objectContaining({ keepAliveInterval: 30000 }));
+  });
+
+  it('writes nothing for it in .bru when it was not authored, as upstream does', async () => {
+    const content = await author('bru', {
+      websocket: { messages: [{ title: 'hello', content: 'ping' }] },
+    });
+
+    expect(content).not.toContain('keepAliveInterval');
+  });
+
+  it('carries an authored interval in .yml, in upstream key order', async () => {
+    const content = await author('yaml', {
+      settings: { timeout: 4000, keepAliveInterval: 45000 },
+      websocket: { messages: [{ title: 'hello', content: 'ping' }] },
+    });
+
+    expect(content).toContain('settings:\n  timeout: 4000\n  keepAliveInterval: 45000\n');
+    expect(parseRequest(content, { format: 'yml' }).settings)
+      .toEqual(expect.objectContaining({ keepAliveInterval: 45000 }));
+  });
+
+  it('survives a modify that sets some other setting', async () => {
+    const collectionPath = await makeCollection('bru');
+    const created = await builder.createRequest({
+      collectionPath,
+      name: 'Echo',
+      kind: 'ws',
+      url: 'ws://localhost:8080',
+      settings: { keepAliveInterval: 30000 },
+      websocket: { messages: [{ title: 'hello', content: 'ping' }] },
+    });
+    if (!created.success || !created.path) throw new Error(`create failed: ${created.error}`);
+
+    const modified = await builder.updateRequest(created.path, {
+      settings: { timeout: 9000 },
+    });
+    if (!modified.success) throw new Error(`modify failed: ${modified.error}`);
+    const content = await fs.readFile(created.path, 'utf-8');
+
+    expect(content).toContain('timeout: 9000');
+    expect(content).toContain('keepAliveInterval: 30000');
+  });
+
+  it('keeps a .bru interval of 0, which upstream drops on the way in', async () => {
+    // 0 is upstream's spelling for "never ping", and its own reader takes the key
+    // under a truthiness guard, so Bruno reads a file that says "never" as one
+    // that says nothing. Both mean the same thing to a session, and keeping the
+    // value is what lets a write reproduce the file it was read from.
+    const content = await author('bru', {
+      settings: { keepAliveInterval: 0 },
+      websocket: { messages: [{ title: 'hello', content: 'ping' }] },
+    });
+
+    expect(content).toContain('keepAliveInterval: 0');
+    expect(parseRequest(content, { format: 'bru' }).settings?.keepAliveInterval)
+      .toBeUndefined();
+  });
+});
