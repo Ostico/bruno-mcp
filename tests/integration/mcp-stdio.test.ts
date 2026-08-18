@@ -10,7 +10,7 @@
  * failure of the actual wire protocol is visible.
  */
 
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -18,6 +18,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { McpError } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import { createWorkspaceResolver } from '../../src/bruno/workspace';
 
 const repoRoot = path.resolve(__dirname, '../..');
 
@@ -57,6 +58,8 @@ const EXPECTED_TOOLS = [
   'run_collection',
   'read_request',
   'read_environment',
+  'unregister_collection',
+  'delete_collection',
 ];
 
 interface Session {
@@ -75,11 +78,19 @@ let tmpRoot: string;
  * Child environment: the parent's, minus any BRUNO_* the developer running the
  * suite happens to have exported, plus the caller's explicit overrides. Without
  * the filter a local BRUNO_SSRF_ALLOWLIST would change what these tests prove.
+ *
+ * BRUNO_WORKSPACE_PATH is the exception, and passes through. tests/setup-workspace-isolation.ts
+ * has already replaced whatever the developer exported with a throwaway file, so
+ * it is no longer a local setting that could change an outcome — and stripping it
+ * sent the child to the Bruno app's own workspace instead, which is how this suite
+ * came to leave three entries per run in a maintainer's real registry, each of
+ * them pointing at a temp directory that is deleted before the next run.
  */
 function childEnv(overrides: Record<string, string> = {}): Record<string, string> {
   const base: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (value === undefined || key.startsWith('BRUNO_')) continue;
+    if (value === undefined) continue;
+    if (key.startsWith('BRUNO_') && key !== 'BRUNO_WORKSPACE_PATH') continue;
     base[key] = value;
   }
   return { ...base, ...overrides };
@@ -245,6 +256,16 @@ describe('MCP stdio transport (real child process)', () => {
     expect(payload.collections).toEqual([
       { name: 'harness-collection', path: collectionPath, exists: true },
     ]);
+
+    // The child resolves its registry from the environment, so create_collection
+    // above registered in whichever workspace it inherited. That has to be the
+    // throwaway file this run was given: with BRUNO_WORKSPACE_PATH stripped from
+    // the child, the registration landed in the Bruno app's own workspace instead,
+    // and three entries per run — each naming a temp directory deleted before the
+    // next one — accumulated in a maintainer's real registry.
+    const inherited = process.env.BRUNO_WORKSPACE_PATH!;
+    expect(inherited).not.toBe(createWorkspaceResolver().getDefaultPath());
+    expect(readFileSync(inherited, 'utf8')).toContain(`path: "${collectionPath}"`);
   }, 60_000);
 
   it('round-trips create_request and list_requests through the protocol', async () => {

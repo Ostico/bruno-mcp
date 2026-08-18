@@ -107,7 +107,7 @@ function readSurface(): Map<string, ToolDescriptor> {
   return surface;
 }
 
-/** The 19 tools the server registers, in registration order (setupTools). */
+/** The 21 tools the server registers, in registration order (setupTools). */
 const EXPECTED_TOOLS = [
   'create_collection',
   'create_environment',
@@ -128,6 +128,8 @@ const EXPECTED_TOOLS = [
   'run_collection',
   'read_request',
   'read_environment',
+  'unregister_collection',
+  'delete_collection',
 ];
 
 describe('MCP tool surface contract', () => {
@@ -137,8 +139,8 @@ describe('MCP tool surface contract', () => {
     expect([...surface.keys()]).toEqual(EXPECTED_TOOLS);
   });
 
-  it('registers 19 tools', () => {
-    expect(surface.size).toBe(19);
+  it('registers 21 tools', () => {
+    expect(surface.size).toBe(21);
   });
 
   // Reported as one map per assertion so a failure names the offending tool

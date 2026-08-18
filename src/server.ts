@@ -16,6 +16,7 @@ import type { ToolContext } from './tools/context.js';
 
 // Tool registrations, one module per domain.
 import { registerCreateCollectionTool, registerListCollectionsTool, registerGetCollectionStatsTool } from './tools/collection-tools.js';
+import { registerUnregisterCollectionTool, registerDeleteCollectionTool } from './tools/collection-lifecycle-tools.js';
 import { registerCreateEnvironmentTool, registerUpdateEnvironmentTool, registerSetEnvironmentVariableTool, registerRemoveEnvironmentVariableTool, registerReadEnvironmentTool } from './tools/environment-tools.js';
 import { registerCreateRequestTool, registerModifyRequestTool, registerMoveRequestTool, registerDeleteRequestTool, registerCreateTestSuiteTool, registerCreateCrudRequestsTool, registerListRequestsTool, registerReadRequestTool } from './tools/request-tools.js';
 import { registerRunCollectionTool } from './tools/run-tools.js';
@@ -92,6 +93,10 @@ export class BrunoMcpServer {
     registerRunCollectionTool(ctx);
     registerReadRequestTool(ctx);
     registerReadEnvironmentTool(ctx);
+    // Appended rather than grouped with the other collection tools, for the same
+    // reason: the order above is the order a client sees, so new tools go last.
+    registerUnregisterCollectionTool(ctx);
+    registerDeleteCollectionTool(ctx);
   }
 
   /**
