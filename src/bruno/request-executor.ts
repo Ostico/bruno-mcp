@@ -10,7 +10,12 @@ import {
 import { validateUrl, ssrfRemediation } from './url-validator.js';
 import { VariableStore } from './variable-store.js';
 import { prepareVariables } from './variable-preparation.js';
-import { collectCapturedVariables } from './captured-variables.js';
+import {
+  authoredPreRequestVarNames,
+  collectCapturedVariables,
+  reconcileCapturedVariables,
+} from './captured-variables.js';
+import type { CapturedVariableReport } from './captured-variables.js';
 import {
   mergePreRequest,
   mergePostResponse,
@@ -46,7 +51,7 @@ import { buildMetadata, executeGrpcRequest } from './grpc-transport.js';
 import type { TransportOutcome } from './transport-verification.js';
 import { runTransportPreRequest } from './transport-pre-request.js';
 import { executeWebsocketRequest, handshakeHeaders, type WebsocketRunOptions } from './ws-transport.js';
-import { writeRunReports } from './run-reports.js';
+import { withRunReports } from './run-reports.js';
 import {
   crashedRequestResult,
   skippedGroupResult,
@@ -1038,6 +1043,11 @@ export class RequestExecutor {
     // predicting what a parallel group had already begun.
     let bail: Omit<BailInfo, 'skipped'> | undefined;
 
+    // One entry per group that got as far as reporting its captures. Read after
+    // the run so a `captureVariables` name is judged against every group rather
+    // than against each one separately.
+    const captureReports: CapturedVariableReport[] = [];
+
     // First failure wins. A `parallel` group can produce several at once, and
     // the one to report is the one that stopped the run, not the last to resolve.
     const recordBail = (result: RequestExecutionResult, groupIndex: number): void => {
@@ -1159,6 +1169,10 @@ export class RequestExecutor {
       }
 
       const captured = collectCapturedVariables(store.getAll(), options?.captureVariables);
+      // Kept for the run to reconcile rather than warned about here: a group is
+      // isolated by design, so what one group's store lacks is only a finding once
+      // every other group has been asked the same question.
+      captureReports.push(captured);
       return {
         name: group.name,
         index: group.index,
@@ -1168,7 +1182,6 @@ export class RequestExecutor {
         ...(group.missingRequests.length > 0 ? { missingRequests: group.missingRequests } : {}),
         ...(captured.names.length > 0 ? { capturedVariableNames: captured.names } : {}),
         ...(Object.keys(captured.values).length > 0 ? { capturedVariables: captured.values } : {}),
-        ...(captured.warnings.length > 0 ? { warnings: captured.warnings } : {}),
       };
     };
 
@@ -1236,6 +1249,11 @@ export class RequestExecutor {
         + 'included; a stop that covers every remaining request needs a serial run.']
       : [];
 
+    const captureWarnings = reconcileCapturedVariables(
+      captureReports,
+      authoredPreRequestVarNames(plan.groups),
+    );
+
     const runResult: CollectionRunResult = {
       summary,
       groups,
@@ -1244,27 +1262,14 @@ export class RequestExecutor {
       // detail cannot drift apart if only one of them is maintained.
       parseErrors: plan.parseFailures.length,
       parseFailures: plan.parseFailures,
-      ...(plan.warnings.length > 0 || bailWarnings.length > 0
-        ? { warnings: [...plan.warnings, ...bailWarnings] }
+      ...(plan.warnings.length > 0 || bailWarnings.length > 0 || captureWarnings.length > 0
+        ? { warnings: [...plan.warnings, ...bailWarnings, ...captureWarnings] }
         : {}),
     };
 
-    if (!options?.report) {
-      return runResult;
-    }
-
-    // Written from the finished result, so a report can never describe a run
-    // that differs from the one returned. A failure to write is reported as a
-    // warning on the run: the results are what was asked for, and losing them
-    // because a by-product could not be saved would be the worse outcome.
-    const written = await writeRunReports(runResult, collectionPath, options.report, new Date());
-    return {
-      ...runResult,
-      ...(written.files.length > 0 ? { reports: written.files } : {}),
-      ...(written.warnings.length > 0
-        ? { warnings: [...(runResult.warnings ?? []), ...written.warnings] }
-        : {}),
-    };
+    return options?.report === undefined
+      ? runResult
+      : withRunReports(runResult, collectionPath, options.report, new Date());
   }
 }
 

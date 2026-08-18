@@ -28,6 +28,16 @@ let upgradeResponse: Record<string, string | string[] | undefined> | undefined;
  */
 let drive: ((socket: FakeSocket) => void) | undefined;
 
+/**
+ * A handshake that never upgrades: `ws` reports an HTTP answer it cannot upgrade
+ * by emitting `error` with no `open`, which is the shape of a URL that 404s.
+ * Set to the message the failure carries.
+ */
+let handshakeFailure: string | undefined;
+
+/** A handshake that neither upgrades nor fails, for the wall-clock ceiling. */
+let handshakeStalls = false;
+
 class FakeSocket extends EventEmitter {
   constructor(url: string, protocols: string[], options: Record<string, unknown>) {
     super();
@@ -35,6 +45,13 @@ class FakeSocket extends EventEmitter {
     // Open, then close immediately: these tests are about the handshake, and a
     // session that never ends would just be the integration test again.
     setImmediate(() => {
+      // Neither of these opens the socket, which is the point: nothing is sent,
+      // so the session reports what it never got to say.
+      if (handshakeStalls) return;
+      if (handshakeFailure !== undefined) {
+        this.emit('error', new Error(handshakeFailure));
+        return;
+      }
       // Real order: `ws` emits upgrade on the 101, before open.
       if (upgradeResponse) this.emit('upgrade', { headers: upgradeResponse });
       this.emit('open');
@@ -68,7 +85,13 @@ afterAll(() => {
   resetAllowlistCache();
 });
 
-beforeEach(() => { dials.length = 0; upgradeResponse = undefined; drive = undefined; });
+beforeEach(() => {
+  dials.length = 0;
+  upgradeResponse = undefined;
+  drive = undefined;
+  handshakeFailure = undefined;
+  handshakeStalls = false;
+});
 
 function request(overrides: Partial<NonNullable<YamlRequest['websocket']>> = {}): YamlRequest {
   return {
@@ -529,6 +552,57 @@ describe('pacing the messages a session sends', () => {
     // exactly like a peer that stopped answering.
     expect(result.warnings).toContainEqual(expect.stringContaining('1 of 3 messages unsent'));
     expect(result.warnings).toContainEqual(expect.stringContaining('"third"'));
+    // The case the pacing advice was written for: 200 ms between sends against a
+    // 250 ms ceiling is exactly a budget that did not cover the schedule.
+    expect(result.warnings).toContainEqual(expect.stringContaining('A paced sequence spends'));
+  });
+
+  it('does not blame pacing for a handshake that never upgraded', async () => {
+    handshakeFailure = 'Unexpected server response: 404';
+
+    const result = await call({ messages: [{ name: 'only', content: 'a' }] }, new Map(), {
+      maxDurationMs: 6000,
+      sendIntervalMs: 0,
+    });
+
+    expect(result.websocket?.stop_reason).toBe('error');
+    expect(result.error).toContain('Unexpected server response: 404');
+    // The message that never went out is still named — that part was never wrong.
+    expect(result.warnings).toContainEqual(expect.stringContaining('1 of 1 messages unsent'));
+    // Tuning maxDurationMs against a 404 is what the advice would have asked for:
+    // one message, no interval, dead in milliseconds against a 6000 ms ceiling.
+    expect(result.warnings?.join(' ') ?? '').not.toContain('A paced sequence spends');
+  });
+
+  it('does not blame pacing for a failure that ended a paced sequence', async () => {
+    handshakeFailure = 'Unexpected server response: 401';
+
+    const result = await call({ messages: three }, new Map(), {
+      maxDurationMs: 6000,
+      sendIntervalMs: 200,
+    });
+
+    // An interval was set, so only the failure suppresses the advice here: a
+    // session that never opened never reached its own schedule.
+    expect(result.websocket?.stop_reason).toBe('error');
+    expect(result.warnings).toContainEqual(expect.stringContaining('3 of 3 messages unsent'));
+    expect(result.warnings?.join(' ') ?? '').not.toContain('A paced sequence spends');
+  });
+
+  it('does not blame pacing when nothing was paced', async () => {
+    handshakeStalls = true;
+
+    const result = await call({ messages: three }, new Map(), {
+      maxDurationMs: 60,
+      sendIntervalMs: 0,
+    });
+
+    // The wall-clock ceiling did end this one, so the advice is at least about the
+    // right bound — but with no interval there is no time between sends for
+    // maxDurationMs to have to cover, and the handshake is where it went.
+    expect(result.websocket?.stop_reason).toBe('timeout');
+    expect(result.warnings).toContainEqual(expect.stringContaining('3 of 3 messages unsent'));
+    expect(result.warnings?.join(' ') ?? '').not.toContain('A paced sequence spends');
   });
 
   it('names each message it skips for not being selected', async () => {

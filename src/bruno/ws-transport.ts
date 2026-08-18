@@ -804,12 +804,27 @@ export async function executeWebsocketRequest(
   // inferred from a transcript that is one send short.
   if (sent < planned.frames.length) {
     const unsent = planned.frames.slice(sent);
+    // The advice about pacing only where pacing could be the explanation. With
+    // `sendIntervalMs` at 0 there is no wall-clock spent between sends for
+    // `maxDurationMs` to have to cover, and a session that carries a failure never
+    // reached its own schedule: a handshake answered with a 404 reported the
+    // failure and this advice side by side, and following the advice would have
+    // changed nothing. Left in place for the case it was written for — a genuinely
+    // paced sequence cut short by its own ceiling.
+    //
+    // Keyed off `failure` rather than a `stopReason === 'error'` test: both are
+    // set together by `finish`, and only this one is a type the compiler still
+    // widens here — `stopReason` is narrowed to its initializer, because every
+    // assignment to it happens inside a callback.
+    const pacing = sendIntervalMs > 0 && failure === undefined
+      ? ' A paced sequence spends wall-clock time between sends, so maxDurationMs has to cover '
+        + 'the whole of it.'
+      : '';
     warnings.push(
       `The session ended (stop_reason "${stopReason}") with ${unsent.length} of `
         + `${planned.frames.length} messages unsent: ${
           unsent.map((pending) => pending.label).join(', ')
-        }. A paced sequence spends wall-clock time between sends, so maxDurationMs has to cover `
-        + 'the whole of it.',
+        }.${pacing}`,
     );
   }
 

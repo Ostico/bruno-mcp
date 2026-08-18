@@ -128,6 +128,31 @@ export async function writeRunReports(
   return written;
 }
 
+/**
+ * Write the reports a run asked for and fold what happened into its result.
+ *
+ * Written from the finished result, so a report can never describe a run that
+ * differs from the one returned. A failure to write is reported as a warning on
+ * the run rather than thrown: the results are what the caller asked for, and
+ * losing them because a by-product could not be saved would be the worse
+ * outcome.
+ */
+export async function withRunReports(
+  result: CollectionRunResult,
+  collectionPath: string,
+  request: RunReportRequest,
+  completedAt: Date,
+): Promise<CollectionRunResult> {
+  const written = await writeRunReports(result, collectionPath, request, completedAt);
+  return {
+    ...result,
+    ...(written.files.length > 0 ? { reports: written.files } : {}),
+    ...(written.warnings.length > 0
+      ? { warnings: [...(result.warnings ?? []), ...written.warnings] }
+      : {}),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // JUnit XML
 // ---------------------------------------------------------------------------

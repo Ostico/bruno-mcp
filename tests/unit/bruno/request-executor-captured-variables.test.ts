@@ -123,7 +123,7 @@ describe('reading back what a run captured', () => {
     expect(result.groups[0]!.capturedVariables).toBeUndefined();
   });
 
-  it('warns on the group when a requested name was never set', async () => {
+  it('warns on the run when a requested name was never set', async () => {
     const root = await collection({
       'login.yml': capturing('login', 'bru.setVar("token", res.body.token);'),
     });
@@ -134,9 +134,92 @@ describe('reading back what a run captured', () => {
     });
 
     expect(result.groups[0]!.capturedVariables).toBeUndefined();
-    // On the group, not the run: a name that one group set and another did not
-    // is two different facts, and a run-level warning could only state one.
-    expect(result.groups[0]!.warnings?.join(' ')).toContain('refresh_token');
+    // On the run, not the group: a group's store is isolated by design, so
+    // whether a name was set anywhere is a question only the run can answer.
+    expect(result.warnings?.join(' ')).toContain('refresh_token');
+    expect(result.groups[0]!).not.toHaveProperty('warnings');
+  });
+
+  it('says nothing when each group captured what the other one did not', async () => {
+    // The misreport this replaced: with two groups the run emitted two
+    // warnings, each naming the variable the other group had just set.
+    const root = await collection({
+      'login.yml': capturing('login', 'bru.setVar("token", res.body.token);'),
+      'order.yml': capturing('order', 'bru.setVar("orderId", res.body.id);'),
+    });
+
+    const result = await RequestExecutor.executeCollection(root, {
+      scriptRunner: TestRunner,
+      captureVariables: ['token', 'orderId'],
+      groups: [
+        { name: 'auth', requests: ['login.yml'] },
+        { name: 'orders', requests: ['order.yml'] },
+      ],
+    });
+
+    expect(result.groups[0]!.capturedVariables).toEqual({ token: 'tok-from-response' });
+    expect(result.groups[1]!.capturedVariables).toEqual({ orderId: '42' });
+    expect(result.warnings ?? []).toEqual([]);
+  });
+
+  it('names a vars:preRequest variable as scoped rather than as never set', async () => {
+    // It IS set, and the old warning said no script had set it and that
+    // supplied variables are not captured — neither of which is this case. A
+    // pre-request vars block is applied for interpolation and scoped to its own
+    // request, so it never reaches the store the values come from.
+    const root = await collection({
+      'seed.yml': `info:
+  name: seed
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/seed"
+runtime:
+  variables:
+    - name: host
+      value: example.com
+`,
+    });
+
+    const result = await RequestExecutor.executeCollection(root, {
+      scriptRunner: TestRunner,
+      captureVariables: ['host'],
+    });
+
+    const warnings = (result.warnings ?? []).join(' ');
+    expect(warnings).toContain('host');
+    expect(warnings).toContain('vars:preRequest');
+    expect(warnings).not.toContain('no script set');
+  });
+
+  it('does not credit a disabled vars:preRequest entry with setting anything', async () => {
+    // A disabled entry is not applied, so the name really is set nowhere and
+    // the explanation that fits it is the other one.
+    const root = await collection({
+      'seed.yml': `info:
+  name: seed
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "https://api.example.com/seed"
+runtime:
+  variables:
+    - name: host
+      value: example.com
+      disabled: true
+`,
+    });
+
+    const result = await RequestExecutor.executeCollection(root, {
+      scriptRunner: TestRunner,
+      captureVariables: ['host'],
+    });
+
+    const warnings = (result.warnings ?? []).join(' ');
+    expect(warnings).toContain('no script set');
+    expect(warnings).not.toContain('vars:preRequest');
   });
 
   it('does not capture the variables the caller supplied for the run', async () => {
