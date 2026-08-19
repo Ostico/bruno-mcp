@@ -8,7 +8,12 @@ tests/fixtures/csv/*.csv -text
 # What a source archive of this repository contains.
 #
 # `export-ignore` applies to `git archive`, which is what GitHub serves as "Download
-# ZIP" and as the source tarball attached to every release and tag. It does not touch
+# ZIP" and as the source tarball attached to every release and tag.
+#
+# Every directory rule below is anchored with a leading slash, and must stay that way.
+# A pattern like `tools/` matches a directory of that name at ANY depth, so the rule
+# meant for this repository's own `tools` also excluded `src/tools` — the whole tool
+# layer — from every archive published up to 2.4.0. `/tools/` means the one at the root. It does not touch
 # the npm package — that is the `files` field in package.json, which ships `dist/`
 # only — and it does not touch a clone, a fetch or a CI checkout, since those are git
 # operations rather than archives. The test suite and the workflows excluded below are
@@ -23,7 +28,7 @@ tests/fixtures/csv/*.csv -text
 
 # The test suite and its fixtures: the bulk of the repository by file count, and of no
 # use without the jest and eslint configuration excluded alongside it.
-tests/ export-ignore
+/tests/ export-ignore
 jest.config.ts export-ignore
 .eslintrc.json export-ignore
 
@@ -36,14 +41,14 @@ jest.config.ts export-ignore
 # CONTRIBUTING.md already does. That is the accepted cost of the rule above: an archive is
 # for building and running the server, and both files are one click away on GitHub for
 # anyone who wants them.
-docs/ export-ignore
+/docs/ export-ignore
 SPEC.md export-ignore
-examples/ export-ignore
+/examples/ export-ignore
 # The comprehension harness drives a real model against a real server to check that
 # the tool descriptions still carry what a caller needs. It is a measuring instrument
 # for whoever edits those descriptions, needs the `claude` CLI and an account to run,
 # and builds nothing.
-tools/ export-ignore
+/tools/ export-ignore
 
 # Instructions and process for working on the repository, not for using the server.
 CLAUDE.md export-ignore
@@ -51,7 +56,7 @@ CONTRIBUTING.md export-ignore
 
 # CI workflows, issue templates and funding metadata: every one of them addresses this
 # repository on GitHub, and none can do anything from inside an archive.
-.github/ export-ignore
+/.github/ export-ignore
 
 # The dotfiles that only govern the repository, this file included. Its rules have
 # already been applied by the time an archive is written, so carrying it along would
