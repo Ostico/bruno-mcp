@@ -11,30 +11,26 @@ export const inlineScriptsSchema = z.object({
   'before-request': z.string().optional(),
   'after-response': z.string().optional(),
 }).optional().describe(
-  'Inline scripts to persist with the request. Keys: pre-request, post-response, tests ' +
-  '(aliases before-request/after-response accepted). Avoids a separate add_test_script call. ' +
-  'IMPORTANT for tests/post-response: only assertions inside a test() block are reported. ' +
-  'Write test("status is 200", function() { expect(res.getStatus()).to.equal(200); }); — a bare ' +
-  'expect() at the top level still runs, but a passing one records nothing, so run_collection ' +
-  'reports "tests": [] and the request looks green with no assertions. Available in scripts: ' +
-  'res.getStatus()/getStatusText()/getHeader(name)/getHeaders()/getBody()/getResponseTime(), ' +
-  'res.getStopReason()/getCloseCode()/getSessionTruncated() on a websocket request, which report ' +
-  'the same session outcome the result does (all null or false on an HTTP response, which has no ' +
-  'session), ' +
-  'bru.setVar(name, value)/getVar(name)/getEnvVar(name)/hasEnvVar(name), and expect(actual) '
-  + 'with .to.equal/.contain/.include, ' +
-  '.to.have.property/.lengthOf, .to.be.a/.an, ' +
-  '.to.be.above/.below/.at.least/.at.most (aliases .gt/.lt/.gte/.lte/.greaterThan/.lessThan), ' +
-  '.to.be.within(min, max), .to.be.oneOf([...]), .to.match(/re/), ' +
-  '.to.startWith/.endWith, .to.be.true/.false/.null/.undefined/.empty/.json,and .to.not.* negations. ' +
-  'VARIABLES: bru.getVar(name) resolves environment and collection variables as well as anything ' +
-  'a script set, so an environment variable needs no shadow copy to be readable. ' +
-  'bru.getEnvVar(name) is narrower on purpose: it reads the environment layer only, so a runtime ' +
-  'variable of the same name does not shadow it. There is no setEnvVar — nothing here writes an ' +
-  'environment file. ' +
-  'RETURN TYPE: res.getBody() returns the response already parsed into a JS object/array when the ' +
-  'Content-Type is application/json or a +json type (raw text otherwise). Access fields directly — res.getBody().field — ' +
-  'and do NOT JSON.parse() it, which throws SyntaxError: "[object Object]" is not valid JSON.',
+  'Inline scripts to persist with the request. Keys: pre-request, post-response, tests (aliases ' +
+    'before-request/after-response accepted). IMPORTANT for tests/post-response: only assertions inside a ' +
+    'test() block are reported. Write test("status is 200", function() { ' +
+    'expect(res.getStatus()).to.equal(200); }); — a bare top-level expect() still runs, but a passing one ' +
+    'records nothing, so run_collection reports "tests": [] and the request looks green with no ' +
+    'assertions. Available: ' +
+    'res.getStatus()/getStatusText()/getHeader(name)/getHeaders()/getBody()/getResponseTime(), ' +
+    'res.getStopReason()/getCloseCode()/getSessionTruncated() on a websocket request, reporting the same ' +
+    'session outcome the result does (all null or false on an HTTP response, which has no session), ' +
+    'bru.setVar(name, value)/getVar(name)/getEnvVar(name)/hasEnvVar(name), and expect(actual) with ' +
+    '.to.equal/.contain/.include, .to.have.property/.lengthOf, .to.be.a/.an, ' +
+    '.to.be.above/.below/.at.least/.at.most (aliases .gt/.lt/.gte/.lte/.greaterThan/.lessThan), ' +
+    '.to.be.within(min, max), .to.be.oneOf([...]), .to.match(/re/), .to.startWith/.endWith, ' +
+    '.to.be.true/.false/.null/.undefined/.empty/.json, and .to.not.* negations. VARIABLES: ' +
+    'bru.getVar(name) resolves environment and collection variables as well as anything a script set. ' +
+    'bru.getEnvVar(name) reads the environment layer only, so a runtime variable of the same name does not ' +
+    'shadow it. There is no setEnvVar — nothing here writes an environment file. RETURN TYPE: ' +
+    'res.getBody() returns the response already parsed when the Content-Type is application/json or a ' +
+    '+json type (raw text otherwise). Access fields directly — res.getBody().field — and do NOT ' +
+    'JSON.parse() it, which throws SyntaxError: "[object Object]" is not valid JSON.',
 );
 
 /**
@@ -51,13 +47,12 @@ export const assertionEntrySchema = z.object({
     'res.responseTime, bru.getVar("token").'
   ),
   value: z.string().min(1).describe(
-    'Operator plus operand. 28 operators: eq, neq, gt, gte, lt, lte, in, notIn, ' +
-    'contains, notContains, length, matches, notMatches, startsWith, endsWith, ' +
-    'between, and 12 that take NO operand: isEmpty, isNotEmpty, isNull, ' +
-    'isUndefined, isDefined, isTruthy, isFalsy, isJson, isNumber, isString, ' +
-    'isBoolean, isArray. Prefix any with "not " to negate. Examples: "eq 200", ' +
-    '"between 200, 299", "matches /^v[0-9]+$/", "isNumber". An unrecognised ' +
-    'operator becomes an eq against the whole string, matching Bruno.'
+    'Operator plus operand. 28 operators: eq, neq, gt, gte, lt, lte, in, notIn, contains, notContains, ' +
+      'length, matches, notMatches, startsWith, endsWith, between, and 12 that take NO operand: isEmpty, ' +
+      'isNotEmpty, isNull, isUndefined, isDefined, isTruthy, isFalsy, isJson, isNumber, isString, ' +
+      'isBoolean, isArray. Prefix any with "not " to negate. Examples: "eq 200", "between 200, 299", ' +
+      '"matches /^v[0-9]+$/", "isNumber". An unrecognised operator becomes an eq against the whole string, ' +
+      'matching Bruno.'
   ),
   disabled: z.boolean().optional().describe('Omit to keep the assertion active.'),
 });
@@ -96,56 +91,47 @@ export const requestVarsSchema = z.object({
  */
 export const requestSettingsSchema = z.object({
   timeout: z.number().int().nonnegative().optional().describe(
-    'Milliseconds, capping two separate things — and 0 does not mean the same to ' +
-    'both. The request itself: 0 means no deadline at all, and the 30000ms default ' +
-    'is reached only by a request whose file carries no timeout key, which a .yml ' +
-    'request written here never does (that dialect always writes a fully resolved ' +
-    'settings block, and an unset timeout is written as 0). So pass a positive value ' +
-    'if you want a deadline on a .yml request. And the per-script budget shared by ' +
-    'pre-request, post-response and tests code, including time spent in bru.sleep, ' +
-    'setTimeout and setInterval: that one cannot be switched off, so 0 and an unset ' +
-    'timeout both leave it at its 5000ms default, and a positive value is the only ' +
-    'way to raise it. A script that waits longer than its budget is aborted.'
+    'Milliseconds, capping two separate things, and 0 does not mean the same to both. The request ' +
+      'itself: 0 means no deadline at all, and the 30000ms default is reached only by a request whose file ' +
+      'carries no timeout key, which a .yml request written here never does — that dialect always writes a ' +
+      'fully resolved settings block, and an unset timeout is written as 0. So pass a positive value for a ' +
+      'deadline on a .yml request. The per-script budget shared by pre-request, post-response and tests, ' +
+      'including time spent in bru.sleep, setTimeout and setInterval, cannot be switched off: 0 and an ' +
+      'unset timeout both leave it at its 5000ms default, and only a positive value raises it. A script ' +
+      'that waits longer than its budget is aborted.'
   ),
   followRedirects: z.boolean().optional().describe(
-    'Whether a 3xx Location is followed. REDIRECTS ARE FOLLOWED WHEN THIS IS UNSET. ' +
-    'Set false to receive the 3xx response itself. This matters for more than the ' +
-    'status code: a Set-Cookie issued on the 3xx is consumed by the redirect hop and ' +
-    'is not visible on the final response, so a login or password-reset endpoint that ' +
-    'returns its session cookie alongside a 302 looks like it issued no cookie at all, ' +
-    'and the following request fails as unauthenticated. Set false whenever you need ' +
-    'to read the headers of the redirect itself.'
+    'Whether a 3xx Location is followed. REDIRECTS ARE FOLLOWED WHEN THIS IS UNSET. Set false to receive ' +
+      'the 3xx response itself. This matters for more than the status code: a Set-Cookie issued on the 3xx ' +
+      'is consumed by the redirect hop and is not visible on the final response, so a login or ' +
+      'password-reset endpoint that returns its session cookie alongside a 302 looks like it issued no ' +
+      'cookie at all, and the following request fails as unauthenticated.'
   ),
   maxRedirects: z.number().int().nonnegative().optional().describe(
     'Maximum redirect hops to follow. Defaults to 5 when unset, as it does in Bruno. Irrelevant once ' +
     'followRedirects is false; 0 likewise stops the first hop being followed.'
   ),
   encodeUrl: z.boolean().optional().describe(
-    'Whether the URL and query string are percent-encoded before the request is sent. ' +
-    'Read the whole of this before setting any other field here, because the default ' +
-    'is two-valued and reproduces upstream Bruno: a request with NO settings block ' +
-    'sends its URL raw (off), but a request that HAS a settings block not mentioning ' +
-    'encodeUrl encodes it (on). So adding a settings block for some other reason — ' +
-    'say to set timeout on a request that had no settings before — turns URL encoding ' +
-    'on as a side effect. Pass encodeUrl: false alongside to keep the URL raw.'
+    'Whether the URL and query string are percent-encoded before the request is sent. The default is ' +
+      'two-valued, reproducing upstream Bruno: a request with NO settings block sends its URL raw (off), ' +
+      'but a request that HAS a settings block not mentioning encodeUrl encodes it (on). So adding a ' +
+      'settings block for some other reason — say timeout on a request that had none — turns URL encoding ' +
+      'on as a side effect. Pass encodeUrl: false alongside to keep the URL raw.'
   ),
   keepAliveInterval: z.number().int().nonnegative().optional().describe(
-    'WebSocket requests only: milliseconds between the pings Bruno sends to hold the ' +
-    'connection open, where 0 means never. A .yml WebSocket request always carries the ' +
-    'key and records an unset value as 0, so this is how you change it; on .bru it is ' +
-    'written only when you supply it. It is read back by read_request either way. This ' +
-    'server\'s own runner sends no periodic pings of its own — it answers a ping the ' +
-    'peer sends and records both frames — so the value is carried for Bruno rather ' +
-    'than acted on here.'
+    'WebSocket requests only: milliseconds between the pings Bruno sends to hold the connection open, ' +
+      'where 0 means never. A .yml WebSocket request always carries the key and records an unset value as ' +
+      '0, so this is how you change it; on .bru it is written only when you supply it. read_request reads ' +
+      'it back either way. This server\'s own runner sends no periodic pings — it answers a ping the peer ' +
+      'sends and records both frames — so the value is carried for Bruno rather than acted on here.'
   ),
 }).optional().describe(
-  'Request-level settings: transport behaviour (timeouts, redirects, URL encoding), ' +
-  'not payload. What reaches the file depends on the dialect, because Bruno\'s own two ' +
-  'writers differ: a .yml request always carries a fully resolved settings block whether ' +
-  'or not you pass one, while a .bru request carries only what you supply. On ' +
-  'write_request the fields are merged individually over the existing block, so setting ' +
-  'one does not clear the rest. Note the encodeUrl field: in .bru, creating a block at all ' +
-  'changes the URL-encoding default.'
+  'Request-level settings: transport behaviour (timeouts, redirects, URL encoding), not payload. What ' +
+    'reaches the file depends on the dialect, because Bruno\'s own two writers differ: a .yml request ' +
+    'always carries a fully resolved settings block whether or not you pass one, while a .bru request ' +
+    'carries only what you supply. Fields are merged individually over the existing block, so setting one ' +
+    'does not clear the rest. Note encodeUrl: in .bru, creating a block at all changes the URL-encoding ' +
+    'default.'
 );
 
 /**
@@ -174,14 +160,12 @@ export const requestBodySchema = z.object({
     contentType: z.string().optional(),
   })).optional()
     .describe(
-      'Key/value parts, and the only field here that carries them: multipart/form-data ' +
-      'parts for body.type "form-data" or "multipart-form", and the pairs of a ' +
-      '"form-urlencoded" body, which read_request returns under formUrlEncoded rather ' +
-      'than here (a form-urlencoded body can also be given as an encoded string in ' +
-      '`content`). The per-entry type and contentType describe a multipart part and are ' +
-      'rejected on a form-urlencoded body, where every pair is text and neither field is ' +
-      'stored: pass type "file" or a contentType there and the call fails rather than ' +
-      'writing a request that drops them.',
+      'Key/value parts, and the only field here that carries them: multipart/form-data parts for ' +
+        'body.type "form-data" or "multipart-form", and the pairs of a "form-urlencoded" body, which ' +
+        'read_request returns under formUrlEncoded rather than here (a form-urlencoded body can also be ' +
+        'given as an encoded string in `content`). The per-entry type and contentType describe a multipart ' +
+        'part and are rejected on a form-urlencoded body, where every pair is text and neither field is ' +
+        'stored.',
     ),
   variables: z.string().optional()
     .describe(

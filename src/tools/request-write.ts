@@ -188,11 +188,10 @@ const filePathField = z.string().min(1, 'File path is required')
     + 'or get_collection_stats. Only provided fields are updated; every other field is kept.');
 
 const filenameField = z.string()
-  .describe('Renames the file, keeping it in its own folder. Basename only, no path '
-    + 'separators. The extension is optional and must match the collection\'s format if '
-    + 'given, since a collection carries one format only. Refused if another file of that '
-    + 'name already exists. The new path comes back in the response; use it as filePath '
-    + 'from then on, because the old one is gone. Only valid on an existing request.');
+  .describe('Renames the file, keeping it in its own folder. Basename only, no path separators. The extension is ' +
+    'optional and must match the collection\'s format if given. Refused if another file of that name ' +
+    'already exists. The new path comes back in the response; use it as filePath from then on. Only valid ' +
+    'on an existing request.');
 
 const kindField = z.enum(['http', 'websocket', 'grpc'])
   .describe('Transport. Defaults to "http". "websocket" and "grpc" take no method and no '
@@ -233,15 +232,12 @@ const sequenceField = z.number()
     + 'Only valid when creating.');
 
 const scriptModeField = z.enum(['replace', 'append']).describe(
-  'How to write the scripts field. "replace" (the default) overwrites the existing script ' +
-  'of each provided type, so repeating the same call is idempotent. "append" ' +
-  'concatenates onto the existing script, which accumulates blocks across calls. ' +
-  'Each script type has its own slot in both .bru and .yml, so replacing one leaves ' +
-  'the others untouched. One exception on .yml: supplying post-response and tests ' +
-  'together in a single call still merges both into the after-response slot, so ' +
-  'write the tests script in its own call to keep it in the tests slot. Only valid on an ' +
-  'existing request. Note there is no zod default: a default would be filled in on every ' +
-  'call, including a create, where the field has no meaning.',
+  'How to write the scripts field. "replace" (the default) overwrites the existing script of each ' +
+    'provided type, so repeating the same call is idempotent. "append" concatenates onto the existing ' +
+    'script, accumulating blocks across calls. Each script type has its own slot in both .bru and .yml, so ' +
+    'replacing one leaves the others untouched. One exception on .yml: post-response and tests supplied ' +
+    'together in a single call both merge into the after-response slot, so write the tests script in its ' +
+    'own call to keep it in the tests slot. Only valid on an existing request.',
 );
 
 function errorResult(text: string): ToolResult {
@@ -292,13 +288,12 @@ const dependenciesField = z.array(z.string())
     + 'requests.');
 
 const requestsField = z.array(z.object({ ...writeFields, dependencies: dependenciesField.optional() }))
-  .describe('Write several requests in one call. Each item takes the same fields as a single '
-    + 'write, and means the same thing: name creates one in the collection named at the top '
-    + 'level, filePath edits an existing one. collectionPath belongs at the top level and is '
-    + 'named once for the whole batch. Every item is validated before anything is written, so '
-    + 'a refusal leaves no partial state; a write that fails after that is reported against '
-    + 'its own item and the remaining items still run. The response lists every item in the '
-    + 'order it was passed, with the path written or the reason it failed.');
+  .describe('Write several requests in one call. Each item takes the same fields as a single write and means the ' +
+    'same thing: name creates one in the collection named at the top level, filePath edits an existing ' +
+    'one. collectionPath belongs at the top level, named once for the whole batch. Every item is validated ' +
+    'before anything is written, so a refusal leaves no partial state; a write that fails after that is ' +
+    'reported against its own item and the remaining items still run. The response lists every item in the ' +
+    'order passed, with the path written or the reason it failed.');
 
 /** What one item of a batch resolved to, before anything is written. */
 type ResolvedItem = {
@@ -664,7 +659,22 @@ export function registerWriteRequestTool(ctx: ToolContext): void {
     'write_request',
     {
       title: 'Write Bruno Request',
-      description: 'Create a request file or change an existing one (supports .bru and .yml formats). Which one it does follows from the locator: collectionPath plus name creates, filePath changes what is already there. Creating never overwrites — an existing file is refused, so address it by filePath. Changing is a partial merge: only provided fields are updated and every other field is preserved. Pass requests to write a whole set in one call, which is worth doing whenever more than one request is going into the same collection. Authors HTTP requests by default, WebSocket requests with kind "websocket" (url plus websocket.messages) and gRPC requests with kind "grpc" (url plus grpc.method, grpc.protoPath and grpc.messages); neither takes an HTTP method or a body. Supports multipart/form-data with file uploads and per-part contentType (body.type "form-data" with formData entries of type "file"), and inline scripts (pre-request/post-response/tests) so no separate add_test_script call is needed. Scripts run as async functions: top-level await works, and bru.sleep(ms)/setTimeout/setInterval are available, spending the script timeout (settings.timeout, default 5000ms) — raise it via the settings argument. Inline scripts REPLACE the existing script of the same type by default (idempotent — repeated calls do not accumulate duplicate blocks); pass scriptMode:"append" to concatenate instead. Use remove_script to clear a script entirely. RENAMING: name and filename are independent, as they are in Bruno itself — name changes the request\'s name inside the file and filename moves the file. Pass both to keep them in step, and read the new path back from the response.',
+      description: 'Create a request file or change an existing one (.bru and .yml). The locator decides which: ' +
+        'collectionPath plus name creates, filePath changes what is already there. Creating never ' +
+        'overwrites — an existing file is refused, so address it by filePath. Changing is a partial merge: ' +
+        'only provided fields are updated and every other field is preserved. Pass requests to write a ' +
+        'whole set in one call. Authors HTTP requests by default, WebSocket requests with kind "websocket" ' +
+        '(url plus websocket.messages) and gRPC requests with kind "grpc" (url plus grpc.method, ' +
+        'grpc.protoPath and grpc.messages); neither takes an HTTP method or a body. Supports ' +
+        'multipart/form-data with file uploads and per-part contentType (body.type "form-data" with ' +
+        'formData entries of type "file"), and inline scripts (pre-request/post-response/tests) so no ' +
+        'separate add_test_script call is needed. Scripts run as async functions: top-level await works, ' +
+        'and bru.sleep(ms)/setTimeout/setInterval spend the script timeout (settings.timeout, default ' +
+        '5000ms) — raise it via the settings argument. Inline scripts REPLACE the existing script of the ' +
+        'same type by default, so repeated calls do not accumulate duplicate blocks; scriptMode:"append" ' +
+        'concatenates instead, and remove_script clears one. RENAMING: name and filename are independent, ' +
+        'as they are in Bruno itself — name changes the request\'s name inside the file and filename moves ' +
+        'the file. Pass both to keep them in step, and read the new path back from the response.',
       inputSchema: {
         collectionPath: collectionPathField.optional(),
         ...writeFields,
