@@ -211,7 +211,9 @@ describe('the description agrees with the code', () => {
   });
 
   it('names both transports and what their results carry', () => {
-    expect(description).toMatch(/grpc and websocket requests all run/);
+    // The phrasing moved when the description was compressed; the fact under
+    // protection is that all four kinds run, so an omitted transport still fails.
+    expect(description).toMatch(/TRANSPORTS: http, graphql, grpc, websocket/);
     expect(description).toMatch(/stop_reason/);
     expect(description).toMatch(/transcript/);
   });

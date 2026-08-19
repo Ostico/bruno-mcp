@@ -23,9 +23,11 @@ import { surfaceMetrics, type SurfaceTool } from '../../../src/tools/surface-met
 /**
  * The budget, in characters of `tools/list`.
  *
- * Measured at 65,063 on 2026-08-19, down from 79,525 before create_request and
+ * Measured at 61,059 on 2026-08-19, down from 79,525 before create_request and
  * modify_request became one write_request and before create_test_suite and
- * create_crud_requests were deleted. It only ever moves down: raising it
+ * create_crud_requests were deleted, and down from 65,063 before run_collection's
+ * prose was compressed against the comprehension harness. It only ever moves down:
+ * raising it
  * requires a deliberate edit in the same commit as the change that justifies it,
  * so the cost of a larger surface is argued in a review rather than discovered
  * later.
@@ -37,7 +39,7 @@ import { surfaceMetrics, type SurfaceTool } from '../../../src/tools/surface-met
  * the first unlink, so a list with one bad path deletes nothing. A call that
  * deletes four requests instead of four calls pays this back on its first use.
  */
-const SURFACE_BUDGET = 65_100;
+const SURFACE_BUDGET = 61_100;
 
 async function readSurface(): Promise<SurfaceTool[]> {
   const server = new BrunoMcpServer();
