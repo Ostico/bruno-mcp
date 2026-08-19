@@ -5,9 +5,9 @@
 [![node](https://img.shields.io/node/v/@ostico/bruno-mcp)](https://nodejs.org)
 [![license](https://img.shields.io/npm/l/@ostico/bruno-mcp)](./LICENSE)
 
-**Non-destructive authoring plus a real execution engine for Bruno collections: both
-dialects at byte parity, caller-defined execution groups, multi-identity authorization
-testing, gRPC and WebSocket — and no `bru` binary.**
+**Turns an agent's API testing into files you keep: it authors and edits Bruno
+collections in place, then runs them — HTTP, WebSocket and gRPC, one identity or many —
+and reports per-request pass/fail you can re-run in CI.**
 
 An independent [Model Context Protocol](https://modelcontextprotocol.io) server for
 [Bruno](https://www.usebruno.com) collections. In August 2026 Bruno's own team announced
