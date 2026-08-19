@@ -943,7 +943,7 @@ export interface YamlRequest {
    *
    * This is where `examples` lands, and every other block Bruno's grammar has
    * or grows — `graphql`, `grpc`, `websocket`, `items`, `request`. Without it a
-   * `modify_request` on a Bruno-authored file deletes them. See `extra-keys.ts`.
+   * `write_request` on a Bruno-authored file deletes them. See `extra-keys.ts`.
    */
   extra?: Record<string, unknown>;
 }

@@ -1,5 +1,5 @@
 /**
- * Tests for the modify_request tool handler (Task 4).
+ * Tests for the write_request tool handler (Task 4).
  *
  * Mocks:
  *  - format-detector  (findCollectionRoot, detectFormat)
@@ -98,14 +98,14 @@ function getHandler(server: BrunoMcpServer, toolName: string): Function {
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
-describe('modify_request tool handler', () => {
+describe('write_request tool handler', () => {
   let server: BrunoMcpServer;
   let handler: Function;
 
   beforeEach(() => {
     jest.clearAllMocks();
     server = new BrunoMcpServer();
-    handler = getHandler(server, 'modify_request');
+    handler = getHandler(server, 'write_request');
 
     // Default happy-path mocks
     mockFindCollectionRoot.mockResolvedValue('/workspace/collection');
@@ -122,9 +122,9 @@ describe('modify_request tool handler', () => {
 
   // ── Tool registration ──────────────────────────────────────────────────
 
-  it('registers the modify_request tool', () => {
+  it('registers the write_request tool', () => {
     const mcpServer = (server as any).server;
-    expect(mcpServer._tools.has('modify_request')).toBe(true);
+    expect(mcpServer._tools.has('write_request')).toBe(true);
   });
 
   // ── Success path ───────────────────────────────────────────────────────

@@ -125,15 +125,14 @@ function readSurface(): Map<string, ToolDescriptor> {
   return surface;
 }
 
-/** The 21 tools the server registers, in registration order (setupTools). */
+/** The 20 tools the server registers, in registration order (setupTools). */
 const EXPECTED_TOOLS = [
   'create_collection',
   'create_environment',
   'update_environment',
   'set_environment_variable',
   'remove_environment_variable',
-  'create_request',
-  'modify_request',
+  'write_request',
   'move_request',
   'add_test_script',
   'remove_script',
@@ -180,7 +179,7 @@ describe('MCP tool surface contract', () => {
   // golden master that records only the tool-level description can watch a
   // security warning be deleted from a field and stay green.
   it('records field descriptions, not only tool descriptions', () => {
-    const created = surface.get('create_request');
+    const created = surface.get('write_request');
     expect(JSON.stringify(created?.schema)).toContain('Absolute path to existing collection');
   });
 

@@ -4,7 +4,7 @@
  * Both generators rebuild the file from the typed model instead of editing the
  * bytes, so a key the model has no field for was not ignored on a write — it was
  * deleted. `examples`, `info.description`, a `description` on a header: all
- * present in Bruno's grammar, all gone the first time `modify_request` touched
+ * present in Bruno's grammar, all gone the first time `write_request` touched
  * the file.
  * That makes an incomplete model a data-loss bug rather than a fidelity gap,
  * which is why the checks here are about keys nothing in this repo models.
@@ -286,7 +286,7 @@ assert:
   });
 });
 
-describe('.yml: modify_request no longer deletes what it did not model', () => {
+describe('.yml: write_request no longer deletes what it did not model', () => {
   it('preserves examples and info.tags across an update to the url', async () => {
     const filePath = await seed('yml-update', 'probe.yml', YML_AUTHORED_BY_BRUNO);
 

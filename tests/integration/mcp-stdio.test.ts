@@ -44,8 +44,7 @@ const EXPECTED_TOOLS = [
   'update_environment',
   'set_environment_variable',
   'remove_environment_variable',
-  'create_request',
-  'modify_request',
+  'write_request',
   'move_request',
   'add_test_script',
   'remove_script',
@@ -268,7 +267,7 @@ describe('MCP stdio transport (real child process)', () => {
     expect(readFileSync(inherited, 'utf8')).toContain(`path: "${collectionPath}"`);
   }, 60_000);
 
-  it('round-trips create_request and list_requests through the protocol', async () => {
+  it('round-trips write_request and list_requests through the protocol', async () => {
     const { client } = await startServer();
     const workDir = path.join(tmpRoot, 'requests');
     const collectionPath = path.join(workDir, 'req-collection');
@@ -280,7 +279,7 @@ describe('MCP stdio transport (real child process)', () => {
     expect(created.isError).toBeFalsy();
 
     const request = await client.callTool({
-      name: 'create_request',
+      name: 'write_request',
       arguments: {
         collectionPath,
         name: 'ping',
@@ -372,7 +371,7 @@ describe('MCP stdio transport (real child process)', () => {
     expect(
       (
         await client.callTool({
-          name: 'create_request',
+          name: 'write_request',
           arguments: {
             collectionPath,
             name: 'blocked',

@@ -2,7 +2,7 @@
  * A WebSocket request has to be authorable, in both dialects.
  *
  * The server could run one and could read one, but nothing could write one:
- * `create_request` was HTTP-shaped throughout — a required method enum, a body,
+ * `write_request` was HTTP-shaped throughout — a required method enum, a body,
  * query and path parameters — so the only way to get a WebSocket request into a
  * collection was to hand-write the file. The transports were reachable and their
  * requests were not.

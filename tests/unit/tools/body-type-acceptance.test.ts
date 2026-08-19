@@ -58,7 +58,7 @@ const ALL_BODY_TYPES = [
 ];
 
 /** The tools that take a body, and where the body schema sits in each. */
-const TOOLS = ['create_request', 'modify_request', 'create_test_suite'];
+const TOOLS = ['write_request', 'write_request', 'create_test_suite'];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function toolConfig(server: BrunoMcpServer, name: string): any {
@@ -158,8 +158,8 @@ describe('a body reaches the builder with its parts', () => {
     createRequest.mockResolvedValue({ success: true, path: '/col/r.bru' });
   });
 
-  it('forwards a graphql body with its variables from create_request', async () => {
-    await toolHandler(server, 'create_request')({
+  it('forwards a graphql body with its variables from write_request', async () => {
+    await toolHandler(server, 'write_request')({
       collectionPath: '/col',
       name: 'r',
       method: 'POST',
@@ -174,8 +174,8 @@ describe('a body reaches the builder with its parts', () => {
     );
   });
 
-  it('forwards file parts from create_request', async () => {
-    await toolHandler(server, 'create_request')({
+  it('forwards file parts from write_request', async () => {
+    await toolHandler(server, 'write_request')({
       collectionPath: '/col',
       name: 'r',
       method: 'POST',

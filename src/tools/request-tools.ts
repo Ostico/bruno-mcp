@@ -9,7 +9,6 @@ import path from 'path';
 import { readFile, unlink } from 'node:fs/promises';
 import {
   CreateRequestInput,
-  UpdateRequestInput,
   HttpMethod,
   AuthType,
 } from '../bruno/types.js';
@@ -22,271 +21,8 @@ import { collectionDialectWarnings } from '../bruno/request-extensions.js';
 import { declaredFormat } from '../bruno/request-discovery.js';
 import { withPathLock } from '../bruno/path-mutex.js';
 import { topologicalSort } from './topological-sort.js';
-import { inlineScriptsSchema, assertionEntrySchema, requestBodySchema, requestVarsSchema, requestSettingsSchema, websocketAuthoringSchema, grpcAuthoringSchema } from './schemas.js';
+import { requestBodySchema } from './schemas.js';
 import type { ToolContext } from './context.js';
-
-export function registerCreateRequestTool(ctx: ToolContext): void {
-  ctx.server.registerTool(
-    'create_request',
-    {
-      title: 'Create Bruno Request',
-      description: 'Generate request files for API testing (supports .bru and .yml formats). Authors HTTP requests by default, WebSocket requests with kind "websocket" (url plus websocket.messages) and gRPC requests with kind "grpc" (url plus grpc.method, grpc.protoPath and grpc.messages); neither takes an HTTP method or a body. Supports multipart/form-data with file uploads and per-part contentType (body.type "form-data" with formData entries of type "file"), and inline scripts (pre-request/post-response/tests) so no separate add_test_script call is needed. Scripts run as async functions: top-level await works, and bru.sleep(ms)/setTimeout/setInterval are available, spending the script timeout (settings.timeout, default 5000ms) — raise it via the settings argument.',
-      inputSchema: {
-        collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to existing collection directory.'),
-        name: z.string().min(1, 'Request name is required'),
-        kind: z.enum(['http', 'websocket', 'grpc']).optional()
-          .describe('Transport. Defaults to "http". "websocket" and "grpc" take no method and no body; their payloads are websocket.messages and grpc.messages.'),
-        method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']).optional()
-          .describe('Required for kind "http", refused for "websocket" and "grpc", which have no HTTP method. A gRPC request names its RPC method in grpc.method.'),
-        url: z.string().min(1, 'URL is required'),
-        headers: z.record(z.string()).optional(),
-        body: requestBodySchema,
-        auth: z.object({
-          type: z.enum(['none', 'bearer', 'basic', 'oauth2', 'api-key', 'digest', 'inherit'])
-            .describe('Auth mode. "inherit" defers to the folder or collection auth block and takes no config; pass {} for it.'),
-          config: z.record(z.string())
-        }).optional(),
-        query: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
-        pathParams: z.record(z.union([z.string(), z.number(), z.boolean()])).optional()
-          .describe('Values for :name segments in the URL, e.g. { id: "42" } for /users/:id.'),
-        assert: z.array(assertionEntrySchema).optional()
-          .describe('Declared assertions, evaluated on every run without needing a test() block.'),
-        vars: requestVarsSchema,
-        settings: requestSettingsSchema,
-        websocket: websocketAuthoringSchema,
-        grpc: grpcAuthoringSchema,
-        folder: z.string().optional(),
-        sequence: z.number().optional(),
-        scripts: inlineScriptsSchema
-      }
-    },
-    async (args) => {
-      try {
-        const pathCheck = validateToolPath(args.collectionPath);
-        if (!pathCheck.valid) {
-          return {
-            content: [{ type: 'text', text: `Invalid collectionPath: ${pathCheck.reason}` }],
-            isError: true,
-          };
-        }
-
-        const input: CreateRequestInput = {
-          collectionPath: args.collectionPath,
-          name: args.name,
-          // The tool surface spells the transport out; the model uses the token
-          // both dialects' parsers resolve to. Mapped here so the wire name and
-          // the on-disk kind can differ without either leaking into the other.
-          kind: args.kind === 'websocket' ? 'ws' : args.kind,
-          grpc: args.grpc,
-          method: args.method as HttpMethod | undefined,
-          url: args.url,
-          headers: args.headers,
-          body: args.body as CreateRequestInput['body'],
-          auth: args.auth ? {
-            type: args.auth.type as AuthType,
-            config: args.auth.config
-          } : undefined,
-          query: args.query,
-          pathParams: args.pathParams,
-          assert: args.assert,
-          vars: args.vars,
-          settings: args.settings,
-          websocket: args.websocket,
-          folder: args.folder,
-          sequence: args.sequence,
-          scripts: args.scripts as Record<string, string> | undefined
-        };
-
-        const result = await ctx.requestBuilder.createRequest(input);
-
-        if (result.success) {
-          return {
-            content: [
-              {
-                type: 'text',
-                text: `✅ Request "${args.name}" created successfully at: ${result.path}`
-              }
-            ]
-          };
-        } else {
-          return {
-            content: [
-              {
-                type: 'text',
-                text: `❌ Failed to create request: ${result.error}`
-              }
-            ],
-            isError: true
-          };
-        }
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `❌ Error creating request: ${error instanceof Error ? error.message : 'Unknown error'}`
-            }
-          ],
-          isError: true
-        };
-      }
-    }
-  );
-}
-
-export function registerModifyRequestTool(ctx: ToolContext): void {
-  ctx.server.registerTool(
-    'modify_request',
-    {
-      title: 'Modify Request',
-      description: 'Update an existing Bruno request file with partial-merge semantics. Only provided fields are updated; all other fields are preserved. Supports multipart/form-data with file uploads and per-part contentType. Inline scripts REPLACE the existing script of the same type by default (idempotent — repeated calls do not accumulate duplicate blocks); pass scriptMode:"append" to concatenate instead. Use remove_script to clear a script entirely. RENAMING: name and filename are independent, as they are in Bruno itself — name changes the request\'s name inside the file and filename moves the file. Pass both to keep them in step, and read the new path back from the response.',
-      inputSchema: {
-        filePath: z.string().min(1, 'File path is required').describe('Absolute path to the .yml or .bru request file to modify. Get from list_requests or get_collection_stats.'),
-        name: z.string().optional()
-          .describe('The request\'s name inside the file. Does NOT rename the file — pass filename for that.'),
-        filename: z.string().optional()
-          .describe('Renames the file, keeping it in its own folder. Basename only, no path '
-            + 'separators. The extension is optional and must match the collection\'s format if '
-            + 'given, since a collection carries one format only. Refused if another file of that '
-            + 'name already exists. The new path comes back in the response; use it as filePath '
-            + 'from then on, because the old one is gone.'),
-        method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']).optional(),
-        url: z.string().optional(),
-        headers: z.record(z.string()).optional(),
-        body: requestBodySchema,
-        auth: z.object({
-          type: z.enum(['none', 'bearer', 'basic', 'oauth2', 'api-key', 'digest', 'inherit'])
-            .describe('Auth mode. "inherit" defers to the folder or collection auth block and takes no config; pass {} for it.'),
-          config: z.record(z.string())
-        }).optional(),
-        query: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
-        pathParams: z.record(z.union([z.string(), z.number(), z.boolean()])).optional()
-          .describe('Replaces the declared path parameters; query parameters are left alone.'),
-        assert: z.array(assertionEntrySchema).optional()
-          .describe('Replaces the whole assert block. Omit to leave existing assertions untouched.'),
-        vars: requestVarsSchema,
-        settings: requestSettingsSchema,
-        websocket: websocketAuthoringSchema,
-        grpc: grpcAuthoringSchema,
-        scripts: inlineScriptsSchema,
-        scriptMode: z.enum(['replace', 'append']).optional().default('replace').describe(
-          'How to write the scripts field. "replace" (default) overwrites the existing script ' +
-          'of each provided type, so calling modify_request repeatedly is idempotent. "append" ' +
-          'concatenates onto the existing script, which accumulates blocks across calls. ' +
-          'Each script type has its own slot in both .bru and .yml, so replacing one leaves ' +
-          'the others untouched. One exception on .yml: supplying post-response and tests ' +
-          'together in a single call still merges both into the after-response slot, so ' +
-          'write the tests script in its own call to keep it in the tests slot.',
-        )
-      }
-    },
-    async (args) => {
-      try {
-        // 1. Path validation (traversal + null bytes)
-        const pathCheck = validateToolPath(args.filePath);
-        if (!pathCheck.valid) {
-          return {
-            content: [{ type: 'text', text: `Invalid filePath: ${pathCheck.reason}` }],
-            isError: true,
-          };
-        }
-
-        // 2. Extension, collection root and dialect, in one place. This was
-        // three inlined blocks duplicating `resolveRequestFile` — including its
-        // dialect check, which is why the same message existed in three files
-        // and had to be corrected in all of them.
-        const resolvedFile = await resolveRequestFile(args.filePath, 'filePath');
-        if (!resolvedFile.ok) {
-          return {
-            content: [{ type: 'text', text: resolvedFile.message }],
-            isError: true,
-          };
-        }
-
-        // 5. Build partial update input from provided fields
-        const updates: UpdateRequestInput = {};
-        if (args.name !== undefined) updates.name = args.name;
-        if (args.filename !== undefined) updates.filename = args.filename;
-        if (args.method !== undefined) updates.method = args.method as HttpMethod;
-        if (args.url !== undefined) updates.url = args.url;
-        if (args.headers !== undefined) updates.headers = args.headers;
-        if (args.body !== undefined) {
-          updates.body = args.body as CreateRequestInput['body'];
-        }
-        if (args.auth !== undefined) {
-          updates.auth = {
-            type: args.auth.type as AuthType,
-            config: args.auth.config,
-          };
-        }
-        if (args.query !== undefined) updates.query = args.query;
-        if (args.pathParams !== undefined) updates.pathParams = args.pathParams;
-        if (args.assert !== undefined) updates.assert = args.assert;
-        if (args.vars !== undefined) updates.vars = args.vars;
-        if (args.settings !== undefined) updates.settings = args.settings;
-        if (args.websocket !== undefined) updates.websocket = args.websocket;
-        if (args.grpc !== undefined) updates.grpc = args.grpc;
-        if (args.scripts !== undefined) {
-          updates.scripts = args.scripts as Record<string, string>;
-          // Default explicitly: the zod default only applies when the SDK
-          // validates input, not when the handler is invoked directly.
-          updates.scriptMode = args.scriptMode ?? 'replace';
-        }
-
-        // 6. Call updateRequest with partial merge
-        const result = await ctx.requestBuilder.updateRequest(args.filePath, updates);
-
-        if (result.success) {
-          // The dialect warning rides on success rather than blocking it: the
-          // file was modified, and the caller still needs to know Bruno will not
-          // see it. Appended to the message the caller already reads, because a
-          // second content block is easy to drop.
-          // The path is read back rather than rebuilt from `filename`, because
-          // the builder normalises the extension and may have left the file
-          // where it was. Both halves of the test are needed: a caller that
-          // asked for no rename cannot have had one, and a case-only rename
-          // that resolved to the same path did not move anything.
-          const newPath = result.path ?? args.filePath;
-          return {
-            content: [
-              {
-                type: 'text',
-                text: [
-                  args.filename === undefined || newPath === args.filePath
-                    ? `Successfully modified request "${path.basename(args.filePath)}"`
-                    : `Successfully modified request "${path.basename(args.filePath)}" and `
-                      + `renamed the file to "${path.basename(newPath)}". It now lives at `
-                      + `${newPath}; pass that as filePath from now on, because the old path is gone.`,
-                  ...resolvedFile.warnings,
-                ].join('\n\n')
-              }
-            ]
-          };
-        } else {
-          return {
-            content: [
-              {
-                type: 'text',
-                text: `Failed to modify request: ${result.error}`
-              }
-            ],
-            isError: true
-          };
-        }
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Error modifying request: ${error instanceof Error ? error.message : 'Unknown error'}`
-            }
-          ],
-          isError: true
-        };
-      }
-    }
-  );
-}
 
 export function registerMoveRequestTool(ctx: ToolContext): void {
   ctx.server.registerTool(
@@ -298,7 +34,7 @@ export function registerMoveRequestTool(ctx: ToolContext): void {
         + 'nothing is parsed and rewritten, so no part of the request can be lost on the way — '
         + 'which also means seq arrives unchanged and may tie with a request already there; that '
         + 'is reported, and Bruno breaks such a tie by filename. The file keeps its name: use '
-        + 'modify_request with filename to rename it. The new path comes back in the response.',
+        + 'write_request with filename to rename it. The new path comes back in the response.',
       inputSchema: {
         filePath: z.string().min(1, 'File path is required')
           .describe('Absolute path to the .yml or .bru request file to move. Get from list_requests or get_collection_stats.'),
@@ -476,7 +212,7 @@ export function registerCreateTestSuiteTool(ctx: ToolContext): void {
           headers: z.record(z.string()).optional(),
           body: requestBodySchema,
           auth: z.object({
-            // Same seven modes as create_request and update_request. This enum
+            // Same seven modes as write_request. This enum
             // used to stop at api-key, so a CRUD set could not be given the
             // digest or inherit auth the other two tools accept and the writer
             // handles — the same auth, rejected by whichever tool you reached
@@ -712,10 +448,10 @@ export function registerReadRequestTool(ctx: ToolContext): void {
     'read_request',
     {
       title: 'Read Bruno Request',
-      description: 'Read a single request file back as structured JSON: method, url, headers, query and path params, body, auth mode, scripts, assertions, vars, settings and docs. Works on both .bru and .yml and returns the same shape for each, so the on-disk format stays invisible. Use this before modify_request to see current state, and after create_request to confirm what was written. A websocket or grpc request also carries its stored messages in full — title, content, and for a websocket the type and whether the runner will send it — under websocket.messages or grpc.messages, keyed as create_request accepts them. A "notes" array reports anything the file declares that the runner will not act on.',
+      description: 'Read a single request file back as structured JSON: method, url, headers, query and path params, body, auth mode, scripts, assertions, vars, settings and docs. Works on both .bru and .yml and returns the same shape for each, so the on-disk format stays invisible. Use this before write_request to see current state, and after write_request to confirm what was written. A websocket or grpc request also carries its stored messages in full — title, content, and for a websocket the type and whether the runner will send it — under websocket.messages or grpc.messages, keyed as write_request accepts them. A "notes" array reports anything the file declares that the runner will not act on.',
       inputSchema: {
         filePath: z.string().min(1, 'File path is required')
-          .describe('Absolute path to the .bru or .yml request file. Use the path returned by create_request or list_requests rather than rebuilding it: request filenames are lowercased on write.'),
+          .describe('Absolute path to the .bru or .yml request file. Use the path returned by write_request or list_requests rather than rebuilding it: request filenames are lowercased on write.'),
       },
     },
     async (args) => {

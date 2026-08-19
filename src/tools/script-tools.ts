@@ -18,7 +18,7 @@ export function registerAddTestScriptTool(ctx: ToolContext): void {
     'add_test_script',
     {
       title: 'Add Test Script',
-      description: 'Add pre-request, post-response, or tests scripts to a Bruno request. Canonical scriptType values are pre-request/post-response/tests; the aliases before-request (→ pre-request) and after-response (→ post-response) are also accepted. Appends to any existing script of that type by default — pass scriptMode:"replace" to overwrite it, or use remove_script to clear it. Assertions must be wrapped in test("name", function() { ... }) to be reported. Scripts run as async functions: top-level await works, and bru.sleep(ms), setTimeout and setInterval are available. Time spent waiting counts against the script timeout (settings.timeout, default 5000ms); raise it with modify_request\'s settings argument.',
+      description: 'Add pre-request, post-response, or tests scripts to a Bruno request. Canonical scriptType values are pre-request/post-response/tests; the aliases before-request (→ pre-request) and after-response (→ post-response) are also accepted. Appends to any existing script of that type by default — pass scriptMode:"replace" to overwrite it, or use remove_script to clear it. Assertions must be wrapped in test("name", function() { ... }) to be reported. Scripts run as async functions: top-level await works, and bru.sleep(ms), setTimeout and setInterval are available. Time spent waiting counts against the script timeout (settings.timeout, default 5000ms); raise it with write_request\'s settings argument.',
       inputSchema: {
         bruFilePath: z.string().min(1, 'BRU file path is required').describe('Absolute path to the .yml or .bru request file. Get from list_requests or get_collection_stats.'),
         scriptType: z.enum(['pre-request', 'post-response', 'tests', 'before-request', 'after-response']).describe('Script type. Canonical: pre-request, post-response, tests. Aliases: before-request (→ pre-request), after-response (→ post-response).'),
@@ -130,7 +130,7 @@ export function registerRemoveScriptTool(ctx: ToolContext): void {
     'remove_script',
     {
       title: 'Remove Script',
-      description: 'Delete a pre-request, post-response, or tests script from a Bruno request, leaving the rest of the request intact. Use this to undo or clean up a script written by create_request/modify_request/add_test_script — including duplicate blocks accumulated by appending. Canonical scriptType values are pre-request/post-response/tests; the aliases before-request and after-response are accepted. Removing all scripts also drops the now-empty script container.',
+      description: 'Delete a pre-request, post-response, or tests script from a Bruno request, leaving the rest of the request intact. Use this to undo or clean up a script written by write_request/add_test_script — including duplicate blocks accumulated by appending. Canonical scriptType values are pre-request/post-response/tests; the aliases before-request and after-response are accepted. Removing all scripts also drops the now-empty script container.',
       inputSchema: {
         bruFilePath: z.string().min(1, 'BRU file path is required').describe('Absolute path to the .yml or .bru request file. Get from list_requests or get_collection_stats.'),
         scriptType: z.enum(['pre-request', 'post-response', 'tests', 'before-request', 'after-response']).describe(

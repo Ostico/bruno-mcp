@@ -177,11 +177,11 @@ describe('Server tool handlers', () => {
     });
   });
 
-  describe('create_request', () => {
+  describe('write_request', () => {
     it('should return success message', async () => {
       getManagerMock(server, 'requestBuilder', 'createRequest')
         .mockResolvedValue({ success: true, path: '/col/get-users.yml' });
-      const handler = getHandler(server, 'create_request');
+      const handler = getHandler(server, 'write_request');
       const result = await handler({
         collectionPath: '/col', name: 'Get Users', method: 'GET',
         url: 'https://api.example.com/users',
@@ -193,7 +193,7 @@ describe('Server tool handlers', () => {
     it('should pass body and auth to builder', async () => {
       const mock = getManagerMock(server, 'requestBuilder', 'createRequest');
       mock.mockResolvedValue({ success: true, path: '/col/test.yml' });
-      const handler = getHandler(server, 'create_request');
+      const handler = getHandler(server, 'write_request');
       await handler({
         collectionPath: '/col', name: 'Test', method: 'POST',
         url: 'https://example.com',
@@ -215,7 +215,7 @@ describe('Server tool handlers', () => {
     it('should pass the settings block to builder', async () => {
       const mock = getManagerMock(server, 'requestBuilder', 'createRequest');
       mock.mockResolvedValue({ success: true, path: '/col/test.yml' });
-      const handler = getHandler(server, 'create_request');
+      const handler = getHandler(server, 'write_request');
       await handler({
         collectionPath: '/col', name: 'Test', method: 'POST',
         url: 'https://example.com',
@@ -233,7 +233,7 @@ describe('Server tool handlers', () => {
       // too, and for encodeUrl the presence of the block is itself the signal.
       const mock = getManagerMock(server, 'requestBuilder', 'createRequest');
       mock.mockResolvedValue({ success: true, path: '/col/test.yml' });
-      const handler = getHandler(server, 'create_request');
+      const handler = getHandler(server, 'write_request');
       await handler({
         collectionPath: '/col', name: 'Test', method: 'GET', url: 'https://example.com',
       });
@@ -243,7 +243,7 @@ describe('Server tool handlers', () => {
     it('should return error on failure', async () => {
       getManagerMock(server, 'requestBuilder', 'createRequest')
         .mockResolvedValue({ success: false, error: 'invalid' });
-      const handler = getHandler(server, 'create_request');
+      const handler = getHandler(server, 'write_request');
       const result = await handler({
         collectionPath: '/col', name: 'T', method: 'GET', url: 'https://example.com',
       });
@@ -253,7 +253,7 @@ describe('Server tool handlers', () => {
     it('should catch thrown errors', async () => {
       getManagerMock(server, 'requestBuilder', 'createRequest')
         .mockRejectedValue(new Error('boom'));
-      const handler = getHandler(server, 'create_request');
+      const handler = getHandler(server, 'write_request');
       const result = await handler({
         collectionPath: '/col', name: 'T', method: 'GET', url: 'https://example.com',
       });
@@ -647,9 +647,9 @@ describe('Server tool handlers', () => {
       expect(result.content[0].text).toContain('Unknown error');
     });
 
-    it('create_request', async () => {
+    it('write_request', async () => {
       getManagerMock(server, 'requestBuilder', 'createRequest').mockRejectedValue('str');
-      const result = await getHandler(server, 'create_request')({ collectionPath: '/col', name: 'T', method: 'GET', url: 'https://x.com' });
+      const result = await getHandler(server, 'write_request')({ collectionPath: '/col', name: 'T', method: 'GET', url: 'https://x.com' });
       expect(result.content[0].text).toContain('Unknown error');
     });
 

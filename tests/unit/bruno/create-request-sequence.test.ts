@@ -1,11 +1,11 @@
 /**
- * `create_request` end to end: the file on disk carries a usable `seq`.
+ * `write_request` end to end: the file on disk carries a usable `seq`.
  *
  * Without an explicit sequence the field was left out of the file entirely, and
  * the run order treats a missing `seq` as MAX_SAFE_INTEGER — so every request
  * created without one tied for last and ran in an order decided by nothing. The
  * unit-level choice is tested in request-sequence.test.ts; this is about what
- * `create_request` actually writes, in both dialects, because the two build the
+ * `write_request` actually writes, in both dialects, because the two build the
  * meta block through different code.
  */
 
@@ -54,7 +54,7 @@ async function createAndReadSeq(
     : parseYamlRequest(raw).info.seq;
 }
 
-describe.each(['bru', 'yaml'] as const)('create_request seq (%s collection)', (format) => {
+describe.each(['bru', 'yaml'] as const)('write_request seq (%s collection)', (format) => {
   it('gives the first request seq 1', async () => {
     const collectionPath = await makeCollection(format);
 

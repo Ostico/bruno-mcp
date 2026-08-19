@@ -2,8 +2,8 @@
  * The auth modes the tool surface accepts, across every tool that accepts any.
  *
  * Four tools take an `auth.type`. Three did originally, and they disagreed:
- * `create_request` and
- * `modify_request` accept all seven modes, while `create_test_suite` stopped at
+ * `write_request` and
+ * `write_request` accept all seven modes, while `create_test_suite` stopped at
  * `api-key` and rejected `digest` and `inherit`. Nothing downstream justified
  * the difference — `create_test_suite` maps its auth straight into the same
  * `CreateRequestInput` and calls the same `createRequest` — so the same auth was
@@ -88,9 +88,9 @@ function authEnumsByTool(): Map<string, string[][]> {
 describe('auth modes accepted by the tool surface', () => {
   const byTool = authEnumsByTool();
 
-  it('finds an auth enum on exactly the four tools that take auth', () => {
+  it('finds an auth enum on exactly the three tools that take auth', () => {
     expect([...byTool.keys()].sort()).toEqual(
-      ['create_crud_requests', 'create_request', 'create_test_suite', 'modify_request'].sort(),
+      ['create_crud_requests', 'create_test_suite', 'write_request'].sort(),
     );
   });
 

@@ -76,7 +76,7 @@ async function readYaml(path: string) {
 // assert
 // ----------------------------------------------------------------------------
 
-describe('create_request authors an assert block', () => {
+describe('write_request authors an assert block', () => {
   it('writes assertions into a .bru request', async () => {
     const collectionPath = await makeCollection('bru', 'assert-bru');
     const created = await builder.createRequest({
@@ -122,7 +122,7 @@ describe('create_request authors an assert block', () => {
   });
 });
 
-describe('modify_request authors an assert block', () => {
+describe('write_request authors an assert block', () => {
   it('adds assertions to an existing .bru request', async () => {
     const collectionPath = await makeCollection('bru', 'assert-mod-bru');
     const created = await builder.createRequest({
@@ -178,7 +178,7 @@ describe('modify_request authors an assert block', () => {
   });
 
   it('leaves an existing block untouched when assert is not supplied', async () => {
-    // Partial-merge semantics: modify_request must not be a way to silently
+    // Partial-merge semantics: write_request must not be a way to silently
     // delete assertions a human wrote by hand.
     const collectionPath = await makeCollection('bru', 'assert-preserve');
     const created = await builder.createRequest({
@@ -199,7 +199,7 @@ describe('modify_request authors an assert block', () => {
 // vars
 // ----------------------------------------------------------------------------
 
-describe('create_request authors vars blocks', () => {
+describe('write_request authors vars blocks', () => {
   it('writes both halves into a .bru request', async () => {
     const collectionPath = await makeCollection('bru', 'vars-bru');
     const created = await builder.createRequest({
@@ -310,7 +310,7 @@ describe('create_request authors vars blocks', () => {
   });
 });
 
-describe('modify_request authors vars blocks', () => {
+describe('write_request authors vars blocks', () => {
   it('adds vars to an existing .bru request', async () => {
     const collectionPath = await makeCollection('bru', 'vars-mod-bru');
     const created = await builder.createRequest({
@@ -387,7 +387,7 @@ describe('modify_request authors vars blocks', () => {
 // params:path
 // ----------------------------------------------------------------------------
 
-describe('create_request authors path parameters', () => {
+describe('write_request authors path parameters', () => {
   it('writes a params:path entry into a .bru request', async () => {
     const collectionPath = await makeCollection('bru', 'path-bru');
     const created = await builder.createRequest({

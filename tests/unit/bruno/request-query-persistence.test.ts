@@ -1,14 +1,14 @@
 /**
  * Query parameters supplied through the MCP surface must reach the file on disk.
  *
- * `create_request` and `modify_request` both advertise a `query` input. PR #67
+ * `write_request` and `write_request` both advertise a `query` input. PR #67
  * made declared parameters actually get *sent*, but that only helps a file that
  * declares them — and the writing side had its own holes:
  *
- *  - `create_request` on a .bru collection stored the pairs on `bruFile.query`,
+ *  - `write_request` on a .bru collection stored the pairs on `bruFile.query`,
  *    a field the .bru writer never serializes. The request landed on disk with
  *    no params block at all.
- *  - `modify_request` ignored `updates.query` in *both* formats, so the call
+ *  - `write_request` ignored `updates.query` in *both* formats, so the call
  *    reported success and changed nothing.
  *
  * These tests assert against the bytes on disk and, for the .bru path, against a
@@ -45,7 +45,7 @@ async function makeCollection(format: 'yaml' | 'bru', label: string): Promise<st
   return join(tmpDir, 'QueryAPI');
 }
 
-describe('create_request persists query parameters', () => {
+describe('write_request persists query parameters', () => {
   it('writes a params block into a .bru request', async () => {
     const collectionPath = await makeCollection('bru', 'create-bru');
     const created = await builder.createRequest({
@@ -87,7 +87,7 @@ describe('create_request persists query parameters', () => {
   });
 });
 
-describe('modify_request persists query parameters', () => {
+describe('write_request persists query parameters', () => {
   it('adds a params block to an existing .bru request', async () => {
     const collectionPath = await makeCollection('bru', 'modify-bru');
     const created = await builder.createRequest({
@@ -167,7 +167,7 @@ describe('a created .bru request actually sends its query string', () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
-  it('reaches the wire end to end, create_request through send', async () => {
+  it('reaches the wire end to end, write_request through send', async () => {
     // The whole point: an agent creates a request with query params and running
     // the collection must send them. Asserting only on the file would miss a
     // break anywhere downstream.

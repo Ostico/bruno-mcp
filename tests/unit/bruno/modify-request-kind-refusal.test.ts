@@ -1,5 +1,5 @@
 /**
- * `modify_request` must refuse an edit naming a field a transport kind has no
+ * `write_request` must refuse an edit naming a field a transport kind has no
  * place for — by name, without throwing, and without touching the file.
  *
  * This is the write half of the same rule the executor applies on the run path.

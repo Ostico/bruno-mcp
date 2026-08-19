@@ -18,7 +18,8 @@ import type { ToolContext } from './tools/context.js';
 import { registerCreateCollectionTool, registerListCollectionsTool, registerGetCollectionStatsTool } from './tools/collection-tools.js';
 import { registerUnregisterCollectionTool, registerDeleteCollectionTool } from './tools/collection-lifecycle-tools.js';
 import { registerCreateEnvironmentTool, registerUpdateEnvironmentTool, registerSetEnvironmentVariableTool, registerRemoveEnvironmentVariableTool, registerReadEnvironmentTool } from './tools/environment-tools.js';
-import { registerCreateRequestTool, registerModifyRequestTool, registerMoveRequestTool, registerDeleteRequestTool, registerCreateTestSuiteTool, registerCreateCrudRequestsTool, registerListRequestsTool, registerReadRequestTool } from './tools/request-tools.js';
+import { registerMoveRequestTool, registerDeleteRequestTool, registerCreateTestSuiteTool, registerCreateCrudRequestsTool, registerListRequestsTool, registerReadRequestTool } from './tools/request-tools.js';
+import { registerWriteRequestTool } from './tools/request-write.js';
 import { registerRunCollectionTool } from './tools/run-tools.js';
 import { registerAddTestScriptTool, registerRemoveScriptTool } from './tools/script-tools.js';
 
@@ -49,7 +50,7 @@ export class BrunoMcpServer {
           + 'WebSocket and gRPC, cookie jars isolated per identity, and OAuth2. For one or two '
           + 'throwaway HTTP calls, a direct request is cheaper — use one. '
           + 'Workflow: list_collections → list_requests (to discover request file paths) → '
-          + 'run_collection, and read_request before modify_request. Secrets belong in run-level '
+          + 'run_collection, and read_request before write_request. Secrets belong in run-level '
           + 'variables, never in a file.',
       },
     );
@@ -87,8 +88,7 @@ export class BrunoMcpServer {
     registerUpdateEnvironmentTool(ctx);
     registerSetEnvironmentVariableTool(ctx);
     registerRemoveEnvironmentVariableTool(ctx);
-    registerCreateRequestTool(ctx);
-    registerModifyRequestTool(ctx);
+    registerWriteRequestTool(ctx);
     registerMoveRequestTool(ctx);
     registerAddTestScriptTool(ctx);
     registerRemoveScriptTool(ctx);

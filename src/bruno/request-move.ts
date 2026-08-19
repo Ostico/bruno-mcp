@@ -12,7 +12,7 @@
  * repaired: Bruno breaks such a tie by filename, so the ordering is defined, and
  * the alternative — renumbering — is exactly the parse-and-rewrite this avoids.
  *
- * Renaming is not part of this. `modify_request` renames a request and its file;
+ * Renaming is not part of this. `write_request` renames a request and its file;
  * this moves a file and keeps its name. Each operation stays one call, the way
  * Bruno's own rename and drag-and-drop are separate.
  */

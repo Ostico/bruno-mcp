@@ -38,7 +38,7 @@ export const inlineScriptsSchema = z.object({
 );
 
 /**
- * One declared assertion, shared by create_request and modify_request.
+ * One declared assertion, shared by write_request.
  *
  * Declared assertions are evaluated after the post-response script, so they can
  * read anything a script or a `vars:post-response` entry set. Unlike a bare
@@ -62,7 +62,7 @@ export const assertionEntrySchema = z.object({
   disabled: z.boolean().optional().describe('Omit to keep the assertion active.'),
 });
 
-/** One declared variable, shared by create_request and modify_request. */
+/** One declared variable, shared by write_request. */
 export const varEntrySchema = z.object({
   name: z.string().min(1),
   value: z.string().describe(
@@ -86,11 +86,11 @@ export const requestVarsSchema = z.object({
 }).optional();
 
 /**
- * The request-level `settings` block, shared by create_request and
- * modify_request. Transport behaviour, not payload.
+ * The request-level `settings` block, as write_request accepts it. Transport
+ * behaviour, not payload.
  *
  * Every field is optional and omitting one writes no key for it, leaving the
- * runtime fallback described in each field below. On modify_request the fields
+ * runtime fallback described in each field below. On write_request the fields
  * are merged one by one over what the file already had, so setting one does not
  * clear the others.
  */
@@ -143,7 +143,7 @@ export const requestSettingsSchema = z.object({
   'not payload. What reaches the file depends on the dialect, because Bruno\'s own two ' +
   'writers differ: a .yml request always carries a fully resolved settings block whether ' +
   'or not you pass one, while a .bru request carries only what you supply. On ' +
-  'modify_request the fields are merged individually over the existing block, so setting ' +
+  'write_request the fields are merged individually over the existing block, so setting ' +
   'one does not clear the rest. Note the encodeUrl field: in .bru, creating a block at all ' +
   'changes the URL-encoding default.'
 );

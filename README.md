@@ -44,7 +44,7 @@ I asked the agent that helps me to maintain this server to explain how its exper
 ## What the server does instead
 
 - **The agent stops guessing the format** — it calls a tool, the server writes the bytes, using Bruno's own grammar package
-- **Edits are partial merges** — `modify_request` touches the fields you passed and leaves the rest of the file alone
+- **Edits are partial merges** — `write_request` touches the fields you passed and leaves the rest of the file alone
 - **It can read before it writes** — `read_request` returns structured JSON, the same shape for both formats
 - **It runs the requests itself** — vars, auth, assertions, dependency ordering, no `bru` binary needed
 - **No silent loss** — a field this server cannot model yet is carried back out wherever the format can hold it, and anything it cannot put on the wire is named in a run warning rather than dropped quietly into your repo
@@ -96,7 +96,7 @@ On the fork parent specifically, since this project owes it its existence: [maca
 - **Collections** — create and organise them, or discover the ones Bruno already knows from its `workspace.yml`. A collection this server creates is written to disk and not registered in that file, so `list_collections` will not show it and the Bruno GUI will not list it until someone opens it there once — everything else takes the path directly
 - **Requests** — every HTTP method, with headers, query and path params, bodies, auth, assertions, vars and settings
 - **Read back** — `read_request` and `read_environment` return structured JSON, identical for `.bru` and `.yml`, so an agent can inspect before it edits
-- **Partial-merge edits** — `modify_request` changes only the fields you pass and leaves the rest of the file alone
+- **Partial-merge edits** — `write_request` changes only the fields you pass and leaves the rest of the file alone
 - **CRUD and suites** — five-request CRUD sets, and test suites with topological dependency ordering
 - **Environments** — create, replace, merge, or patch a single variable
 - **Dual format** — `.bru` (legacy) and `.yml` (opencollection), auto-detected; `.yaml` is read and flagged
@@ -218,8 +218,7 @@ See [INTEGRATION.md](./INTEGRATION.md) for worked examples, Docker, and troubles
 | `create_collection` | New collection. `format: "yaml"` (default) or `"bru"`. Also registers it in the workspace, so `list_collections` and the Bruno app can see it — `registerInWorkspace: false` to skip that, `workspacePath` to pick the file |
 | `list_collections` | Find collections from Bruno's `workspace.yml` |
 | `get_collection_stats` | Counts by method, folders, environments, request list with URLs — filterable by `folder`, `method`, `nameContains`, or `includeRequests: false` for counts only |
-| `create_request` | Write a request: method, url, headers, query, body, auth, scripts, settings. `kind: "websocket"` or `kind: "grpc"` for those transports |
-| `modify_request` | Partial-merge edit — only the fields you pass change. `filename` renames the file |
+| `write_request` | Write a request: method, url, headers, query, body, auth, scripts, settings. `kind: "websocket"` or `kind: "grpc"` for those transports. Pass `collectionPath` and `name` to create one, `filePath` to edit one — an edit is a partial merge, and `filename` renames the file |
 | `move_request` | Move or copy a request to another folder or collection |
 | `read_request` | Read one request back as JSON, same shape for `.bru` and `.yml` |
 | `list_requests` | Every request file in the collection, as absolute paths |
@@ -239,13 +238,13 @@ See [INTEGRATION.md](./INTEGRATION.md) for worked examples, Docker, and troubles
 
 `read_request` returns method, url, headers, query and path params, body, auth mode, scripts, assertions, vars, settings and docs — identical shape for both formats, so the on-disk format stays invisible. Its `notes` array names anything the file declares that the runner will not act on.
 
-Use it before `modify_request` to see the current state, and after `create_request` to confirm what was written.
+Use it before an edit to see the current state, and after a write to confirm what was written.
 
 `read_environment` returns each variable with its value. **Secrets come back by name only** — Bruno stores no value for a secret in either format, so there is none to return.
 
 ### Writing requests
 
-`create_request` and `modify_request` take the same shape. `modify_request` merges: fields you omit are left alone.
+`write_request` creates when you pass `collectionPath` and `name`, and edits when you pass `filePath`. An edit merges: fields you omit are left alone.
 
 Notable options:
 
@@ -257,7 +256,7 @@ Notable options:
 
 `name` and `filename` are independent, as they are in Bruno itself: `name` changes the request's name inside the file and `filename` moves the file, so pass both to keep them in step. A `filename` is a basename in the request's own folder, its extension is optional and must match the collection's format if given, and a name already taken by another file is refused. The path it moved to comes back in the response — use it as `filePath` from then on.
 
-`modify_request` **replaces** a script of the same type by default, so repeating a call is idempotent. Pass `scriptMode: "append"` to concatenate. `add_test_script` appends by default, being an add.
+`write_request` **replaces** a script of the same type by default, so repeating a call is idempotent. Pass `scriptMode: "append"` to concatenate. `add_test_script` appends by default, being an add.
 
 In `.yml` collections `post-response` and `tests` share Bruno's single `after-response` slot, so replacing either overwrites both.
 
@@ -265,7 +264,7 @@ In `.yml` collections `post-response` and `tests` share Bruno's single `after-re
 
 `move_request` relocates a request file — into another folder, or into another collection with `targetCollectionPath`. Pass `copy: true` to duplicate it instead.
 
-The bytes are moved verbatim, never parsed and rewritten, so nothing a request declares can be lost on the way. Two consequences follow from that. The file keeps its name, so a copy needs a different folder or collection; renaming is `modify_request`. And `seq` arrives unchanged, so the request can land next to a sibling claiming the same number — that is reported rather than repaired, because renumbering means rewriting the file. Bruno breaks such a tie by filename, so the order is defined either way.
+The bytes are moved verbatim, never parsed and rewritten, so nothing a request declares can be lost on the way. Two consequences follow from that. The file keeps its name, so a copy needs a different folder or collection; renaming is `write_request`. And `seq` arrives unchanged, so the request can land next to a sibling claiming the same number — that is reported rather than repaired, because renumbering means rewriting the file. Bruno breaks such a tie by filename, so the order is defined either way.
 
 A missing target folder is created, and reported: a folder with no settings file carries no folder-level auth, headers or scripts.
 
@@ -547,7 +546,7 @@ New collections are YAML unless you pass `format: "bru"`.
 
 ## gRPC and WebSocket requests
 
-A collection may hold gRPC and WebSocket requests alongside HTTP ones. This server **reads, preserves and reports** them: `read_request` returns the kind, the target, the method and proto path for gRPC, its metadata block, and how many messages are stored; `list_requests` lists them; and editing any request in the collection no longer destroys them. Before this, both formats dropped the target block, the credentials and every stored message, so one `modify_request` on an unrelated request rewrote the file without them.
+A collection may hold gRPC and WebSocket requests alongside HTTP ones. This server **reads, preserves and reports** them: `read_request` returns the kind, the target, the method and proto path for gRPC, its metadata block, and how many messages are stored; `list_requests` lists them; and editing any request in the collection no longer destroys them. Before this, both formats dropped the target block, the credentials and every stored message, so one `write_request` on an unrelated request rewrote the file without them.
 
 **`run_collection` runs both.** A gRPC request performs one unary call against the service its `.proto` declares; a WebSocket request opens the socket, sends the frames the file stores and records what comes back until a bound is reached. Each reports its own detail: a gRPC result carries the gRPC status code, the details string and redacted trailing metadata, and a WebSocket result carries the transcript, the `stop_reason` that ended it and whether it was truncated. The gRPC code lives in its own field and is never mapped onto the result's `status`, because gRPC's OK is `0` and `0` is this API's refusal sentinel — a successful call and a security refusal would otherwise be indistinguishable in the field read first.
 
@@ -597,7 +596,7 @@ On a **gRPC** request `res` is closer to HTTP: `res.getStatus()` is the gRPC sta
 
 `includePayloads` is off by default as a security property, not a preference: outbound frames are recorded **after** `{{var}}` substitution, so recording them by default would write every secret passed in `variables` into a result that is returned by default. `engineIoKeepalive` is off for a related reason — it puts a frame on the wire the request did not author — and even when on it replies only after an OPEN frame has actually been seen.
 
-A WebSocket request can now be authored rather than copied. `create_request` takes `kind: "websocket"` with a url and `websocket.messages`, and refuses the fields that transport has no place for: an HTTP method, a body, query parameters, path params. Each message carries `content` and, optionally, a `title` and a `type` of `text` or `binary`; an untitled message is named `message 1`, `message 2` by position, exactly as Bruno names one. Headers, auth, `assert`, `vars`, `settings` and scripts work as they do for an HTTP request, and the written file is byte-identical to what Bruno writes for the same request in both formats — proven against upstream's own writer, not against a round-trip through our parser.
+A WebSocket request can now be authored rather than copied. `write_request` takes `kind: "websocket"` with a url and `websocket.messages`, and refuses the fields that transport has no place for: an HTTP method, a body, query parameters, path params. Each message carries `content` and, optionally, a `title` and a `type` of `text` or `binary`; an untitled message is named `message 1`, `message 2` by position, exactly as Bruno names one. Headers, auth, `assert`, `vars`, `settings` and scripts work as they do for an HTTP request, and the written file is byte-identical to what Bruno writes for the same request in both formats — proven against upstream's own writer, not against a round-trip through our parser.
 
 One field is recorded differently by the two formats. `selected: false` marks a message as authored but not sent. `.yml` writes the false. `.bru` expresses only the true half: upstream's writer emits the flag when it is set and nothing when it is not, and its reader resolves an absent flag to `false` — so in that dialect a deselected message and an unmarked one are the same message, and neither is sent. A run follows that reading, which means a hand-written `.bru` message is sent only if it says `selected: true`; every message skipped for the lack of it is named in the result's warnings, so a request that now sends nothing says why instead of reporting an empty session. Authoring a deselected message into a `.bru` collection writes it with no flag, exactly as Bruno does, so the file behaves as asked; what the dialect loses is only the report, since reading the request back finds the flag absent rather than false.
 
@@ -605,7 +604,7 @@ A gRPC request is authored the same way, with `kind: "grpc"`: a url, and under `
 
 Headers become **metadata**, which is that transport's only header surface — a `headers` block on a gRPC request is one Bruno's gRPC reader never looks at, so the `headers` argument is written as `metadata` instead. The `protoPath` must already exist inside the collection and is stored relative to it whichever spelling you give, because an absolute path is the operator's directory layout committed to a shared file; a path resolving outside the collection is refused, symlinks included, as is one whose imports leave it however many hops in (a well-known `google/protobuf/` import is not a file and is not refused). And all four `methodType` values are accepted, because Bruno writes all four — but only `unary` runs here, so the other three author a file Bruno can open and `run_collection` will refuse by name. As with WebSocket, the bytes are identical to Bruno's own writer in both formats, including the two dialects' disagreement about spelling: `.bru` writes `protoPath` inside the `grpc` block, `.yml` writes `protoFilePath`.
 
-**`modify_request` edits both transports.** A url, headers, auth, `assert`, `vars`, `settings`, `name` and `sequence` all apply, as does the nested `websocket` or `grpc` object — its messages, and for gRPC the `method`, `protoPath` and `methodType`. Each field is written where that transport keeps it, so a gRPC header edit lands in `metadata` and never writes a `headers` block. Everything the edit does not name comes back byte-identical, which matters more here than for HTTP: an edit regenerates the whole file from a parsed model, so anything the model does not carry is gone without a message.
+**`write_request` edits both transports.** A url, headers, auth, `assert`, `vars`, `settings`, `name` and `sequence` all apply, as does the nested `websocket` or `grpc` object — its messages, and for gRPC the `method`, `protoPath` and `methodType`. Each field is written where that transport keeps it, so a gRPC header edit lands in `metadata` and never writes a `headers` block. Everything the edit does not name comes back byte-identical, which matters more here than for HTTP: an edit regenerates the whole file from a parsed model, so anything the model does not carry is gone without a message.
 
 What is still refused is what the transport genuinely has no place for — an HTTP method, a body, query parameters, path params, and the other transport's object — by name, leaving the file byte-unchanged. Refusing url, headers and auth as well used to be the behaviour, which meant a WebSocket request's target could not be changed for the life of the file.
 
@@ -671,7 +670,7 @@ The collection it produces is a normal Bruno collection, so CI runs it with `bru
 
 ### Will it rewrite files the Bruno app wrote?
 
-Only the fields you asked to change. `modify_request` is a partial merge, a key this server does not model is carried back out where the format can carry it — `.yml` throughout, and `.bru` wherever its grammar has a dictionary block to hold it — and every write is verified against Bruno's own reader in the test suite. Deletes need an explicit `confirm: true`.
+Only the fields you asked to change. an edit through `write_request` is a partial merge, a key this server does not model is carried back out where the format can carry it — `.yml` throughout, and `.bru` wherever its grammar has a dictionary block to hold it — and every write is verified against Bruno's own reader in the test suite. Deletes need an explicit `confirm: true`.
 
 ### Which MCP clients work?
 

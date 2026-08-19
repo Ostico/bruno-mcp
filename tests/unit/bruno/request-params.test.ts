@@ -5,7 +5,7 @@
  * them back — and nothing applied them to the outgoing request. A `params:query`
  * entry never reached the query string and a `params:path` entry left `:id` in
  * the URL verbatim. It was reachable straight through the MCP surface:
- * create_request stores its `query` input, the file on disk looks right, and the
+ * write_request stores its `query` input, the file on disk looks right, and the
  * request went out without it.
  */
 import { createServer, Server } from 'http';

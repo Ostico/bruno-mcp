@@ -23,11 +23,13 @@ import { surfaceMetrics, type SurfaceTool } from '../../../src/tools/surface-met
 /**
  * The budget, in characters of `tools/list`.
  *
- * Measured at 79,525 on 2026-08-19. It only ever moves down: raising it requires
- * a deliberate edit in the same commit as the change that justifies it, so the
- * cost of a larger surface is argued in a review rather than discovered later.
+ * Measured at 67,391 on 2026-08-19, down from 79,525 before create_request and
+ * modify_request became one write_request. It only ever moves down: raising it
+ * requires a deliberate edit in the same commit as the change that justifies it,
+ * so the cost of a larger surface is argued in a review rather than discovered
+ * later.
  */
-const SURFACE_BUDGET = 80_000;
+const SURFACE_BUDGET = 67_500;
 
 async function readSurface(): Promise<SurfaceTool[]> {
   const server = new BrunoMcpServer();

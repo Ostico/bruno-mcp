@@ -100,6 +100,18 @@ export class RequestBuilder {
       // discarded. Locking only the mutating half of a file's API leaves the
       // lost update the lock was added to prevent.
       return await withPathLock(filePath, async () => {
+        // Creating must not clobber. Nothing else guards it: this path is
+        // ensureDirectory plus writeFileAtomic, so a call meant as an edit would
+        // replace the whole file and report success. Checked inside the lock, so
+        // two creations of one path cannot both pass the check and then have one
+        // silently lose its content to the other.
+        if (await this.pathExists(filePath)) {
+          return {
+            success: false,
+            error: `${filePath} already exists. To change it, address it by filePath `
+              + 'instead of creating it again.',
+          };
+        }
         await this.ensureDirectory(dirname(filePath));
         // With no explicit sequence the file used to be written with no `seq` at
         // all, which the run order treats as last — every such request tied with
@@ -1150,6 +1162,21 @@ export class RequestBuilder {
       await fs.access(dirPath);
     } catch {
       await fs.mkdir(dirPath, { recursive: true });
+    }
+  }
+
+  /**
+   * Whether a path exists.
+   *
+   * `stat` rather than a read, because a read that a test has stubbed resolves
+   * with `undefined` and reports every path as present.
+   */
+  private async pathExists(filePath: string): Promise<boolean> {
+    try {
+      await fs.stat(filePath);
+      return true;
+    } catch {
+      return false;
     }
   }
 }

@@ -179,7 +179,7 @@ describe('authoring the settings block in .yml', () => {
   });
 });
 
-describe('modify_request merges the settings block field by field', () => {
+describe('write_request merges the settings block field by field', () => {
   it('keeps an existing followRedirects when only timeout is set (.bru)', async () => {
     const collectionPath = await makeCollection('bru');
     const { path } = await create(collectionPath, { settings: { followRedirects: false } });

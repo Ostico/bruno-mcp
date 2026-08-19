@@ -120,7 +120,7 @@ describe('read_request', () => {
     expect(view.headers).toContainEqual({ name: 'Accept', value: 'application/json' });
   });
 
-  it('shows a body that create_request wrote', async () => {
+  it('shows a body that write_request wrote', async () => {
     const collectionPath = await makeCollection('body', 'bru');
     const created = await builder.createRequest({
       collectionPath,

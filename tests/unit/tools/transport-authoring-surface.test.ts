@@ -1,5 +1,5 @@
 /**
- * The non-HTTP halves of `create_request`, checked at the layer the caller sees.
+ * The non-HTTP halves of `write_request`, checked at the layer the caller sees.
  *
  * The writer-level tests call `createRequest` directly, so they never touch the
  * zod schemas or the handler in front of them. Two things can only go wrong
@@ -63,7 +63,7 @@ function toolHandler(server: BrunoMcpServer, name: string): any {
   return (server as any).server._tools.get(name).handler;
 }
 
-describe('the create_request schema for a WebSocket request', () => {
+describe('the write_request schema for a WebSocket request', () => {
   let server: BrunoMcpServer;
 
   beforeEach(() => {
@@ -72,7 +72,7 @@ describe('the create_request schema for a WebSocket request', () => {
   });
 
   it('offers all three transports and refuses a fourth', () => {
-    const kind = inputSchema(server, 'create_request').kind as z.ZodTypeAny;
+    const kind = inputSchema(server, 'write_request').kind as z.ZodTypeAny;
 
     expect(kind.safeParse('http').success).toBe(true);
     expect(kind.safeParse('websocket').success).toBe(true);
@@ -83,13 +83,13 @@ describe('the create_request schema for a WebSocket request', () => {
   it('lets a request omit the method, which it could not before', () => {
     // `method` was required, so kind "websocket" was unspellable whatever the
     // writer supported.
-    const method = inputSchema(server, 'create_request').method as z.ZodTypeAny;
+    const method = inputSchema(server, 'write_request').method as z.ZodTypeAny;
 
     expect(method.safeParse(undefined).success).toBe(true);
   });
 
   it('accepts a message described by content alone', () => {
-    const websocket = inputSchema(server, 'create_request').websocket as z.ZodTypeAny;
+    const websocket = inputSchema(server, 'write_request').websocket as z.ZodTypeAny;
 
     expect(websocket.safeParse({ messages: [{ content: 'ping' }] }).success).toBe(true);
   });
@@ -97,7 +97,7 @@ describe('the create_request schema for a WebSocket request', () => {
   it('accepts a titled, typed, deselected message', () => {
     // Deselection is refused for .bru by the builder, not here — the schema must
     // carry it through so the builder can say which dialect can record it.
-    const websocket = inputSchema(server, 'create_request').websocket as z.ZodTypeAny;
+    const websocket = inputSchema(server, 'write_request').websocket as z.ZodTypeAny;
 
     const parsed = websocket.safeParse({
       messages: [{ title: 'first', type: 'text', content: 'ping', selected: false }],
@@ -107,13 +107,13 @@ describe('the create_request schema for a WebSocket request', () => {
   });
 
   it('refuses a message with no content', () => {
-    const websocket = inputSchema(server, 'create_request').websocket as z.ZodTypeAny;
+    const websocket = inputSchema(server, 'write_request').websocket as z.ZodTypeAny;
 
     expect(websocket.safeParse({ messages: [{ title: 'first' }] }).success).toBe(false);
   });
 });
 
-describe('the create_request schema for a gRPC request', () => {
+describe('the write_request schema for a gRPC request', () => {
   let server: BrunoMcpServer;
 
   beforeEach(() => {
@@ -124,7 +124,7 @@ describe('the create_request schema for a gRPC request', () => {
   it('accepts all four RPC shapes and refuses an invented one', () => {
     // Only unary runs here, but Bruno writes all four, so authoring must be able
     // to spell a file Bruno can open.
-    const grpc = inputSchema(server, 'create_request').grpc as z.ZodTypeAny;
+    const grpc = inputSchema(server, 'write_request').grpc as z.ZodTypeAny;
 
     for (const methodType of ['unary', 'client-streaming', 'server-streaming', 'bidi-streaming']) {
       expect(grpc.safeParse({ methodType }).success).toBe(true);
@@ -133,20 +133,20 @@ describe('the create_request schema for a gRPC request', () => {
   });
 
   it('accepts a message described by content alone', () => {
-    const grpc = inputSchema(server, 'create_request').grpc as z.ZodTypeAny;
+    const grpc = inputSchema(server, 'write_request').grpc as z.ZodTypeAny;
 
     expect(grpc.safeParse({ messages: [{ content: '{}' }] }).success).toBe(true);
   });
 
   it('refuses a message with no content', () => {
-    const grpc = inputSchema(server, 'create_request').grpc as z.ZodTypeAny;
+    const grpc = inputSchema(server, 'write_request').grpc as z.ZodTypeAny;
 
     expect(grpc.safeParse({ messages: [{ title: 'first' }] }).success).toBe(false);
   });
 
   it('offers no `selected` or `type` on a message, which gRPC has no place for', () => {
     // A caller who passes one would otherwise believe it reached the file.
-    const grpc = inputSchema(server, 'create_request').grpc as z.ZodTypeAny;
+    const grpc = inputSchema(server, 'write_request').grpc as z.ZodTypeAny;
 
     const parsed = grpc.safeParse({
       messages: [{ content: '{}', selected: false, type: 'json' }],
@@ -157,7 +157,7 @@ describe('the create_request schema for a gRPC request', () => {
   });
 });
 
-describe('what the create_request handler forwards for a WebSocket request', () => {
+describe('what the write_request handler forwards for a WebSocket request', () => {
   let server: BrunoMcpServer;
   let createRequest: jest.Mock;
 
@@ -170,7 +170,7 @@ describe('what the create_request handler forwards for a WebSocket request', () 
   });
 
   it('translates the wire name into the on-disk kind', async () => {
-    await toolHandler(server, 'create_request')({
+    await toolHandler(server, 'write_request')({
       collectionPath: '/col',
       name: 'Echo',
       kind: 'websocket',
@@ -183,7 +183,7 @@ describe('what the create_request handler forwards for a WebSocket request', () 
   it('leaves an unstated kind unstated, so the builder picks the default', async () => {
     // Substituting 'http' here would work today and diverge the moment the
     // builder's default changes.
-    await toolHandler(server, 'create_request')({
+    await toolHandler(server, 'write_request')({
       collectionPath: '/col',
       name: 'Plain',
       method: 'GET',
@@ -194,7 +194,7 @@ describe('what the create_request handler forwards for a WebSocket request', () 
   });
 
   it('forwards every field of every message', async () => {
-    await toolHandler(server, 'create_request')({
+    await toolHandler(server, 'write_request')({
       collectionPath: '/col',
       name: 'Echo',
       kind: 'websocket',
@@ -225,7 +225,7 @@ describe('what the create_request handler forwards for a WebSocket request', () 
       error: 'A WebSocket request has no HTTP method',
     });
 
-    const response = await toolHandler(server, 'create_request')({
+    const response = await toolHandler(server, 'write_request')({
       collectionPath: '/col',
       name: 'Echo',
       kind: 'websocket',
@@ -238,7 +238,7 @@ describe('what the create_request handler forwards for a WebSocket request', () 
   });
 });
 
-describe('what the create_request handler forwards for a gRPC request', () => {
+describe('what the write_request handler forwards for a gRPC request', () => {
   let server: BrunoMcpServer;
   let createRequest: jest.Mock;
 
@@ -251,7 +251,7 @@ describe('what the create_request handler forwards for a gRPC request', () => {
   });
 
   it('passes the kind through unrenamed, unlike websocket', async () => {
-    await toolHandler(server, 'create_request')({
+    await toolHandler(server, 'write_request')({
       collectionPath: '/col',
       name: 'Greet',
       kind: 'grpc',
@@ -262,7 +262,7 @@ describe('what the create_request handler forwards for a gRPC request', () => {
   });
 
   it('forwards every gRPC field, including every field of every message', async () => {
-    await toolHandler(server, 'create_request')({
+    await toolHandler(server, 'write_request')({
       collectionPath: '/col',
       name: 'Greet',
       kind: 'grpc',
@@ -290,7 +290,7 @@ describe('what the create_request handler forwards for a gRPC request', () => {
   it('forwards headers unchanged, leaving the builder to make them metadata', async () => {
     // The rename to metadata is a dialect concern, so it belongs where the dialect
     // is known; doing it here would write a metadata block for HTTP too.
-    await toolHandler(server, 'create_request')({
+    await toolHandler(server, 'write_request')({
       collectionPath: '/col',
       name: 'Greet',
       kind: 'grpc',
@@ -309,7 +309,7 @@ describe('what the create_request handler forwards for a gRPC request', () => {
       error: 'protoPath resolves outside the collection',
     });
 
-    const response = await toolHandler(server, 'create_request')({
+    const response = await toolHandler(server, 'write_request')({
       collectionPath: '/col',
       name: 'Greet',
       kind: 'grpc',

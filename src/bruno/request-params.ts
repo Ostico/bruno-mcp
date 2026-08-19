@@ -5,7 +5,7 @@
  * generators write them back — but nothing ever applied them, so a `params:query`
  * entry never reached the query string and a `params:path` entry left `:id` in
  * the path verbatim. It was reachable end to end through the MCP surface:
- * create_request stores its `query` input, the file on disk looks correct, and
+ * write_request stores its `query` input, the file on disk looks correct, and
  * the request went out without it.
  *
  * Values are substituted **raw**, exactly as Bruno does. Encoding is not this

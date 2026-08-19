@@ -112,9 +112,9 @@ describe('write-tool path validation', () => {
     });
   });
 
-  describe('create_request — collectionPath', () => {
+  describe('write_request — collectionPath', () => {
     it('rejects path with .. traversal', async () => {
-      const handler = getHandler(server, 'create_request');
+      const handler = getHandler(server, 'write_request');
       const response = await handler({
         collectionPath: '/workspace/../etc',
         name: 'GetUsers',
@@ -126,7 +126,7 @@ describe('write-tool path validation', () => {
     });
 
     it('rejects path with null bytes', async () => {
-      const handler = getHandler(server, 'create_request');
+      const handler = getHandler(server, 'write_request');
       const response = await handler({
         collectionPath: '/workspace/col\0lection',
         name: 'GetUsers',

@@ -115,7 +115,7 @@ describe('form-urlencoded is stored as pairs, not as a string', () => {
     expect(sent.body).toBe('keep=1');
   });
 
-  it('modify_request writes the same shape as create_request', async () => {
+  it('write_request writes the same shape as write_request', async () => {
     const created = await builder.createRequest({
       collectionPath,
       name: 'Mod',
