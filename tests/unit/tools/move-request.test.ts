@@ -45,7 +45,6 @@ jest.mock('../../../src/bruno/format-factory', () => ({
 jest.mock('../../../src/bruno/request', () => ({
   createRequestBuilder: jest.fn(() => ({
     createRequest: jest.fn(),
-    createCrudRequests: jest.fn(),
     updateRequest: jest.fn(),
   })),
 }));

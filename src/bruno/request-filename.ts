@@ -137,3 +137,21 @@ export async function ensureRenameTargetFree(
     reason: `"${basename(target)}" already exists in that folder`,
   };
 }
+
+/**
+ * The basename a request name becomes on disk, without its extension.
+ *
+ * Exported as well as used by the writer, because a caller writing several
+ * requests at once has to know whether two of them land on the same file
+ * *before* the first is written: "Log In" and "log-in" are one file, and the
+ * second would otherwise replace the first with both reported as written.
+ * Deriving it a second time in the caller would be a copy that drifts.
+ */
+export function sanitizeRequestFileName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .trim();
+}

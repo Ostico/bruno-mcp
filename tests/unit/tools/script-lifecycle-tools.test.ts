@@ -65,7 +65,6 @@ jest.mock('../../../src/bruno/environment', () => ({
 jest.mock('../../../src/bruno/request', () => ({
   createRequestBuilder: jest.fn(() => ({
     createRequest: jest.fn(),
-    createCrudRequests: jest.fn(),
   })),
 }));
 jest.mock('../../../src/bruno/workspace', () => ({

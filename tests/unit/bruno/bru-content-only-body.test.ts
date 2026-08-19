@@ -18,7 +18,7 @@
  * round-trip through this codebase's own parser would agree with whatever the
  * generator wrote, which is exactly how the defect stayed invisible. They also
  * pin the failure that reaches the tool surface today — a `form-data` body given
- * as `content` and no parts, which `create_test_suite` produces from its own
+ * as `content` and no parts, which a caller produces from the body schema's own
  * schema.
  */
 import { generateBruRequest, parseBruRequest } from '../../../src/bruno/bru-parser';
@@ -173,7 +173,7 @@ describe('a .bru body carried only as content', () => {
     it.each(['form-data', 'multipart-form'] as BodyType[])(
       'restores the camelCase mode and writes no block for %s',
       (type) => {
-        // Reachable today: create_test_suite forwards only `{type, content}`,
+        // Reachable today: a caller may pass only `{type, content}`,
         // so a form-data body arrives here with no parts at all. The content is
         // lost either way — a bare string cannot name parts — but the mode token
         // is now one Bruno recognises rather than a kebab-case value it does not.

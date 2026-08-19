@@ -513,32 +513,6 @@ describe('RequestBuilder', () => {
     });
   });
 
-  describe('createCrudRequests()', () => {
-    it('should create 5 CRUD requests', async () => {
-      detectFormat.mockResolvedValue({ format: 'yaml' });
-
-      const results = await builder.createCrudRequests(
-        '/col',
-        'User',
-        'https://api.example.com',
-        'users',
-      );
-      expect(results).toHaveLength(5);
-      expect(results.every((r) => r.success)).toBe(true);
-    });
-
-    it('should create CRUD without folder', async () => {
-      detectFormat.mockResolvedValue({ format: 'bru' });
-
-      const results = await builder.createCrudRequests(
-        '/col',
-        'Post',
-        'https://api.example.com',
-      );
-      expect(results).toHaveLength(5);
-    });
-  });
-
   describe('createAuthRequests()', () => {
     it('should create 4 auth requests with bearer type', async () => {
       detectFormat.mockResolvedValue({ format: 'yaml' });

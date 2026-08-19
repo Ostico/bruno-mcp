@@ -49,8 +49,6 @@ const EXPECTED_TOOLS = [
   'add_test_script',
   'remove_script',
   'delete_request',
-  'create_test_suite',
-  'create_crud_requests',
   'list_collections',
   'list_requests',
   'get_collection_stats',

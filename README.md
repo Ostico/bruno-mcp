@@ -223,8 +223,6 @@ See [INTEGRATION.md](./INTEGRATION.md) for worked examples, Docker, and troubles
 | `read_request` | Read one request back as JSON, same shape for `.bru` and `.yml` |
 | `list_requests` | Every request file in the collection, as absolute paths |
 | `delete_request` | Delete a request file. Needs `confirm: true` |
-| `create_crud_requests` | Five requests for an entity: List, Get, Create, Update, Delete |
-| `create_test_suite` | Several related requests, with optional ordering dependencies |
 | `add_test_script` | Attach a script to an existing request (appends by default) |
 | `remove_script` | Remove one script, keep the request |
 | `create_environment` | New environment file. Refuses to overwrite unless `overwrite: true` |

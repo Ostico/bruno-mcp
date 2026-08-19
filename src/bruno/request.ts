@@ -8,7 +8,7 @@ import { writeFileAtomic } from './atomic-write.js';
 import { withPathLock } from './path-mutex.js';
 import { nextRequestSequence } from './request-sequence.js';
 import { isYamlRequestFile, isBruRequestFile } from './request-extensions.js';
-import { ensureRenameTargetFree, resolveRenameTarget } from './request-filename.js';
+import { ensureRenameTargetFree, resolveRenameTarget, sanitizeRequestFileName } from './request-filename.js';
 import { join, dirname, isAbsolute, relative } from 'path';
 import { realpathSync } from 'fs';
 import { assertProtoImportsConfined, confineProtoPath } from './proto-path.js';
@@ -347,92 +347,6 @@ export class RequestBuilder {
         error: error instanceof Error ? error.message : 'Unknown error'
       };
     }
-  }
-
-  /**
-   * Create multiple related requests (CRUD operations).
-   *
-   * `auth` defaults to `inherit`, not `none`. Omitting it used to write an
-   * explicit `auth: none` into all five files, which is not "no opinion" — it is
-   * an opt-out that stops the collection's own auth block from applying, so a
-   * generated set against an authenticated API returned 401 until every file was
-   * edited by hand. `inherit` is what Bruno's own new-request path defaults to
-   * (`bruno-app` .../slices/collections/actions.js, `auth ?? { mode: 'inherit' }`).
-   * Pass `{ type: 'none', config: {} }` to opt out deliberately.
-   */
-  async createCrudRequests(
-    collectionPath: string,
-    entityName: string,
-    baseUrl: string,
-    folder?: string,
-    auth: CreateRequestInput['auth'] = { type: 'inherit', config: {} }
-  ): Promise<FileOperationResult[]> {
-    const results: FileOperationResult[] = [];
-
-    const crudOperations = [
-      {
-        name: `Get All ${entityName}`,
-        method: 'GET' as HttpMethod,
-        url: `${baseUrl}/${entityName.toLowerCase()}`,
-        sequence: 1
-      },
-      {
-        name: `Get ${entityName} by ID`,
-        method: 'GET' as HttpMethod,
-        url: `${baseUrl}/${entityName.toLowerCase()}/{{id}}`,
-        sequence: 2
-      },
-      {
-        name: `Create ${entityName}`,
-        method: 'POST' as HttpMethod,
-        url: `${baseUrl}/${entityName.toLowerCase()}`,
-        body: {
-          type: 'json' as BodyType,
-          content: JSON.stringify({
-            name: `New ${entityName}`,
-            description: `Description for ${entityName}`
-          }, null, 2)
-        },
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        sequence: 3
-      },
-      {
-        name: `Update ${entityName}`,
-        method: 'PUT' as HttpMethod,
-        url: `${baseUrl}/${entityName.toLowerCase()}/{{id}}`,
-        body: {
-          type: 'json' as BodyType,
-          content: JSON.stringify({
-            name: `Updated ${entityName}`,
-            description: `Updated description for ${entityName}`
-          }, null, 2)
-        },
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        sequence: 4
-      },
-      {
-        name: `Delete ${entityName}`,
-        method: 'DELETE' as HttpMethod,
-        url: `${baseUrl}/${entityName.toLowerCase()}/{{id}}`,
-        sequence: 5
-      }
-    ];
-
-    for (const operation of crudOperations) {
-      const result = await this.createRequest({
-        collectionPath,
-        ...operation,
-        folder,
-        auth
-      });
-      results.push(result);
-    }
-
-    return results;
   }
 
   /**
@@ -906,12 +820,7 @@ export class RequestBuilder {
    * Sanitize file name for filesystem
    */
   private sanitizeFileName(name: string): string {
-    return name
-      .toLowerCase()
-      .replace(/[^a-z0-9\s-]/g, '')
-      .replace(/\s+/g, '-')
-      .replace(/-+/g, '-')
-      .trim();
+    return sanitizeRequestFileName(name);
   }
 
   private parseBruFile(content: string): BruFile {

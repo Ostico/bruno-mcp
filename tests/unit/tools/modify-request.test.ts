@@ -37,7 +37,6 @@ const mockUpdateRequest = jest.fn();
 jest.mock('../../../src/bruno/request', () => ({
   createRequestBuilder: jest.fn(() => ({
     createRequest: jest.fn(),
-    createCrudRequests: jest.fn(),
     updateRequest: (...args: unknown[]) => mockUpdateRequest(...args),
   })),
 }));

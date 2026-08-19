@@ -151,11 +151,11 @@ export const requestSettingsSchema = z.object({
 /**
  * A request body, shared by every tool that accepts one.
  *
- * One definition on purpose. The three tools each carried their own copy and
- * they drifted: `create_test_suite` offered six body types and no parts at all,
- * so a suite request could name a multipart body and then have no way to say
- * what was in it. The type list here is the full `BodyType` union the writers
- * support, not a subset of it.
+ * One definition on purpose. The tools that write a body each carried their own
+ * copy and they drifted: one of them offered six body types and no parts at all,
+ * so a request could name a multipart body and then have no way to say what was
+ * in it. The type list here is the full `BodyType` union the writers support,
+ * not a subset of it.
  */
 export const requestBodySchema = z.object({
   type: z.enum([

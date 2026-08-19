@@ -14,10 +14,16 @@ import { promises as fs } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+
+import { BrunoMcpServer } from '../../../src/server';
 import { createCollectionManager } from '../../../src/bruno/collection';
 import { createRequestBuilder } from '../../../src/bruno/request';
 import { resolveWriteTarget, registerWriteRequestTool } from '../../../src/tools/request-write';
 import type { ToolContext } from '../../../src/tools/context';
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 interface ToolResult {
   content: { type: string; text: string }[];
@@ -241,6 +247,230 @@ describe('write_request handler', () => {
     expect(result.content[0].text).toContain('url');
   });
 
+  describe('a batch of items', () => {
+    /** Item lines are reported in input order, one per line, after a summary line. */
+    function reportedPaths(text: string): string[] {
+      return text
+        .split('\n')
+        .filter((line) => /^\d+\. /.test(line))
+        .map((line) => line.slice(line.indexOf(': ') + 2).trim());
+    }
+
+    it('writes a mixed batch: one edit item and one create item under one collectionPath', async () => {
+      const handler = registerAndCapture();
+      const created = await handler({
+        collectionPath,
+        name: 'Login',
+        method: 'POST',
+        url: 'https://api.test/login',
+      });
+      const existing = writtenPath(created.content[0].text);
+
+      const result = await handler({
+        collectionPath,
+        requests: [
+          { filePath: existing, method: 'PATCH' },
+          { name: 'List Users', method: 'GET', url: 'https://api.test/users' },
+        ],
+      });
+
+      expect(result.isError).toBeUndefined();
+      const paths = reportedPaths(result.content[0].text);
+      expect(paths).toHaveLength(2);
+      expect(paths[0]).toBe(existing);
+      await expect(fs.readFile(existing, 'utf8')).resolves.toContain('patch');
+      await expect(fs.readFile(paths[1], 'utf8')).resolves.toContain('https://api.test/users');
+    });
+
+    // The writer lowercases and hyphenates, so a caller cannot predict the path.
+    // Reporting it per item is the only way a batch stays usable: without it the
+    // caller has to list the collection again to find out what it just wrote.
+    it('reports the path actually written for each item, in input order', async () => {
+      const handler = registerAndCapture();
+
+      const result = await handler({
+        collectionPath,
+        requests: [
+          { name: 'Log In', method: 'POST', url: 'https://api.test/login' },
+          { name: 'Fetch Me', method: 'GET', url: 'https://api.test/me' },
+        ],
+      });
+
+      expect(reportedPaths(result.content[0].text)).toEqual([
+        join(collectionPath, 'log-in.bru'),
+        join(collectionPath, 'fetch-me.bru'),
+      ]);
+    });
+
+    it('reports a per-item failure without abandoning the remaining items, and sets isError', async () => {
+      const handler = registerAndCapture();
+
+      const result = await handler({
+        collectionPath,
+        requests: [
+          { name: 'First', method: 'GET', url: 'https://api.test/first' },
+          { filePath: join(collectionPath, 'absent.bru'), method: 'GET' },
+          { name: 'Third', method: 'GET', url: 'https://api.test/third' },
+        ],
+      });
+
+      expect(result.isError).toBe(true);
+      const text = result.content[0].text;
+      expect(text).toContain('2 of 3');
+      // The items either side of the failure were still written.
+      await expect(fs.readFile(join(collectionPath, 'first.bru'), 'utf8'))
+        .resolves.toContain('https://api.test/first');
+      await expect(fs.readFile(join(collectionPath, 'third.bru'), 'utf8'))
+        .resolves.toContain('https://api.test/third');
+    });
+
+    // "Log In" and "log-in" are one file. Without this the second item silently
+    // replaces the first and both are reported as written.
+    it('refuses two items whose names resolve to the same file, before writing either', async () => {
+      const handler = registerAndCapture();
+
+      const result = await handler({
+        collectionPath,
+        requests: [
+          { name: 'Log In', method: 'POST', url: 'https://api.test/login' },
+          { name: 'log-in', method: 'GET', url: 'https://api.test/other' },
+        ],
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('log-in');
+      await expect(fs.readFile(join(collectionPath, 'log-in.bru'), 'utf8')).rejects.toThrow();
+    });
+
+    it('refuses an edit item whose filePath is outside the batch collection', async () => {
+      const handler = registerAndCapture();
+
+      const result = await handler({
+        collectionPath,
+        requests: [
+          { name: 'Inside', method: 'GET', url: 'https://api.test/inside' },
+          { filePath: join(collectionPath, '..', 'elsewhere.bru'), method: 'GET' },
+        ],
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('elsewhere.bru');
+      // Refused before anything was written, including the item that was fine.
+      await expect(fs.readFile(join(collectionPath, 'inside.bru'), 'utf8')).rejects.toThrow();
+    });
+
+    it('refuses a batch with no collectionPath, naming the field', async () => {
+      const handler = registerAndCapture();
+
+      const result = await handler({
+        requests: [{ name: 'Login', method: 'GET', url: 'https://api.test/login' }],
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('collectionPath');
+    });
+
+    it('refuses a call that is both a batch and a single write', async () => {
+      const handler = registerAndCapture();
+
+      const result = await handler({
+        collectionPath,
+        name: 'Login',
+        url: 'https://api.test/login',
+        requests: [{ name: 'Other', method: 'GET', url: 'https://api.test/other' }],
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('requests');
+      expect(result.content[0].text).toContain('name');
+    });
+
+    it('refuses an empty batch', async () => {
+      const handler = registerAndCapture();
+
+      const result = await handler({ collectionPath, requests: [] });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('empty');
+    });
+
+    // Dependencies decide write order, and the builder numbers an unnumbered
+    // request after the folder's existing ones, so the seq falls out of the order
+    // it was written in. No second pass rewriting seq afterwards.
+    it('writes items in dependency order, and still reports them in input order', async () => {
+      const handler = registerAndCapture();
+
+      const result = await handler({
+        collectionPath,
+        requests: [
+          { name: 'Use Token', method: 'GET', url: 'https://api.test/me', dependencies: ['Get Token'] },
+          { name: 'Get Token', method: 'POST', url: 'https://api.test/token' },
+        ],
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(reportedPaths(result.content[0].text)).toEqual([
+        join(collectionPath, 'use-token.bru'),
+        join(collectionPath, 'get-token.bru'),
+      ]);
+      const token = await fs.readFile(join(collectionPath, 'get-token.bru'), 'utf8');
+      const use = await fs.readFile(join(collectionPath, 'use-token.bru'), 'utf8');
+      expect(token).toContain('seq: 1');
+      expect(use).toContain('seq: 2');
+    });
+
+    it('refuses a dependency on an item the batch does not contain', async () => {
+      const handler = registerAndCapture();
+
+      const result = await handler({
+        collectionPath,
+        requests: [
+          { name: 'Use Token', method: 'GET', url: 'https://api.test/me', dependencies: ['Absent'] },
+        ],
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Absent');
+      await expect(fs.readFile(join(collectionPath, 'use-token.bru'), 'utf8')).rejects.toThrow();
+    });
+
+    it('refuses a cycle in the batch dependencies, before writing anything', async () => {
+      const handler = registerAndCapture();
+
+      const result = await handler({
+        collectionPath,
+        requests: [
+          { name: 'First', method: 'GET', url: 'https://api.test/first', dependencies: ['Second'] },
+          { name: 'Second', method: 'GET', url: 'https://api.test/second', dependencies: ['First'] },
+        ],
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Circular');
+      await expect(fs.readFile(join(collectionPath, 'first.bru'), 'utf8')).rejects.toThrow();
+    });
+
+    // The loop must not take the path lock: `createRequest` and `updateRequest`
+    // each take it themselves and it is not reentrant, so a loop that took it
+    // would deadlock. That failure is a hang rather than a throw, which at the
+    // default timeout reports "failed to run" with no diagnosis — hence the
+    // explicit, generous per-test timeout and the two items on one path.
+    it('completes a two-item batch on one path within the timeout', async () => {
+      const handler = registerAndCapture();
+
+      const result = await handler({
+        collectionPath,
+        requests: [
+          { name: 'Login', method: 'POST', url: 'https://api.test/login' },
+          { filePath: join(collectionPath, 'login.bru'), method: 'PATCH' },
+        ],
+      });
+
+      expect(result.isError).toBeUndefined();
+      await expect(fs.readFile(join(collectionPath, 'login.bru'), 'utf8')).resolves.toContain('patch');
+    }, 15_000);
+  });
+
   it('surfaces a locator refusal as an error', async () => {
     const handler = registerAndCapture();
 
@@ -249,5 +479,48 @@ describe('write_request handler', () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('filePath');
     expect(result.content[0].text).toContain('collectionPath');
+  });
+});
+
+/**
+ * The batch array must not re-send the field prose.
+ *
+ * `zod-to-json-schema` emits a bare `$ref` for a second occurrence of an
+ * identical schema instance, but re-emits the `description` next to the ref when
+ * only the inner type is shared and the `.optional()` wrapper is not. The
+ * difference is the whole cost of the array: shared wrappers make it a few
+ * hundred characters, and separate wrappers make it a second copy of every
+ * description on the tool.
+ */
+describe('the shape write_request sends a client', () => {
+  let schema: any;
+
+  beforeAll(async () => {
+    const server = new BrunoMcpServer();
+    const client = new Client({ name: 'write-request-shape', version: '0.0.0' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    await (server as any).server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const { tools } = await client.listTools();
+    await client.close();
+
+    schema = tools.find((tool) => tool.name === 'write_request')?.inputSchema;
+  });
+
+  it('refers to the top-level fields from inside the array instead of repeating them', () => {
+    const items = schema.properties.requests.items.properties;
+
+    for (const field of ['name', 'url', 'method', 'body', 'auth', 'settings', 'scripts']) {
+      expect(items[field]).toEqual({ $ref: `#/properties/${field}` });
+    }
+  });
+
+  it('states each field description exactly once', () => {
+    const serialised = JSON.stringify(schema);
+    const described = schema.properties.name.description;
+
+    expect(typeof described).toBe('string');
+    expect(serialised.split(JSON.stringify(described).slice(1, -1)).length - 1).toBe(1);
   });
 });
