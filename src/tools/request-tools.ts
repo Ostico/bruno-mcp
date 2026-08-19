@@ -132,54 +132,110 @@ export function registerDeleteRequestTool(ctx: ToolContext): void {
   ctx.server.registerTool(
     'delete_request',
     {
-      title: 'Delete Request',
-      description: 'Permanently delete a Bruno request file from a collection. Use this to remove a request created by mistake; the file is unlinked from disk and cannot be recovered through this server. Only .yml/.bru files inside a detected Bruno collection can be deleted. To clear just a script and keep the request, use remove_script instead.',
+      title: 'Delete Requests',
+      description: 'Permanently delete request files from a Bruno collection. One confirm covers the '
+        + 'whole list. Each file is unlinked and cannot be recovered through this server. Only '
+        + '.yml/.bru files inside a detected collection can be deleted. Every path is checked '
+        + 'before the first unlink, so one unusable path deletes nothing. The result names each '
+        + "file's outcome. To clear a script and keep the request, use remove_script.",
       inputSchema: {
-        filePath: z.string().min(1, 'File path is required').describe('Absolute path to the .yml or .bru request file to delete. Get from list_requests or get_collection_stats.'),
-        confirm: z.literal(true).describe('Must be true. Explicit acknowledgement that the file is deleted permanently.')
+        filePaths: z.array(z.string().min(1, 'File path is required'))
+          .min(1, 'At least one file path is required')
+          .describe('Absolute paths to the .yml or .bru request files to delete, from '
+            + 'list_requests or get_collection_stats. A one-element list deletes one request.'),
+        confirm: z.literal(true).describe('Must be true. Every file in filePaths is '
+          + 'deleted permanently.')
       }
     },
     async (args) => {
       try {
         // Re-checked here, not only in the schema: deletion is irreversible
-        // and the handler must not depend on upstream validation.
+        // and the handler must not depend on upstream validation. The count is
+        // in the refusal because one confirm now covers a whole list, and a
+        // caller who meant to delete one request has to be able to see from the
+        // refusal that this call would have deleted more.
         if (args.confirm !== true) {
           return {
-            content: [{ type: 'text', text: 'Refusing to delete: confirm must be true.' }],
+            content: [{
+              type: 'text',
+              text: `Refusing to delete ${args.filePaths.length} `
+                + `file${args.filePaths.length === 1 ? '' : 's'}: confirm must be true.`,
+            }],
             isError: true,
           };
         }
 
-        const resolved = await resolveRequestFile(args.filePath, 'filePath');
-        if (!resolved.ok) {
-          return {
-            content: [{ type: 'text', text: resolved.message }],
-            isError: true,
-          };
+        // Every path is resolved before the first unlink. A batch whose second
+        // path is unusable deletes nothing: with an irreversible operation, a
+        // half-done call is worse than a refused one, and the caller can fix
+        // the list and send it again.
+        const targets: { filePath: string; format: string }[] = [];
+        const seen = new Map<string, number>();
+        for (const [index, filePath] of args.filePaths.entries()) {
+          const previous = seen.get(filePath);
+          if (previous !== undefined) {
+            return {
+              content: [{
+                type: 'text',
+                text: `filePaths[${index}] is named twice: "${filePath}" is already `
+                  + `filePaths[${previous}]. Remove the repeat — the second delete would fail on `
+                  + 'a file this same call had removed, and be reported as a failure.',
+              }],
+              isError: true,
+            };
+          }
+          seen.set(filePath, index);
+
+          const resolved = await resolveRequestFile(filePath, `filePaths[${index}]`);
+          if (!resolved.ok) {
+            return {
+              content: [{ type: 'text', text: `${resolved.message} (filePaths[${index}]: ${filePath})` }],
+              isError: true,
+            };
+          }
+          targets.push({ filePath, format: resolved.format });
         }
 
-        // Same per-file lock add_test_script and remove_script take. Without it,
-        // a script injection that had already read this file could write it back
-        // after the unlink, restoring a request this tool had just reported as
-        // permanently deleted. Taking the lock orders the two: either the
-        // injection finishes and is then deleted, or the delete wins and the
-        // injection's read fails with ENOENT.
-        await withPathLock(args.filePath, () => unlink(args.filePath));
+        const outcomes: string[] = [];
+        let failed = 0;
+        for (const [index, target] of targets.entries()) {
+          const label = `${index + 1}. ${path.basename(target.filePath)}`;
+          try {
+            // Same per-file lock add_test_script and remove_script take, and it
+            // belongs inside this loop rather than around it: one lock taken for
+            // the batch would hold the wrong key for every file after the first.
+            // Without it, a script injection that had already read this file
+            // could write it back after the unlink, restoring a request this
+            // tool had just reported as permanently deleted. Taking the lock
+            // orders the two: either the injection finishes and is then deleted,
+            // or the delete wins and the injection's read fails with ENOENT.
+            await withPathLock(target.filePath, () => unlink(target.filePath));
+            outcomes.push(`${label}: deleted (${target.format} format)`);
+          } catch (error) {
+            // Per file, and the rest of the list still runs: one unreadable
+            // file is not a reason to leave the others behind.
+            failed += 1;
+            outcomes.push(
+              `${label}: FAILED — ${error instanceof Error ? error.message : 'Unknown error'}`,
+            );
+          }
+        }
+
+        const total = targets.length;
+        const summary = failed === 0
+          ? `Deleted ${total === 1 ? '1 request' : `all ${total} requests`}.`
+          : `Deleted ${total - failed} of ${total} requests; ${failed} failed.`;
 
         return {
-          content: [
-            {
-              type: 'text',
-              text: `Deleted request ${path.basename(args.filePath)} (${resolved.format} format)`
-            }
-          ]
+          content: [{ type: 'text', text: [summary, ...outcomes].join('\n') }],
+          ...(failed > 0 ? { isError: true as const } : {}),
         };
       } catch (error) {
         return {
           content: [
             {
               type: 'text',
-              text: `❌ Error deleting request: ${error instanceof Error ? error.message : 'Unknown error'}`
+              text: `❌ Error deleting requests: ${error instanceof Error ? error.message : 'Unknown error'}`
             }
           ],
           isError: true

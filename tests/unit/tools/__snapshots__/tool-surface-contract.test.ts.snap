@@ -57,12 +57,12 @@ exports[`MCP tool surface contract matches the recorded surface for delete_colle
 
 exports[`MCP tool surface contract matches the recorded surface for delete_request: delete_request 1`] = `
 {
-  "description": "Permanently delete a Bruno request file from a collection. Use this to remove a request created by mistake; the file is unlinked from disk and cannot be recovered through this server. Only .yml/.bru files inside a detected Bruno collection can be deleted. To clear just a script and keep the request, use remove_script instead.",
+  "description": "Permanently delete request files from a Bruno collection. One confirm covers the whole list. Each file is unlinked and cannot be recovered through this server. Only .yml/.bru files inside a detected collection can be deleted. Every path is checked before the first unlink, so one unusable path deletes nothing. The result names each file's outcome. To clear a script and keep the request, use remove_script.",
   "schema": {
-    "confirm": "literal(true) — Must be true. Explicit acknowledgement that the file is deleted permanently.",
-    "filePath": "string — Absolute path to the .yml or .bru request file to delete. Get from list_requests or get_collection_stats.",
+    "confirm": "literal(true) — Must be true. Every file in filePaths is deleted permanently.",
+    "filePaths": "string[] — Absolute paths to the .yml or .bru request files to delete, from list_requests or get_collection_stats. A one-element list deletes one request.",
   },
-  "title": "Delete Request",
+  "title": "Delete Requests",
 }
 `;
 

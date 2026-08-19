@@ -23,14 +23,21 @@ import { surfaceMetrics, type SurfaceTool } from '../../../src/tools/surface-met
 /**
  * The budget, in characters of `tools/list`.
  *
- * Measured at 64,920 on 2026-08-19, down from 79,525 before create_request and
+ * Measured at 65,063 on 2026-08-19, down from 79,525 before create_request and
  * modify_request became one write_request and before create_test_suite and
  * create_crud_requests were deleted. It only ever moves down: raising it
  * requires a deliberate edit in the same commit as the change that justifies it,
  * so the cost of a larger surface is argued in a review rather than discovered
  * later.
+ *
+ * Raised by 100 once, from 65,000, in the commit that gave delete_request a list
+ * of paths. The array's own JSON Schema costs about 80 characters more than the
+ * single string it replaced, and two facts a caller cannot infer had to be said:
+ * that one confirm covers the whole list, and that every path is checked before
+ * the first unlink, so a list with one bad path deletes nothing. A call that
+ * deletes four requests instead of four calls pays this back on its first use.
  */
-const SURFACE_BUDGET = 65_000;
+const SURFACE_BUDGET = 65_100;
 
 async function readSurface(): Promise<SurfaceTool[]> {
   const server = new BrunoMcpServer();
