@@ -15,12 +15,11 @@ export const inlineScriptsSchema = z.object({
     'before-request/after-response accepted). IMPORTANT for tests/post-response: only assertions inside a ' +
     'test() block are reported. Write test("status is 200", function() { ' +
     'expect(res.getStatus()).to.equal(200); }); — a bare top-level expect() still runs, but a passing one ' +
-    'records nothing, so run_collection reports "tests": [] and the request looks green with no ' +
-    'assertions. Available: ' +
+    'records nothing, so run_collection reports "tests": []. Available: ' +
     'res.getStatus()/getStatusText()/getHeader(name)/getHeaders()/getBody()/getResponseTime(), ' +
     'res.getStopReason()/getCloseCode()/getSessionTruncated() on a websocket request, reporting the same ' +
-    'session outcome the result does (all null or false on an HTTP response, which has no session), ' +
-    'bru.setVar(name, value)/getVar(name)/getEnvVar(name)/hasEnvVar(name), and expect(actual) with ' +
+    'session outcome the result does (all null or false on an HTTP response), bru.setVar(name, ' +
+    'value)/getVar(name)/getEnvVar(name)/hasEnvVar(name), and expect(actual) with ' +
     '.to.equal/.contain/.include, .to.have.property/.lengthOf, .to.be.a/.an, ' +
     '.to.be.above/.below/.at.least/.at.most (aliases .gt/.lt/.gte/.lte/.greaterThan/.lessThan), ' +
     '.to.be.within(min, max), .to.be.oneOf([...]), .to.match(/re/), .to.startWith/.endWith, ' +

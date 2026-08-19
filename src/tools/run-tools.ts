@@ -47,20 +47,20 @@ const RUN_COLLECTION_DESCRIPTION = [
     'Pass requests OR groups, never both.',
   `GROUPS: one call, more than one identity or configuration. ${GROUP_ISOLATION}`,
   'ITERATIONS: data or dataFile runs a group once per row, the row bound as variables. Each row is its ' +
-    'own group — same name, own index, own iterationIndex — so it gets that same isolation. Rows are ' +
+    'own group — same name, own index, own iterationIndex — with that same isolation. Rows are ' +
     'independent: a failing row does not stop later rows. Ceiling 1000 rows per scope.',
   'PARALLELISM: parallel on the run fans groups out; parallel on a group fans that group\'s requests ' +
     'out. A group is serial unless it says otherwise, whatever the run does. seq no longer constrains ' +
     'execution — default order and reporting order only — so two requests in one parallel group run at the ' +
     'same moment and may contend on the store they share. startAfter holds a group until a named group has ' +
-    'completed a given number of its requests, connecting a listener before a trigger fires without ' +
-    'bru.sleep; needs parallel on the run. Chains allowed; cycles, and gates that can never open, are ' +
+    'completed a given number of its requests, connecting a listener before a trigger fires; needs ' +
+    'parallel on the run. Chains allowed; cycles, and gates that can never open, are ' +
     'refused before anything runs. If the group waited on ends early, the waiting group reports that as ' +
     'its error instead of starting.',
   'RESULTS are group-shaped: each groups[] entry carries its own summary, results, capturedVariableNames ' +
     'and capturedVariables; the top-level summary is the run. Run-wide warnings are top-level, so a ' +
-    'captureVariables name is reported unset only when NO group set it, an isolated store saying nothing ' +
-    'on its own. There is no top-level results array, not even with no groups. A crashed group reports ' +
+    'captureVariables name is reported unset only when NO group set it. There is no top-level results ' +
+    'array, not even with no groups. A crashed group reports ' +
     'error and counts as one failure.',
   `RESPONSE DATA: every result carries the response body (response_body, response_content_type, ` +
     `response_body_truncated) unless includeResponseBody is false; maxResponseBodyBytes caps it. Every ` +
@@ -86,19 +86,16 @@ const RUN_COLLECTION_DESCRIPTION = [
     'fail. The outcome is res.getStopReason() (also res.stopReason and res.statusText, same string), ' +
     'res.getCloseCode() for the peer\'s close code (null when it sent none, ordinary for a session stopped ' +
     'by its own bound), and res.getSessionTruncated(). Each returns what that result\'s websocket detail ' +
-    'reports, so an assertion cannot pass against an outcome the result denies. On a gRPC result ' +
+    'reports. On a gRPC result ' +
     'res.getStatus() is the gRPC code, res.statusText the server details or code name, res.getBody() the ' +
     'parsed message.',
   'SIMULTANEITY IS PER CALL: groups plus parallel are the only way to make two things happen at the same ' +
-    'moment. Two separate run_collection calls are not serialised by this server, but nothing here decides ' +
-    'when the second starts — that is the client\'s scheduling, typically seconds or tens of seconds ' +
-    'apart, which no single result shows. One identity listening while another triggers must be ONE call ' +
-    'with parallel groups.',
-  'Every result carries the path of the request file it came from, so a failure can be read back or ' +
-    're-run by name.',
-  'STOPPING EARLY: bail stops the run at the first request that fails or whose tests fail, so a ' +
-    'dependent chain reports one cause instead of one failure plus every consequence. Everything after ' +
-    'comes back skipped: true, skipReason "bail", counted in summary.skipped and in neither passed nor ' +
+    'moment. Two separate calls are not serialised by this server, and nothing here decides when the ' +
+    'second starts: that is the client\'s scheduling, typically seconds apart. One identity listening ' +
+    'while another triggers must be ONE call with parallel groups.',
+  'Every result carries the path of the request file it came from.',
+  'STOPPING EARLY: bail stops the run at the first request that fails or whose tests fail. Everything ' +
+    'after comes back skipped: true, skipReason "bail", counted in summary.skipped and in neither passed nor ' +
     'failed; the run carries a bail object naming the reason, the request it stopped at and how many were ' +
     'skipped. Nothing cancels a request in flight, so under parallel the ones already started still finish ' +
     'and are reported normally.',
