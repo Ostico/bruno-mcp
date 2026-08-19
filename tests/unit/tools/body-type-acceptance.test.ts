@@ -11,7 +11,6 @@
 jest.mock('../../../src/bruno/request', () => ({
   createRequestBuilder: () => ({
     createRequest: jest.fn(),
-    createCrudRequests: jest.fn(),
     updateRequest: jest.fn(),
   }),
 }));
@@ -58,7 +57,7 @@ const ALL_BODY_TYPES = [
 ];
 
 /** The tools that take a body, and where the body schema sits in each. */
-const TOOLS = ['create_request', 'modify_request', 'create_test_suite'];
+const TOOLS = ['write_request'];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function toolConfig(server: BrunoMcpServer, name: string): any {
@@ -79,7 +78,7 @@ function toolHandler(server: BrunoMcpServer, name: string): any {
 function bodySchemaOf(server: BrunoMcpServer, name: string): z.ZodTypeAny {
   const schema = toolConfig(server, name).inputSchema;
   if (schema.body) return schema.body as z.ZodTypeAny;
-  // create_test_suite carries its body inside requests[]
+  // A batch item carries its body inside requests[] instead.
   const element = (schema.requests as z.ZodArray<z.ZodObject<z.ZodRawShape>>).element;
   return element.shape.body as z.ZodTypeAny;
 }
@@ -123,7 +122,7 @@ describe('body types accepted by the tool schemas', () => {
     });
 
     it('accepts multipart parts', () => {
-      // create_test_suite could name a multipart body and then not describe it.
+      // A tool could once name a multipart body and then not describe it.
       const parsed = bodySchemaOf(server, tool).safeParse({
         type: 'multipart-form',
         formData: [{ name: 'a', value: '1' }],
@@ -133,15 +132,16 @@ describe('body types accepted by the tool schemas', () => {
     });
   });
 
-  it('offers the identical body schema on every tool', () => {
-    // One shared definition. The three copies had drifted before.
-    const rendered = TOOLS.map((tool) =>
-      JSON.stringify(Object.keys((bodySchemaOf(server, tool) as never as {
-        _def: { innerType: z.ZodObject<z.ZodRawShape> };
-      })._def.innerType.shape).sort()),
-    );
+  // Not a second copy to keep in step: the array reuses the very instance the
+  // top-level field is, which is also what keeps the array from re-sending the
+  // whole body description. Everything asserted above therefore holds inside a
+  // batch item too, and asserting the identity is what makes that inference safe.
+  it('validates a batch item body with the same schema instance', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const shape = (toolConfig(server, 'write_request').inputSchema as any);
+    const itemBody = shape.requests._def.innerType.element.shape.body;
 
-    expect(new Set(rendered).size).toBe(1);
+    expect(itemBody).toBe(shape.body);
   });
 });
 
@@ -158,8 +158,8 @@ describe('a body reaches the builder with its parts', () => {
     createRequest.mockResolvedValue({ success: true, path: '/col/r.bru' });
   });
 
-  it('forwards a graphql body with its variables from create_request', async () => {
-    await toolHandler(server, 'create_request')({
+  it('forwards a graphql body with its variables from write_request', async () => {
+    await toolHandler(server, 'write_request')({
       collectionPath: '/col',
       name: 'r',
       method: 'POST',
@@ -174,8 +174,8 @@ describe('a body reaches the builder with its parts', () => {
     );
   });
 
-  it('forwards file parts from create_request', async () => {
-    await toolHandler(server, 'create_request')({
+  it('forwards file parts from write_request', async () => {
+    await toolHandler(server, 'write_request')({
       collectionPath: '/col',
       name: 'r',
       method: 'POST',
@@ -188,12 +188,11 @@ describe('a body reaches the builder with its parts', () => {
     );
   });
 
-  it('forwards multipart parts from create_test_suite', async () => {
-    // It used to forward {type, content} only, so the parts were dropped here
-    // and the body reached the writer as a bare string.
-    await toolHandler(server, 'create_test_suite')({
+  it('forwards multipart parts from a batch item', async () => {
+    // A tool once forwarded {type, content} only, so the parts were dropped on
+    // the way and the body reached the writer as a bare string.
+    await toolHandler(server, 'write_request')({
       collectionPath: '/col',
-      suiteName: 'S',
       requests: [
         {
           name: 'r',

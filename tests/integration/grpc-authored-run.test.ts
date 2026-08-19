@@ -5,7 +5,7 @@
  * prove our own runner can read it back. The two are separate code paths — the
  * writer builds a `BruFile`, the runner parses one from disk — and a field
  * written under a key the runner does not read costs nothing at write time. So
- * this authors a request through `create_request` and then runs it, in both
+ * this authors a request through `write_request` and then runs it, in both
  * dialects, with no hand-written file anywhere in the path.
  *
  * The proto imports `google/protobuf/timestamp.proto` on purpose. Import

@@ -2,7 +2,7 @@
  * The defect this work exists to close, verified end to end.
  *
  * Four files — gRPC and WebSocket, in both dialects — each edited through
- * `modify_request` on a field that has nothing to do with the transport. Before
+ * `write_request` on a field that has nothing to do with the transport. Before
  * this work, every one of them came back with its target block, its credentials
  * and every stored message deleted, because the model the writer rebuilt the file
  * from had never held them. A rename was enough to do it.

@@ -1,19 +1,19 @@
 /**
  * The auth modes the tool surface accepts, across every tool that accepts any.
  *
- * Four tools take an `auth.type`. Three did originally, and they disagreed:
- * `create_request` and
- * `modify_request` accept all seven modes, while `create_test_suite` stopped at
- * `api-key` and rejected `digest` and `inherit`. Nothing downstream justified
- * the difference — `create_test_suite` maps its auth straight into the same
- * `CreateRequestInput` and calls the same `createRequest` — so the same auth was
- * accepted or refused depending only on which tool you reached for, and
- * `inherit`, which is what a request inside an authenticated collection normally
- * wants, was the one most likely to be asked for.
+ * Four tools used to take an `auth.type`, and they disagreed: two accepted all
+ * seven modes while a third stopped at `api-key` and rejected `digest` and
+ * `inherit`. Nothing downstream justified the difference — every one of them
+ * mapped its auth straight into the same `CreateRequestInput` and called the
+ * same `createRequest` — so the same auth was accepted or refused depending only
+ * on which tool you reached for, and `inherit`, which is what a request inside
+ * an authenticated collection normally wants, was the one most likely to be
+ * asked for. Three of those four tools have since been merged or deleted, which
+ * removes the disagreement by removing the copies.
  *
  * The agreement test below is the guard: it finds every auth enum on the surface
- * by walking the schemas rather than naming them, so a fourth tool added later
- * is covered without anyone remembering this file exists.
+ * by walking the schemas rather than naming them, so a tool added later is
+ * covered without anyone remembering this file exists.
  */
 import { z } from 'zod';
 
@@ -88,34 +88,38 @@ function authEnumsByTool(): Map<string, string[][]> {
 describe('auth modes accepted by the tool surface', () => {
   const byTool = authEnumsByTool();
 
-  it('finds an auth enum on exactly the four tools that take auth', () => {
-    expect([...byTool.keys()].sort()).toEqual(
-      ['create_crud_requests', 'create_request', 'create_test_suite', 'modify_request'].sort(),
-    );
+  it('finds an auth enum on exactly the tool that takes auth', () => {
+    expect([...byTool.keys()]).toEqual(['write_request']);
   });
 
   it('offers the same auth modes on every one of them', () => {
     const offered = Object.fromEntries(
       [...byTool].map(([name, enums]) => [name, enums.map((options) => [...options].sort())]),
     );
+    // One entry per occurrence, not per tool: the batch array carries the same
+    // auth field as the single-write shape, and every occurrence must offer the
+    // same modes for the same reason the tools had to.
     const expected = Object.fromEntries(
-      [...byTool.keys()].map((name) => [name, [[...ALL_AUTH_MODES].sort()]]),
+      [...byTool].map(([name, enums]) => [
+        name,
+        enums.map(() => [...ALL_AUTH_MODES].sort()),
+      ]),
     );
 
     expect(offered).toEqual(expected);
   });
 
-  it.each(['digest', 'inherit'])('accepts %s on create_test_suite', (mode) => {
+  it.each(['digest', 'inherit'])('accepts %s', (mode) => {
     // These two were the missing pair. Asserted through the schema itself so the
     // test fails on the rejection, not on some downstream symptom of it.
-    const [options] = byTool.get('create_test_suite') ?? [];
+    const [options] = byTool.get('write_request') ?? [];
     const parsed = z.enum(options as [string, ...string[]]).safeParse(mode);
 
     expect(parsed.success).toBe(true);
   });
 
   it('still rejects a mode the writer cannot spell', () => {
-    const [options] = byTool.get('create_test_suite') ?? [];
+    const [options] = byTool.get('write_request') ?? [];
 
     expect(z.enum(options as [string, ...string[]]).safeParse('kerberos').success).toBe(false);
   });

@@ -10,8 +10,8 @@
  *  1. Parsing a real Bruno request and writing it back downgraded the mode to
  *     `form-urlencoded`, which Bruno does not recognise. The block survived, so
  *     the file still LOOKED right, but the body stopped being sent. Any
- *     modify_request on an existing form-urlencoded request did this.
- *  2. create_request never populated `body.formUrlEncoded` at all, so an
+ *     write_request on an existing form-urlencoded request did this.
+ *  2. write_request never populated `body.formUrlEncoded` at all, so an
  *     authored body was dropped entirely — no block, empty POST.
  *
  * Upstream reads `body.formUrlEncoded` as an array of {name, value, enabled}.
@@ -129,7 +129,7 @@ body:multipart-form {
 // Authoring one
 // ----------------------------------------------------------------------------
 
-describe('create_request authors a form-urlencoded body', () => {
+describe('write_request authors a form-urlencoded body', () => {
   it('writes the fields given as form entries', async () => {
     const collectionPath = await makeCollection('entries');
     const created = await builder.createRequest({
@@ -356,7 +356,7 @@ describe('create_request authors a form-urlencoded body', () => {
     expect(created.error).toContain('multipart-form');
   });
 
-  it('modify_request writes the same bytes', async () => {
+  it('write_request writes the same bytes', async () => {
     const collectionPath = await makeCollection('modify');
     const created = await builder.createRequest({
       collectionPath,

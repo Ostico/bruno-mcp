@@ -698,7 +698,7 @@ describe('.bru fixture table covers the whole model', () => {
   const UNREACHABLE: Record<string, string> = {
     // `query` used to be waived here as a legacy map superseded by params. It has
     // since been deleted from BruFile: the parser never populated it, the writer
-    // never serialized it, and the one thing that did write it — create_request —
+    // never serialized it, and the one thing that did write it — write_request —
     // was therefore losing every query parameter it was given.
     vars: 'legacy flat vars map: parseBruRequest populates varSets instead',
   };

@@ -4,7 +4,7 @@
  * Both generators rebuild the file from the typed model rather than editing the
  * bytes in place, so a key the model has no field for is not ignored on a write
  * — it is **deleted**. A request authored in Bruno using a feature we do not
- * model therefore loses it the first time `modify_request` touches it, which
+ * model therefore loses it the first time `write_request` touches it, which
  * makes a partial model a data-loss bug rather than a fidelity gap.
  *
  * The fix is the shape the environment side already uses: the parser puts every

@@ -8,7 +8,7 @@ import { writeFileAtomic } from './atomic-write.js';
 import { withPathLock } from './path-mutex.js';
 import { nextRequestSequence } from './request-sequence.js';
 import { isYamlRequestFile, isBruRequestFile } from './request-extensions.js';
-import { ensureRenameTargetFree, resolveRenameTarget } from './request-filename.js';
+import { ensureRenameTargetFree, resolveRenameTarget, sanitizeRequestFileName } from './request-filename.js';
 import { join, dirname, isAbsolute, relative } from 'path';
 import { realpathSync } from 'fs';
 import { assertProtoImportsConfined, confineProtoPath } from './proto-path.js';
@@ -100,6 +100,18 @@ export class RequestBuilder {
       // discarded. Locking only the mutating half of a file's API leaves the
       // lost update the lock was added to prevent.
       return await withPathLock(filePath, async () => {
+        // Creating must not clobber. Nothing else guards it: this path is
+        // ensureDirectory plus writeFileAtomic, so a call meant as an edit would
+        // replace the whole file and report success. Checked inside the lock, so
+        // two creations of one path cannot both pass the check and then have one
+        // silently lose its content to the other.
+        if (await this.pathExists(filePath)) {
+          return {
+            success: false,
+            error: `${filePath} already exists. To change it, address it by filePath `
+              + 'instead of creating it again.',
+          };
+        }
         await this.ensureDirectory(dirname(filePath));
         // With no explicit sequence the file used to be written with no `seq` at
         // all, which the run order treats as last — every such request tied with
@@ -335,92 +347,6 @@ export class RequestBuilder {
         error: error instanceof Error ? error.message : 'Unknown error'
       };
     }
-  }
-
-  /**
-   * Create multiple related requests (CRUD operations).
-   *
-   * `auth` defaults to `inherit`, not `none`. Omitting it used to write an
-   * explicit `auth: none` into all five files, which is not "no opinion" — it is
-   * an opt-out that stops the collection's own auth block from applying, so a
-   * generated set against an authenticated API returned 401 until every file was
-   * edited by hand. `inherit` is what Bruno's own new-request path defaults to
-   * (`bruno-app` .../slices/collections/actions.js, `auth ?? { mode: 'inherit' }`).
-   * Pass `{ type: 'none', config: {} }` to opt out deliberately.
-   */
-  async createCrudRequests(
-    collectionPath: string,
-    entityName: string,
-    baseUrl: string,
-    folder?: string,
-    auth: CreateRequestInput['auth'] = { type: 'inherit', config: {} }
-  ): Promise<FileOperationResult[]> {
-    const results: FileOperationResult[] = [];
-
-    const crudOperations = [
-      {
-        name: `Get All ${entityName}`,
-        method: 'GET' as HttpMethod,
-        url: `${baseUrl}/${entityName.toLowerCase()}`,
-        sequence: 1
-      },
-      {
-        name: `Get ${entityName} by ID`,
-        method: 'GET' as HttpMethod,
-        url: `${baseUrl}/${entityName.toLowerCase()}/{{id}}`,
-        sequence: 2
-      },
-      {
-        name: `Create ${entityName}`,
-        method: 'POST' as HttpMethod,
-        url: `${baseUrl}/${entityName.toLowerCase()}`,
-        body: {
-          type: 'json' as BodyType,
-          content: JSON.stringify({
-            name: `New ${entityName}`,
-            description: `Description for ${entityName}`
-          }, null, 2)
-        },
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        sequence: 3
-      },
-      {
-        name: `Update ${entityName}`,
-        method: 'PUT' as HttpMethod,
-        url: `${baseUrl}/${entityName.toLowerCase()}/{{id}}`,
-        body: {
-          type: 'json' as BodyType,
-          content: JSON.stringify({
-            name: `Updated ${entityName}`,
-            description: `Updated description for ${entityName}`
-          }, null, 2)
-        },
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        sequence: 4
-      },
-      {
-        name: `Delete ${entityName}`,
-        method: 'DELETE' as HttpMethod,
-        url: `${baseUrl}/${entityName.toLowerCase()}/{{id}}`,
-        sequence: 5
-      }
-    ];
-
-    for (const operation of crudOperations) {
-      const result = await this.createRequest({
-        collectionPath,
-        ...operation,
-        folder,
-        auth
-      });
-      results.push(result);
-    }
-
-    return results;
   }
 
   /**
@@ -894,12 +820,7 @@ export class RequestBuilder {
    * Sanitize file name for filesystem
    */
   private sanitizeFileName(name: string): string {
-    return name
-      .toLowerCase()
-      .replace(/[^a-z0-9\s-]/g, '')
-      .replace(/\s+/g, '-')
-      .replace(/-+/g, '-')
-      .trim();
+    return sanitizeRequestFileName(name);
   }
 
   private parseBruFile(content: string): BruFile {
@@ -1150,6 +1071,21 @@ export class RequestBuilder {
       await fs.access(dirPath);
     } catch {
       await fs.mkdir(dirPath, { recursive: true });
+    }
+  }
+
+  /**
+   * Whether a path exists.
+   *
+   * `stat` rather than a read, because a read that a test has stubbed resolves
+   * with `undefined` and reports every path as present.
+   */
+  private async pathExists(filePath: string): Promise<boolean> {
+    try {
+      await fs.stat(filePath);
+      return true;
+    } catch {
+      return false;
     }
   }
 }

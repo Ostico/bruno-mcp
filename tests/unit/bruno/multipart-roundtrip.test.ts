@@ -38,7 +38,7 @@ describe('multipart serializer round-trip', () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it('round-trips a YAML multipart body through create_request', async () => {
+  it('round-trips a YAML multipart body through write_request', async () => {
     await fs.writeFile(
       join(tmpDir, 'opencollection.yml'),
       'opencollection: "1.0"\ninfo:\n  name: RT\n',
@@ -77,7 +77,7 @@ describe('multipart serializer round-trip', () => {
     expect(docs.type).toBe('file');
   });
 
-  it('round-trips a .bru multipart body through create_request', async () => {
+  it('round-trips a .bru multipart body through write_request', async () => {
     await fs.writeFile(
       join(tmpDir, 'bruno.json'),
       JSON.stringify({ version: '1', name: 'RT', type: 'collection' }),

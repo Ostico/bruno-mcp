@@ -83,11 +83,9 @@ export function registerUnregisterCollectionTool(ctx: ToolContext): void {
     'unregister_collection',
     {
       title: 'Unregister Collection',
-      description: 'Remove a collection from the workspace registry, leaving every file on disk '
-        + 'untouched. list_collections reads that registry, so this is how an entry stops being '
-        + 'listed — including a stale entry whose directory is gone, which is what accumulates when '
-        + 'collections are created in temporary directories. To delete the collection itself, use '
-        + 'delete_collection.',
+      description: 'Remove a collection from the workspace registry, leaving every file on disk untouched. ' +
+        'list_collections reads that registry, so this is how an entry stops being listed, including a ' +
+        'stale entry whose directory is gone. To delete the collection itself, use delete_collection.',
       inputSchema: {
         collectionPath: z.string().min(1, 'Collection path is required').describe(
           'Absolute path of the collection as it is listed. Use the path from list_collections: '
@@ -155,12 +153,11 @@ export function registerDeleteCollectionTool(ctx: ToolContext): void {
     'delete_collection',
     {
       title: 'Delete Collection',
-      description: 'Permanently delete a Bruno collection: the collection directory and everything '
-        + 'inside it is removed from disk, and its workspace registry entry is removed with it. '
-        + 'Nothing here can be recovered through this server. Only a directory that is itself a '
-        + 'collection root — one holding opencollection.yml or bruno.json — can be deleted, so this '
-        + 'cannot be pointed at an arbitrary directory. To keep the files and only stop the '
-        + 'collection being listed, use unregister_collection instead.',
+      description: 'Permanently delete a Bruno collection: the collection directory and everything inside it is ' +
+        'removed from disk, and its workspace registry entry with it. Nothing here can be recovered ' +
+        'through this server. Only a directory that is itself a collection root — one holding ' +
+        'opencollection.yml or bruno.json — can be deleted. To keep the files and only stop the collection ' +
+        'being listed, use unregister_collection instead.',
       inputSchema: {
         collectionPath: z.string().min(1, 'Collection path is required').describe(
           'Absolute path of the collection directory to delete. Use the path from list_collections.',

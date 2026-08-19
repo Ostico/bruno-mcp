@@ -69,7 +69,7 @@ export function isBruRequestFile(filePath: string): boolean {
 /**
  * True for a request Bruno's own runner will not see because of its extension.
  *
- * Never true for a file this project writes: `create_request` writes `.yml` for
+ * Never true for a file this project writes: `write_request` writes `.yml` for
  * a YAML collection and `.bru` for a native one, so a `.yaml` file always came
  * from somewhere else.
  */

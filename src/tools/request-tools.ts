@@ -7,12 +7,6 @@
 import { z } from 'zod';
 import path from 'path';
 import { readFile, unlink } from 'node:fs/promises';
-import {
-  CreateRequestInput,
-  UpdateRequestInput,
-  HttpMethod,
-  AuthType,
-} from '../bruno/types.js';
 import { createReader } from '../bruno/format-factory.js';
 import { detectFormat, findCollectionRoot, findCollectionRootFromDirectory } from '../bruno/format-detector.js';
 import { toRequestView } from '../bruno/request-view.js';
@@ -21,284 +15,18 @@ import { validateToolPath, resolveRequestFile } from './tool-path.js';
 import { collectionDialectWarnings } from '../bruno/request-extensions.js';
 import { declaredFormat } from '../bruno/request-discovery.js';
 import { withPathLock } from '../bruno/path-mutex.js';
-import { topologicalSort } from './topological-sort.js';
-import { inlineScriptsSchema, assertionEntrySchema, requestBodySchema, requestVarsSchema, requestSettingsSchema, websocketAuthoringSchema, grpcAuthoringSchema } from './schemas.js';
 import type { ToolContext } from './context.js';
-
-export function registerCreateRequestTool(ctx: ToolContext): void {
-  ctx.server.registerTool(
-    'create_request',
-    {
-      title: 'Create Bruno Request',
-      description: 'Generate request files for API testing (supports .bru and .yml formats). Authors HTTP requests by default, WebSocket requests with kind "websocket" (url plus websocket.messages) and gRPC requests with kind "grpc" (url plus grpc.method, grpc.protoPath and grpc.messages); neither takes an HTTP method or a body. Supports multipart/form-data with file uploads and per-part contentType (body.type "form-data" with formData entries of type "file"), and inline scripts (pre-request/post-response/tests) so no separate add_test_script call is needed. Scripts run as async functions: top-level await works, and bru.sleep(ms)/setTimeout/setInterval are available, spending the script timeout (settings.timeout, default 5000ms) — raise it via the settings argument.',
-      inputSchema: {
-        collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to existing collection directory.'),
-        name: z.string().min(1, 'Request name is required'),
-        kind: z.enum(['http', 'websocket', 'grpc']).optional()
-          .describe('Transport. Defaults to "http". "websocket" and "grpc" take no method and no body; their payloads are websocket.messages and grpc.messages.'),
-        method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']).optional()
-          .describe('Required for kind "http", refused for "websocket" and "grpc", which have no HTTP method. A gRPC request names its RPC method in grpc.method.'),
-        url: z.string().min(1, 'URL is required'),
-        headers: z.record(z.string()).optional(),
-        body: requestBodySchema,
-        auth: z.object({
-          type: z.enum(['none', 'bearer', 'basic', 'oauth2', 'api-key', 'digest', 'inherit'])
-            .describe('Auth mode. "inherit" defers to the folder or collection auth block and takes no config; pass {} for it.'),
-          config: z.record(z.string())
-        }).optional(),
-        query: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
-        pathParams: z.record(z.union([z.string(), z.number(), z.boolean()])).optional()
-          .describe('Values for :name segments in the URL, e.g. { id: "42" } for /users/:id.'),
-        assert: z.array(assertionEntrySchema).optional()
-          .describe('Declared assertions, evaluated on every run without needing a test() block.'),
-        vars: requestVarsSchema,
-        settings: requestSettingsSchema,
-        websocket: websocketAuthoringSchema,
-        grpc: grpcAuthoringSchema,
-        folder: z.string().optional(),
-        sequence: z.number().optional(),
-        scripts: inlineScriptsSchema
-      }
-    },
-    async (args) => {
-      try {
-        const pathCheck = validateToolPath(args.collectionPath);
-        if (!pathCheck.valid) {
-          return {
-            content: [{ type: 'text', text: `Invalid collectionPath: ${pathCheck.reason}` }],
-            isError: true,
-          };
-        }
-
-        const input: CreateRequestInput = {
-          collectionPath: args.collectionPath,
-          name: args.name,
-          // The tool surface spells the transport out; the model uses the token
-          // both dialects' parsers resolve to. Mapped here so the wire name and
-          // the on-disk kind can differ without either leaking into the other.
-          kind: args.kind === 'websocket' ? 'ws' : args.kind,
-          grpc: args.grpc,
-          method: args.method as HttpMethod | undefined,
-          url: args.url,
-          headers: args.headers,
-          body: args.body as CreateRequestInput['body'],
-          auth: args.auth ? {
-            type: args.auth.type as AuthType,
-            config: args.auth.config
-          } : undefined,
-          query: args.query,
-          pathParams: args.pathParams,
-          assert: args.assert,
-          vars: args.vars,
-          settings: args.settings,
-          websocket: args.websocket,
-          folder: args.folder,
-          sequence: args.sequence,
-          scripts: args.scripts as Record<string, string> | undefined
-        };
-
-        const result = await ctx.requestBuilder.createRequest(input);
-
-        if (result.success) {
-          return {
-            content: [
-              {
-                type: 'text',
-                text: `✅ Request "${args.name}" created successfully at: ${result.path}`
-              }
-            ]
-          };
-        } else {
-          return {
-            content: [
-              {
-                type: 'text',
-                text: `❌ Failed to create request: ${result.error}`
-              }
-            ],
-            isError: true
-          };
-        }
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `❌ Error creating request: ${error instanceof Error ? error.message : 'Unknown error'}`
-            }
-          ],
-          isError: true
-        };
-      }
-    }
-  );
-}
-
-export function registerModifyRequestTool(ctx: ToolContext): void {
-  ctx.server.registerTool(
-    'modify_request',
-    {
-      title: 'Modify Request',
-      description: 'Update an existing Bruno request file with partial-merge semantics. Only provided fields are updated; all other fields are preserved. Supports multipart/form-data with file uploads and per-part contentType. Inline scripts REPLACE the existing script of the same type by default (idempotent — repeated calls do not accumulate duplicate blocks); pass scriptMode:"append" to concatenate instead. Use remove_script to clear a script entirely. RENAMING: name and filename are independent, as they are in Bruno itself — name changes the request\'s name inside the file and filename moves the file. Pass both to keep them in step, and read the new path back from the response.',
-      inputSchema: {
-        filePath: z.string().min(1, 'File path is required').describe('Absolute path to the .yml or .bru request file to modify. Get from list_requests or get_collection_stats.'),
-        name: z.string().optional()
-          .describe('The request\'s name inside the file. Does NOT rename the file — pass filename for that.'),
-        filename: z.string().optional()
-          .describe('Renames the file, keeping it in its own folder. Basename only, no path '
-            + 'separators. The extension is optional and must match the collection\'s format if '
-            + 'given, since a collection carries one format only. Refused if another file of that '
-            + 'name already exists. The new path comes back in the response; use it as filePath '
-            + 'from then on, because the old one is gone.'),
-        method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']).optional(),
-        url: z.string().optional(),
-        headers: z.record(z.string()).optional(),
-        body: requestBodySchema,
-        auth: z.object({
-          type: z.enum(['none', 'bearer', 'basic', 'oauth2', 'api-key', 'digest', 'inherit'])
-            .describe('Auth mode. "inherit" defers to the folder or collection auth block and takes no config; pass {} for it.'),
-          config: z.record(z.string())
-        }).optional(),
-        query: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
-        pathParams: z.record(z.union([z.string(), z.number(), z.boolean()])).optional()
-          .describe('Replaces the declared path parameters; query parameters are left alone.'),
-        assert: z.array(assertionEntrySchema).optional()
-          .describe('Replaces the whole assert block. Omit to leave existing assertions untouched.'),
-        vars: requestVarsSchema,
-        settings: requestSettingsSchema,
-        websocket: websocketAuthoringSchema,
-        grpc: grpcAuthoringSchema,
-        scripts: inlineScriptsSchema,
-        scriptMode: z.enum(['replace', 'append']).optional().default('replace').describe(
-          'How to write the scripts field. "replace" (default) overwrites the existing script ' +
-          'of each provided type, so calling modify_request repeatedly is idempotent. "append" ' +
-          'concatenates onto the existing script, which accumulates blocks across calls. ' +
-          'Each script type has its own slot in both .bru and .yml, so replacing one leaves ' +
-          'the others untouched. One exception on .yml: supplying post-response and tests ' +
-          'together in a single call still merges both into the after-response slot, so ' +
-          'write the tests script in its own call to keep it in the tests slot.',
-        )
-      }
-    },
-    async (args) => {
-      try {
-        // 1. Path validation (traversal + null bytes)
-        const pathCheck = validateToolPath(args.filePath);
-        if (!pathCheck.valid) {
-          return {
-            content: [{ type: 'text', text: `Invalid filePath: ${pathCheck.reason}` }],
-            isError: true,
-          };
-        }
-
-        // 2. Extension, collection root and dialect, in one place. This was
-        // three inlined blocks duplicating `resolveRequestFile` — including its
-        // dialect check, which is why the same message existed in three files
-        // and had to be corrected in all of them.
-        const resolvedFile = await resolveRequestFile(args.filePath, 'filePath');
-        if (!resolvedFile.ok) {
-          return {
-            content: [{ type: 'text', text: resolvedFile.message }],
-            isError: true,
-          };
-        }
-
-        // 5. Build partial update input from provided fields
-        const updates: UpdateRequestInput = {};
-        if (args.name !== undefined) updates.name = args.name;
-        if (args.filename !== undefined) updates.filename = args.filename;
-        if (args.method !== undefined) updates.method = args.method as HttpMethod;
-        if (args.url !== undefined) updates.url = args.url;
-        if (args.headers !== undefined) updates.headers = args.headers;
-        if (args.body !== undefined) {
-          updates.body = args.body as CreateRequestInput['body'];
-        }
-        if (args.auth !== undefined) {
-          updates.auth = {
-            type: args.auth.type as AuthType,
-            config: args.auth.config,
-          };
-        }
-        if (args.query !== undefined) updates.query = args.query;
-        if (args.pathParams !== undefined) updates.pathParams = args.pathParams;
-        if (args.assert !== undefined) updates.assert = args.assert;
-        if (args.vars !== undefined) updates.vars = args.vars;
-        if (args.settings !== undefined) updates.settings = args.settings;
-        if (args.websocket !== undefined) updates.websocket = args.websocket;
-        if (args.grpc !== undefined) updates.grpc = args.grpc;
-        if (args.scripts !== undefined) {
-          updates.scripts = args.scripts as Record<string, string>;
-          // Default explicitly: the zod default only applies when the SDK
-          // validates input, not when the handler is invoked directly.
-          updates.scriptMode = args.scriptMode ?? 'replace';
-        }
-
-        // 6. Call updateRequest with partial merge
-        const result = await ctx.requestBuilder.updateRequest(args.filePath, updates);
-
-        if (result.success) {
-          // The dialect warning rides on success rather than blocking it: the
-          // file was modified, and the caller still needs to know Bruno will not
-          // see it. Appended to the message the caller already reads, because a
-          // second content block is easy to drop.
-          // The path is read back rather than rebuilt from `filename`, because
-          // the builder normalises the extension and may have left the file
-          // where it was. Both halves of the test are needed: a caller that
-          // asked for no rename cannot have had one, and a case-only rename
-          // that resolved to the same path did not move anything.
-          const newPath = result.path ?? args.filePath;
-          return {
-            content: [
-              {
-                type: 'text',
-                text: [
-                  args.filename === undefined || newPath === args.filePath
-                    ? `Successfully modified request "${path.basename(args.filePath)}"`
-                    : `Successfully modified request "${path.basename(args.filePath)}" and `
-                      + `renamed the file to "${path.basename(newPath)}". It now lives at `
-                      + `${newPath}; pass that as filePath from now on, because the old path is gone.`,
-                  ...resolvedFile.warnings,
-                ].join('\n\n')
-              }
-            ]
-          };
-        } else {
-          return {
-            content: [
-              {
-                type: 'text',
-                text: `Failed to modify request: ${result.error}`
-              }
-            ],
-            isError: true
-          };
-        }
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Error modifying request: ${error instanceof Error ? error.message : 'Unknown error'}`
-            }
-          ],
-          isError: true
-        };
-      }
-    }
-  );
-}
 
 export function registerMoveRequestTool(ctx: ToolContext): void {
   ctx.server.registerTool(
     'move_request',
     {
       title: 'Move Request',
-      description: 'Relocate a request file to another folder, or to another collection entirely. '
-        + 'Pass copy:true to duplicate it instead of moving it. The bytes are moved verbatim and '
-        + 'nothing is parsed and rewritten, so no part of the request can be lost on the way — '
-        + 'which also means seq arrives unchanged and may tie with a request already there; that '
-        + 'is reported, and Bruno breaks such a tie by filename. The file keeps its name: use '
-        + 'modify_request with filename to rename it. The new path comes back in the response.',
+      description: 'Relocate a request file to another folder, or to another collection entirely. Pass copy:true to ' +
+        'duplicate it instead of moving it. The bytes are moved verbatim, nothing is parsed and rewritten, ' +
+        'so seq arrives unchanged and may tie with a request already there; that is reported, and Bruno ' +
+        'breaks such a tie by filename. The file keeps its name: use write_request with filename to rename ' +
+        'it. The new path comes back in the response.',
       inputSchema: {
         filePath: z.string().min(1, 'File path is required')
           .describe('Absolute path to the .yml or .bru request file to move. Get from list_requests or get_collection_stats.'),
@@ -403,242 +131,110 @@ export function registerDeleteRequestTool(ctx: ToolContext): void {
   ctx.server.registerTool(
     'delete_request',
     {
-      title: 'Delete Request',
-      description: 'Permanently delete a Bruno request file from a collection. Use this to remove a request created by mistake; the file is unlinked from disk and cannot be recovered through this server. Only .yml/.bru files inside a detected Bruno collection can be deleted. To clear just a script and keep the request, use remove_script instead.',
+      title: 'Delete Requests',
+      description: 'Permanently delete request files from a Bruno collection. One confirm covers the '
+        + 'whole list. Each file is unlinked and cannot be recovered through this server. Only '
+        + '.yml/.bru files inside a detected collection can be deleted. Every path is checked '
+        + 'before the first unlink, so one unusable path deletes nothing. The result names each '
+        + "file's outcome. To clear a script and keep the request, use remove_script.",
       inputSchema: {
-        filePath: z.string().min(1, 'File path is required').describe('Absolute path to the .yml or .bru request file to delete. Get from list_requests or get_collection_stats.'),
-        confirm: z.literal(true).describe('Must be true. Explicit acknowledgement that the file is deleted permanently.')
+        filePaths: z.array(z.string().min(1, 'File path is required'))
+          .min(1, 'At least one file path is required')
+          .describe('Absolute paths to the .yml or .bru request files to delete, from '
+            + 'list_requests or get_collection_stats. A one-element list deletes one request.'),
+        confirm: z.literal(true).describe('Must be true. Every file in filePaths is '
+          + 'deleted permanently.')
       }
     },
     async (args) => {
       try {
         // Re-checked here, not only in the schema: deletion is irreversible
-        // and the handler must not depend on upstream validation.
+        // and the handler must not depend on upstream validation. The count is
+        // in the refusal because one confirm now covers a whole list, and a
+        // caller who meant to delete one request has to be able to see from the
+        // refusal that this call would have deleted more.
         if (args.confirm !== true) {
           return {
-            content: [{ type: 'text', text: 'Refusing to delete: confirm must be true.' }],
-            isError: true,
-          };
-        }
-
-        const resolved = await resolveRequestFile(args.filePath, 'filePath');
-        if (!resolved.ok) {
-          return {
-            content: [{ type: 'text', text: resolved.message }],
-            isError: true,
-          };
-        }
-
-        // Same per-file lock add_test_script and remove_script take. Without it,
-        // a script injection that had already read this file could write it back
-        // after the unlink, restoring a request this tool had just reported as
-        // permanently deleted. Taking the lock orders the two: either the
-        // injection finishes and is then deleted, or the delete wins and the
-        // injection's read fails with ENOENT.
-        await withPathLock(args.filePath, () => unlink(args.filePath));
-
-        return {
-          content: [
-            {
+            content: [{
               type: 'text',
-              text: `Deleted request ${path.basename(args.filePath)} (${resolved.format} format)`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `❌ Error deleting request: ${error instanceof Error ? error.message : 'Unknown error'}`
-            }
-          ],
-          isError: true
-        };
-      }
-    }
-  );
-}
-
-export function registerCreateTestSuiteTool(ctx: ToolContext): void {
-  ctx.server.registerTool(
-    'create_test_suite',
-    {
-      title: 'Create Test Suite',
-      description: 'Generate comprehensive test collections with multiple related requests',
-      inputSchema: {
-        collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to existing collection directory.'),
-        suiteName: z.string().min(1, 'Suite name is required'),
-        requests: z.array(z.object({
-          name: z.string(),
-          method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']),
-          url: z.string(),
-          headers: z.record(z.string()).optional(),
-          body: requestBodySchema,
-          auth: z.object({
-            // Same seven modes as create_request and update_request. This enum
-            // used to stop at api-key, so a CRUD set could not be given the
-            // digest or inherit auth the other two tools accept and the writer
-            // handles — the same auth, rejected by whichever tool you reached
-            // for. `inherit` in particular is what a request in an authenticated
-            // collection normally wants.
-            type: z.enum(['none', 'bearer', 'basic', 'oauth2', 'api-key', 'digest', 'inherit']),
-            config: z.record(z.string())
-          }).optional(),
-          folder: z.string().optional()
-        })),
-        dependencies: z.array(z.object({
-          from: z.string(),
-          to: z.string(),
-        })).optional()
-      }
-    },
-    async (args) => {
-      try {
-        const pathCheck = validateToolPath(args.collectionPath);
-        if (!pathCheck.valid) {
-          return {
-            content: [{ type: 'text', text: `Invalid collectionPath: ${pathCheck.reason}` }],
+              text: `Refusing to delete ${args.filePaths.length} `
+                + `file${args.filePaths.length === 1 ? '' : 's'}: confirm must be true.`,
+            }],
             isError: true,
           };
         }
 
-        // Map request names to their created file paths
-        const nameToPath: Map<string, string> = new Map();
-        const results = [];
-
-        for (let i = 0; i < args.requests.length; i++) {
-          const req = args.requests[i];
-          const input: CreateRequestInput = {
-            collectionPath: args.collectionPath,
-            name: req.name,
-            method: req.method as HttpMethod,
-            url: req.url,
-            headers: req.headers,
-            // The whole body, not just `{type, content}`. Forwarding two of
-            // its fields meant a suite request could name a multipart or file
-            // body and then have no way to say what was in it: the parts were
-            // dropped here and the body reached the writer as a bare string,
-            // which is the shape that made the generator's content fall-through
-            // reachable in the first place.
-            body: req.body as CreateRequestInput['body'],
-            auth: req.auth ? {
-              type: req.auth.type as AuthType,
-              config: req.auth.config
-            } : undefined,
-            folder: req.folder || args.suiteName,
-            sequence: i + 1
-          };
-
-          const result = await ctx.requestBuilder.createRequest(input);
-          results.push(result);
-          if (result.success && result.path) {
-            nameToPath.set(req.name, result.path);
-          }
-        }
-
-        // Apply dependency ordering if dependencies are provided
-        if (args.dependencies && args.dependencies.length > 0) {
-          const requestNames = args.requests.map(r => r.name);
-          const sortResult = topologicalSort(requestNames, args.dependencies);
-
-          if (sortResult.error) {
+        // Every path is resolved before the first unlink. A batch whose second
+        // path is unusable deletes nothing: with an irreversible operation, a
+        // half-done call is worse than a refused one, and the caller can fix
+        // the list and send it again.
+        const targets: { filePath: string; format: string }[] = [];
+        const seen = new Map<string, number>();
+        for (const [index, filePath] of args.filePaths.entries()) {
+          const previous = seen.get(filePath);
+          if (previous !== undefined) {
             return {
-              content: [{ type: 'text', text: sortResult.error }],
+              content: [{
+                type: 'text',
+                text: `filePaths[${index}] is named twice: "${filePath}" is already `
+                  + `filePaths[${previous}]. Remove the repeat — the second delete would fail on `
+                  + 'a file this same call had removed, and be reported as a failure.',
+              }],
               isError: true,
             };
           }
+          seen.set(filePath, index);
 
-          // Update seq values based on topological order
-          for (let i = 0; i < sortResult.order!.length; i++) {
-            const name = sortResult.order![i];
-            const filePath = nameToPath.get(name);
-            if (filePath) {
-              await ctx.requestBuilder.updateRequest(filePath, { sequence: i + 1 });
-            }
+          const resolved = await resolveRequestFile(filePath, `filePaths[${index}]`);
+          if (!resolved.ok) {
+            return {
+              content: [{ type: 'text', text: `${resolved.message} (filePaths[${index}]: ${filePath})` }],
+              isError: true,
+            };
+          }
+          targets.push({ filePath, format: resolved.format });
+        }
+
+        const outcomes: string[] = [];
+        let failed = 0;
+        for (const [index, target] of targets.entries()) {
+          const label = `${index + 1}. ${path.basename(target.filePath)}`;
+          try {
+            // Same per-file lock add_test_script and remove_script take, and it
+            // belongs inside this loop rather than around it: one lock taken for
+            // the batch would hold the wrong key for every file after the first.
+            // Without it, a script injection that had already read this file
+            // could write it back after the unlink, restoring a request this
+            // tool had just reported as permanently deleted. Taking the lock
+            // orders the two: either the injection finishes and is then deleted,
+            // or the delete wins and the injection's read fails with ENOENT.
+            await withPathLock(target.filePath, () => unlink(target.filePath));
+            outcomes.push(`${label}: deleted (${target.format} format)`);
+          } catch (error) {
+            // Per file, and the rest of the list still runs: one unreadable
+            // file is not a reason to leave the others behind.
+            failed += 1;
+            outcomes.push(
+              `${label}: FAILED — ${error instanceof Error ? error.message : 'Unknown error'}`,
+            );
           }
         }
 
-        const successCount = results.filter(r => r.success).length;
-        const failCount = results.filter(r => !r.success).length;
+        const total = targets.length;
+        const summary = failed === 0
+          ? `Deleted ${total === 1 ? '1 request' : `all ${total} requests`}.`
+          : `Deleted ${total - failed} of ${total} requests; ${failed} failed.`;
 
         return {
-          content: [
-            {
-              type: 'text',
-              text: `✅ Test suite "${args.suiteName}" created with ${successCount} requests${failCount > 0 ? ` (${failCount} failed)` : ''}`
-            }
-          ]
+          content: [{ type: 'text', text: [summary, ...outcomes].join('\n') }],
+          ...(failed > 0 ? { isError: true as const } : {}),
         };
       } catch (error) {
         return {
           content: [
             {
               type: 'text',
-              text: `❌ Error creating test suite: ${error instanceof Error ? error.message : 'Unknown error'}`
-            }
-          ],
-          isError: true
-        };
-      }
-    }
-  );
-}
-
-export function registerCreateCrudRequestsTool(ctx: ToolContext): void {
-  ctx.server.registerTool(
-    'create_crud_requests',
-    {
-      title: 'Create CRUD Requests',
-      description: 'Generate a complete set of CRUD operations for an entity: list, get by id, create, update, delete. All five inherit the collection or folder auth block unless you pass auth.',
-      inputSchema: {
-        collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to existing collection directory.'),
-        entityName: z.string().min(1, 'Entity name is required'),
-        baseUrl: z.string().min(1, 'Base URL is required'),
-        folder: z.string().optional(),
-        auth: z.object({
-          type: z.enum(['none', 'bearer', 'basic', 'oauth2', 'api-key', 'digest', 'inherit'])
-            .describe('Auth mode written to all five requests. "inherit" defers to the folder or collection auth block and takes no config; pass {} for it.'),
-          config: z.record(z.string())
-        }).optional()
-          .describe('Defaults to inherit, matching what Bruno itself gives a new request. Passing "none" is an opt-OUT that stops the collection auth block from applying to these five files, not an absence of opinion.')
-      }
-    },
-    async (args) => {
-      try {
-        const pathCheck = validateToolPath(args.collectionPath);
-        if (!pathCheck.valid) {
-          return {
-            content: [{ type: 'text', text: `Invalid collectionPath: ${pathCheck.reason}` }],
-            isError: true,
-          };
-        }
-
-        const results = await ctx.requestBuilder.createCrudRequests(
-          args.collectionPath,
-          args.entityName,
-          args.baseUrl,
-          args.folder,
-          args.auth
-        );
-
-        const successCount = results.filter(r => r.success).length;
-        const failCount = results.filter(r => !r.success).length;
-
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `✅ CRUD operations for "${args.entityName}" created with ${successCount} requests${failCount > 0 ? ` (${failCount} failed)` : ''}`
-            }
-          ]
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `❌ Error creating CRUD requests: ${error instanceof Error ? error.message : 'Unknown error'}`
+              text: `❌ Error deleting requests: ${error instanceof Error ? error.message : 'Unknown error'}`
             }
           ],
           isError: true
@@ -712,10 +308,10 @@ export function registerReadRequestTool(ctx: ToolContext): void {
     'read_request',
     {
       title: 'Read Bruno Request',
-      description: 'Read a single request file back as structured JSON: method, url, headers, query and path params, body, auth mode, scripts, assertions, vars, settings and docs. Works on both .bru and .yml and returns the same shape for each, so the on-disk format stays invisible. Use this before modify_request to see current state, and after create_request to confirm what was written. A websocket or grpc request also carries its stored messages in full — title, content, and for a websocket the type and whether the runner will send it — under websocket.messages or grpc.messages, keyed as create_request accepts them. A "notes" array reports anything the file declares that the runner will not act on.',
+      description: 'Read a single request file back as structured JSON: method, url, headers, query and path params, body, auth mode, scripts, assertions, vars, settings and docs. Both .bru and .yml return the same shape, so the on-disk format stays invisible. Use this before write_request to see current state, and after it to confirm what was written. A websocket or grpc request also carries its stored messages in full — title, content, and for a websocket the type and whether the runner will send it — under websocket.messages or grpc.messages, keyed as write_request accepts them. A "notes" array reports anything the file declares that the runner will not act on.',
       inputSchema: {
         filePath: z.string().min(1, 'File path is required')
-          .describe('Absolute path to the .bru or .yml request file. Use the path returned by create_request or list_requests rather than rebuilding it: request filenames are lowercased on write.'),
+          .describe('Absolute path to the .bru or .yml request file. Use the path returned by write_request or list_requests rather than rebuilding it: request filenames are lowercased on write.'),
       },
     },
     async (args) => {

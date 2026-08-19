@@ -1,9 +1,9 @@
 /**
- * Tests for Task 6: Format-aware create_collection, create_request, create_environment.
+ * Tests for Task 6: Format-aware create_collection, write_request, create_environment.
  *
  * Covers:
  *  - create_collection with default (yaml) and explicit 'bru' format
- *  - create_request auto-detecting collection format (yaml vs bru)
+ *  - write_request auto-detecting collection format (yaml vs bru)
  *  - create_environment auto-detecting collection format (yaml vs bru)
  */
 
@@ -148,7 +148,7 @@ describe('CollectionManager.createCollection — format awareness', () => {
 });
 
 // ============================================================================
-// create_request — format-aware
+// write_request — format-aware
 // ============================================================================
 describe('RequestBuilder.createRequest — format awareness', () => {
   let builder: RequestBuilder;

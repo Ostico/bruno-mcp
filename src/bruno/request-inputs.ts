@@ -97,7 +97,7 @@ export function replaceQueryParams<T extends { type?: string }>(existing: T[] | 
  * `{ query, variables }` mapping for graphql, and a list of parts for the two
  * form types. BruBody keeps each of those in a different field, so a caller that
  * only reads `content` sees nothing at all for graphql and form bodies — and
- * loadRequest feeds modify_request, which writes the request back out. Keeping
+ * loadRequest feeds write_request, which writes the request back out. Keeping
  * only the string meant editing a header on a graphql request silently dropped
  * its query.
  */

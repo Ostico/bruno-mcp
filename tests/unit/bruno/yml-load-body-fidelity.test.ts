@@ -6,7 +6,7 @@
  * types — and BruBody keeps each on a different field. loadRequest used to copy
  * only `data` when it was a string, so graphql and form bodies came back with an
  * empty body. That matters because loadRequest is the read half of
- * modify_request: editing anything on such a request wrote the file back with
+ * write_request: editing anything on such a request wrote the file back with
  * its payload gone.
  */
 

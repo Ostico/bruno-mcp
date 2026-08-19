@@ -7,7 +7,7 @@
  * the format difference back in front of the caller, which is exactly what the
  * read tools exist to hide. Everything here is normalized to the vocabulary the
  * write tools already use, so a read result can be edited and handed straight
- * back to `modify_request`.
+ * back to `write_request`.
  */
 
 import type {
@@ -118,8 +118,8 @@ export interface RequestView {
  * reading a whole collection expensive; nothing reads this view but `read_request`,
  * which is asked about one named request at a time.
  *
- * `title` rather than `name` because that is what `create_request` and
- * `modify_request` accept, so the value reads back under the key it was written
+ * `title` rather than `name` because that is what `write_request` accepts, so
+ * the value reads back under the key it was written
  * with and a message can be edited by copying it out of here.
  */
 export interface RequestViewMessage {
@@ -495,7 +495,7 @@ function fromYaml(yaml: YamlRequest, filePath: string): RequestView {
  *
  * @param parsed    What the format's reader returned for this file
  * @param format    The collection format the file was parsed as
- * @param filePath  Echoed back so the caller can feed it to modify_request
+ * @param filePath  Echoed back so the caller can feed it to write_request
  */
 export function toRequestView(
   parsed: BruFile | YamlRequest,

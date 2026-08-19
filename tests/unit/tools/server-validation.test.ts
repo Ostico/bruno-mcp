@@ -16,7 +16,6 @@ jest.mock('../../../src/bruno/environment', () => ({
 jest.mock('../../../src/bruno/request', () => ({
   createRequestBuilder: jest.fn(() => ({
     createRequest: jest.fn(),
-    createCrudRequests: jest.fn(),
   })),
 }));
 jest.mock('../../../src/bruno/workspace', () => ({
@@ -112,9 +111,9 @@ describe('write-tool path validation', () => {
     });
   });
 
-  describe('create_request — collectionPath', () => {
+  describe('write_request — collectionPath', () => {
     it('rejects path with .. traversal', async () => {
-      const handler = getHandler(server, 'create_request');
+      const handler = getHandler(server, 'write_request');
       const response = await handler({
         collectionPath: '/workspace/../etc',
         name: 'GetUsers',
@@ -126,7 +125,7 @@ describe('write-tool path validation', () => {
     });
 
     it('rejects path with null bytes', async () => {
-      const handler = getHandler(server, 'create_request');
+      const handler = getHandler(server, 'write_request');
       const response = await handler({
         collectionPath: '/workspace/col\0lection',
         name: 'GetUsers',
@@ -173,51 +172,4 @@ describe('write-tool path validation', () => {
     });
   });
 
-  describe('create_test_suite — collectionPath', () => {
-    it('rejects path with .. traversal', async () => {
-      const handler = getHandler(server, 'create_test_suite');
-      const response = await handler({
-        collectionPath: '/workspace/../etc',
-        suiteName: 'MySuite',
-        requests: [],
-      });
-      expect(response.isError).toBe(true);
-      expect(response.content[0].text).toMatch(/collectionPath/i);
-    });
-
-    it('rejects path with null bytes', async () => {
-      const handler = getHandler(server, 'create_test_suite');
-      const response = await handler({
-        collectionPath: '/workspace/col\0lection',
-        suiteName: 'MySuite',
-        requests: [],
-      });
-      expect(response.isError).toBe(true);
-      expect(response.content[0].text).toMatch(/collectionPath/i);
-    });
-  });
-
-  describe('create_crud_requests — collectionPath', () => {
-    it('rejects path with .. traversal', async () => {
-      const handler = getHandler(server, 'create_crud_requests');
-      const response = await handler({
-        collectionPath: '/workspace/../etc',
-        entityName: 'User',
-        baseUrl: 'https://api.example.com',
-      });
-      expect(response.isError).toBe(true);
-      expect(response.content[0].text).toMatch(/collectionPath/i);
-    });
-
-    it('rejects path with null bytes', async () => {
-      const handler = getHandler(server, 'create_crud_requests');
-      const response = await handler({
-        collectionPath: '/workspace/col\0lection',
-        entityName: 'User',
-        baseUrl: 'https://api.example.com',
-      });
-      expect(response.isError).toBe(true);
-      expect(response.content[0].text).toMatch(/collectionPath/i);
-    });
-  });
 });

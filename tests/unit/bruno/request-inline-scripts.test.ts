@@ -1,5 +1,5 @@
 /**
- * Round-trip tests for inline scripts on create_request / modify_request.
+ * Round-trip tests for inline scripts on write_request / write_request.
  *
  * Uses the REAL generators/parsers (yaml-generator, bru-parser, yaml-parser,
  * format-factory) with an in-memory fs so we can assert that scripts supplied
@@ -233,7 +233,7 @@ describe('inline scripts round-trip', () => {
     expect(parsed.script?.['post-response']?.exec.join('\n')).toContain('console.log("post");');
   });
 
-  it('appends inline scripts on modify_request', async () => {
+  it('appends inline scripts on write_request', async () => {
     detectFormat.mockResolvedValue({ format: 'yaml' });
 
     const created = await builder.createRequest(baseInput);

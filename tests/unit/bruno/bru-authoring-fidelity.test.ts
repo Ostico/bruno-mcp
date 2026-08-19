@@ -11,7 +11,7 @@
  *     stringifies the value, so leaving the key present with an undefined value
  *     emits a value that is not a number. Omitting the key was the first fix and
  *     only half of one: a request with no `seq` sorts as MAX_SAFE_INTEGER, so
- *     every request created without one tied for last. `create_request` now
+ *     every request created without one tied for last. `write_request` now
  *     defaults `seq` to one past the folder's highest.
  *  2. The method block said `auth: api-key`. Bruno's token is `apikey`, so the
  *     `auth:apikey` block we correctly emitted was ignored.
@@ -221,7 +221,7 @@ describe('an authored api-key request is one Bruno can read', () => {
     expect(raw).toMatch(/^\s*placement: queryparams$/m);
   });
 
-  it('modify_request writes the same bytes as create_request', async () => {
+  it('write_request writes the same bytes as write_request', async () => {
     const collectionPath = await makeCollection('modify');
     const created = await builder.createRequest({
       collectionPath,
@@ -305,7 +305,7 @@ describe('a Bruno-authored api-key request actually sends its credential', () =>
 // ----------------------------------------------------------------------------
 
 describe('an api-key request we authored runs correctly when we run it', () => {
-  it('round-trips queryparams from create_request through to the wire', async () => {
+  it('round-trips queryparams from write_request through to the wire', async () => {
     // Writing Bruno's spelling is only half a fix if our own reader then drops
     // it. Both halves, one test.
     const collectionPath = await makeCollection('roundtrip');

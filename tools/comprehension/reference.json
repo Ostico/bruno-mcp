@@ -1,0 +1,1225 @@
+{
+  "model": "claude-haiku-4-5-20251001",
+  "server": "dist/index.js",
+  "trials": 30,
+  "byClass": {
+    "pass": 27,
+    "class-1-tool-error": 2,
+    "class-2-silent-wrong": 1
+  },
+  "controls": [],
+  "results": [
+    {
+      "task": "create-simple",
+      "trial": 0,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 12,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__create_collection",
+          "input": {
+            "name": "Store",
+            "outputPath": "<trial>/workspace/workspace"
+          },
+          "result": "\u2705 Bruno collection \"Store\" created successfully at: <trial>/workspace/workspace/Store\nRegistered in <trial>/workspace.yml, so list_collections will show it."
+        },
+        {
+          "name": "mcp__bruno-mcp__write_request",
+          "input": {
+            "collectionPath": "<trial>/workspace/workspace/Store",
+            "name": "ping",
+            "method": "GET",
+            "url": "<fixture>/ping"
+          },
+          "result": "\u2705 Request \"ping\" created successfully at: <trial>/workspace/workspace/Store/ping.yml"
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "Done. Created the \"Store\" collection with a GET request to `<fixture>/ping`.",
+      "cliStderr": ""
+    },
+    {
+      "task": "create-simple",
+      "trial": 1,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 9,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__create_collection",
+          "input": {
+            "name": "Store",
+            "outputPath": "<trial>/workspace/workspace"
+          },
+          "result": "\u2705 Bruno collection \"Store\" created successfully at: <trial>/workspace/workspace/Store\nRegistered in <trial>/workspace.yml, so list_collections will show it."
+        },
+        {
+          "name": "mcp__bruno-mcp__write_request",
+          "input": {
+            "collectionPath": "<trial>/workspace/workspace/Store",
+            "name": "ping",
+            "method": "GET",
+            "url": "<fixture>/ping"
+          },
+          "result": "\u2705 Request \"ping\" created successfully at: <trial>/workspace/workspace/Store/ping.yml"
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "Done. Created the \"Store\" collection with a GET request to `<fixture>/ping`.",
+      "cliStderr": ""
+    },
+    {
+      "task": "create-json-body",
+      "trial": 2,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 11,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__create_collection",
+          "input": {
+            "name": "Store",
+            "outputPath": "<trial>/workspace/workspace"
+          },
+          "result": "\u2705 Bruno collection \"Store\" created successfully at: <trial>/workspace/workspace/Store\nRegistered in <trial>/workspace.yml, so list_collections will show it."
+        },
+        {
+          "name": "mcp__bruno-mcp__write_request",
+          "input": {
+            "collectionPath": "<trial>/workspace/workspace/Store",
+            "name": "Login",
+            "method": "POST",
+            "url": "<fixture>/login",
+            "body": {
+              "type": "json",
+              "content": "{\"user\": \"viewer\"}"
+            }
+          },
+          "result": "\u2705 Request \"Login\" created successfully at: <trial>/workspace/workspace/Store/login.yml"
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "Done! I've created the \"Store\" collection with a POST request to `<fixture>/login` sending `{\"user\": \"viewer\"}` as JSON. The request is saved as `login.yml` in the collection.",
+      "cliStderr": ""
+    },
+    {
+      "task": "create-json-body",
+      "trial": 3,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 10,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__create_collection",
+          "input": {
+            "name": "Store",
+            "outputPath": "<trial>/workspace/workspace"
+          },
+          "result": "\u2705 Bruno collection \"Store\" created successfully at: <trial>/workspace/workspace/Store\nRegistered in <trial>/workspace.yml, so list_collections will show it."
+        },
+        {
+          "name": "mcp__bruno-mcp__write_request",
+          "input": {
+            "collectionPath": "<trial>/workspace/workspace/Store",
+            "name": "login",
+            "method": "POST",
+            "url": "<fixture>/login",
+            "body": {
+              "type": "json",
+              "content": "{\"user\": \"viewer\"}"
+            }
+          },
+          "result": "\u2705 Request \"login\" created successfully at: <trial>/workspace/workspace/Store/login.yml"
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "Done. I've created the Bruno collection \"Store\" at `<trial>/workspace/workspace/Store` with a POST request named \"login\" that sends `{\"user\": \"viewer\"}` to `<fixture>/login`.",
+      "cliStderr": ""
+    },
+    {
+      "task": "create-headers",
+      "trial": 4,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 7,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__create_collection",
+          "input": {
+            "name": "Store",
+            "outputPath": "<trial>/workspace/workspace"
+          },
+          "result": "\u2705 Bruno collection \"Store\" created successfully at: <trial>/workspace/workspace/Store\nRegistered in <trial>/workspace.yml, so list_collections will show it."
+        },
+        {
+          "name": "mcp__bruno-mcp__write_request",
+          "input": {
+            "collectionPath": "<trial>/workspace/workspace/Store",
+            "name": "Get Items",
+            "method": "GET",
+            "url": "<fixture>/items",
+            "headers": {
+              "Accept": "application/json",
+              "X-Api-Version": "2"
+            }
+          },
+          "result": "\u2705 Request \"Get Items\" created successfully at: <trial>/workspace/workspace/Store/get-items.yml"
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "Done. Created the Store collection at the specified path with one GET request to <fixture>/items that includes the Accept: application/json and X-Api-Version: 2 headers.",
+      "cliStderr": ""
+    },
+    {
+      "task": "create-inherit-auth",
+      "trial": 5,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 22,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__get_collection_stats",
+          "input": {
+            "collectionPath": "<trial>/workspace/Shop",
+            "includeRequests": true
+          },
+          "result": "{\n  \"totalRequests\": 4,\n  \"requestsByMethod\": {\n    \"GET\": 3,\n    \"POST\": 1\n  },\n  \"folders\": [],\n  \"environments\": [\n    \"local\"\n  ],\n  \"environmentDetails\": [\n    {\n      \"name\": \"local\",\n      \"variables\": [\n        \"username\",\n        \"token\"\n      ]\n    }\n  ],\n  \"requests\": [\n    {\n      \"name\": \"Login\",\n      \"method\": \"POST\",\n      \"seq\": 1,\n      \"folder\": \"\",\n      \"hasTests\": false,\n      \"filePath\": \"<trial>/workspace/Shop/login.yml\",\n      \"url\": \"<fixture>/login\"\n    },\n    {\n      \"name\": \"Items\",\n      \"method\": \"GET\",\n      \"seq\": 2,\n      \"folder\": \"\",\n      \"hasTests\": false,"
+        },
+        {
+          "name": "mcp__bruno-mcp__read_request",
+          "input": {
+            "filePath": "<trial>/workspace/Shop/items.yml"
+          },
+          "result": "{\n  \"filePath\": \"<trial>/workspace/Shop/items.yml\",\n  \"format\": \"yaml\",\n  \"name\": \"Items\",\n  \"type\": \"http\",\n  \"seq\": 2,\n  \"method\": \"GET\",\n  \"url\": \"<fixture>/items\",\n  \"headers\": [],\n  \"params\": {\n    \"query\": [],\n    \"path\": []\n  },\n  \"auth\": {\n    \"mode\": \"bearer\",\n    \"config\": {\n      \"token\": \"{{token}}\"\n    }\n  },\n  \"scripts\": {},\n  \"assert\": [],\n  \"vars\": {\n    \"preRequest\": [],\n    \"postResponse\": []\n  },\n  \"settings\": {\n    \"encodeUrl\": true,\n    \"timeout\": 0,\n    \"followRedirects\": true,\n    \"maxRedirects\": 5\n  },\n  \"notes\": []\n}"
+        },
+        {
+          "name": "mcp__bruno-mcp__write_request",
+          "input": {
+            "collectionPath": "<trial>/workspace/Shop",
+            "name": "Items (Collection Auth)",
+            "url": "<fixture>/items",
+            "method": "GET",
+            "auth": {
+              "type": "inherit",
+              "config": {}
+            }
+          },
+          "result": "\u2705 Request \"Items (Collection Auth)\" created successfully at: <trial>/workspace/Shop/items-collection-auth.yml"
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "Done. I've added a new GET request to <fixture>/items with `auth: inherit`, so it'll use whatever auth the collection is configured with rather than declaring its own bearer token.",
+      "cliStderr": ""
+    },
+    {
+      "task": "create-secret-not-on-disk",
+      "trial": 6,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 24,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__get_collection_stats",
+          "input": {
+            "collectionPath": "/private<trial>/workspace/Shop"
+          },
+          "result": "{\n  \"totalRequests\": 4,\n  \"requestsByMethod\": {\n    \"GET\": 3,\n    \"POST\": 1\n  },\n  \"folders\": [],\n  \"environments\": [\n    \"local\"\n  ],\n  \"environmentDetails\": [\n    {\n      \"name\": \"local\",\n      \"variables\": [\n        \"username\",\n        \"token\"\n      ]\n    }\n  ],\n  \"requests\": [\n    {\n      \"name\": \"Login\",\n      \"method\": \"POST\",\n      \"seq\": 1,\n      \"folder\": \"\",\n      \"hasTests\": false,\n      \"filePath\": \"/private<trial>/workspace/Shop/login.yml\",\n      \"url\": \"<fixture>/login\"\n    },\n    {\n      \"name\": \"Items\",\n      \"method\": \"GET\",\n      \"seq\": 2,\n      \"folder\": \"\",\n      \"hasTests\""
+        },
+        {
+          "name": "mcp__bruno-mcp__read_request",
+          "input": {
+            "filePath": "/private<trial>/workspace/Shop/admin-reports.yml"
+          },
+          "result": "{\n  \"filePath\": \"/private<trial>/workspace/Shop/admin-reports.yml\",\n  \"format\": \"yaml\",\n  \"name\": \"Admin Reports\",\n  \"type\": \"http\",\n  \"seq\": 3,\n  \"method\": \"GET\",\n  \"url\": \"<fixture>/admin/reports\",\n  \"headers\": [],\n  \"params\": {\n    \"query\": [],\n    \"path\": []\n  },\n  \"auth\": {\n    \"mode\": \"bearer\",\n    \"config\": {\n      \"token\": \"{{token}}\"\n    }\n  },\n  \"scripts\": {},\n  \"assert\": [],\n  \"vars\": {\n    \"preRequest\": [],\n    \"postResponse\": []\n  },\n  \"settings\": {\n    \"encodeUrl\": true,\n    \"timeout\": 0,\n    \"followRedirects\": true,\n    \"maxRedirects\": 5\n  },\n  \"notes\": []\n}"
+        },
+        {
+          "name": "mcp__bruno-mcp__read_environment",
+          "input": {
+            "collectionPath": "/private<trial>/workspace/Shop",
+            "name": "local"
+          },
+          "result": "{\n  \"collectionPath\": \"/private<trial>/workspace/Shop\",\n  \"name\": \"local\",\n  \"variables\": [\n    {\n      \"name\": \"username\",\n      \"value\": \"viewer\"\n    },\n    {\n      \"name\": \"token\",\n      \"value\": \"viewer-token\"\n    }\n  ],\n  \"notes\": []\n}"
+        },
+        {
+          "name": "mcp__bruno-mcp__set_environment_variable",
+          "input": {
+            "collectionPath": "/private<trial>/workspace/Shop",
+            "environment": "local",
+            "name": "bearerToken",
+            "secret": true,
+            "value": "<redacted>"
+          },
+          "result": "\u2705 Variable \"bearerToken\" set in environment \"local\" (marked secret \u2014 the name is recorded, the value is not stored in the file) at: /private<trial>/workspace/Shop/environments/local.yml"
+        },
+        {
+          "name": "mcp__bruno-mcp__write_request",
+          "input": {
+            "filePath": "/private<trial>/workspace/Shop/admin-reports.yml",
+            "auth": {
+              "type": "bearer",
+              "config": {
+                "token": "{{bearerToken}}"
+              }
+            }
+          },
+          "result": "Successfully modified request \"admin-reports.yml\""
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "Done. The Admin Reports request is now configured to use `{{bearerToken}}` for bearer authentication. The `bearerToken` secret variable is marked as secret in the environment, which means:\n\n- The variable **name** is saved in the environment file (so the request knows to expect it)\n- The **value** (`<redacted>`) is **not** written to any file in the collection\n\nWhen the request runs, it will inter",
+      "cliStderr": ""
+    },
+    {
+      "task": "create-path-params",
+      "trial": 7,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 13,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__create_collection",
+          "input": {
+            "name": "Store",
+            "outputPath": "<trial>/workspace/workspace"
+          },
+          "result": "\u2705 Bruno collection \"Store\" created successfully at: <trial>/workspace/workspace/Store\nRegistered in <trial>/workspace.yml, so list_collections will show it."
+        },
+        {
+          "name": "mcp__bruno-mcp__write_request",
+          "input": {
+            "collectionPath": "<trial>/workspace/workspace/Store",
+            "name": "Get Item",
+            "method": "GET",
+            "url": "<fixture>/items/:id",
+            "pathParams": {
+              "id": 42
+            },
+            "query": {
+              "page": 2
+            }
+          },
+          "result": "\u2705 Request \"Get Item\" created successfully at: <trial>/workspace/workspace/Store/get-item.yml"
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "Done! I've created the Store collection with a GET request that will hit `<fixture>/items/42?page=2` (the `:id` path parameter is set to 42, and `page=2` is added as a query parameter).",
+      "cliStderr": ""
+    },
+    {
+      "task": "create-declared-assertion",
+      "trial": 8,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 9,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__create_collection",
+          "input": {
+            "name": "Store",
+            "outputPath": "<trial>/workspace/workspace"
+          },
+          "result": "\u2705 Bruno collection \"Store\" created successfully at: <trial>/workspace/workspace/Store\nRegistered in <trial>/workspace.yml, so list_collections will show it."
+        },
+        {
+          "name": "mcp__bruno-mcp__write_request",
+          "input": {
+            "collectionPath": "<trial>/workspace/workspace/Store",
+            "name": "Ping",
+            "method": "GET",
+            "url": "<fixture>/ping",
+            "assert": [
+              {
+                "name": "res.getStatus()",
+                "value": "eq 200"
+              }
+            ]
+          },
+          "result": "\u2705 Request \"Ping\" created successfully at: <trial>/workspace/workspace/Store/ping.yml"
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "Done. I've created the Store collection with a GET request to the ping endpoint that has a declared assertion checking for status 200. The request is at `ping.yml` and uses the `assert` field rather than a test script.",
+      "cliStderr": ""
+    },
+    {
+      "task": "create-capture-variable",
+      "trial": 9,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 12,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__create_collection",
+          "input": {
+            "name": "Store",
+            "outputPath": "<trial>/workspace/workspace"
+          },
+          "result": "\u2705 Bruno collection \"Store\" created successfully at: <trial>/workspace/workspace/Store\nRegistered in <trial>/workspace.yml, so list_collections will show it."
+        },
+        {
+          "name": "mcp__bruno-mcp__write_request",
+          "input": {
+            "collectionPath": "<trial>/workspace/workspace/Store",
+            "requests": [
+              {
+                "name": "Login",
+                "method": "POST",
+                "url": "<fixture>/login",
+                "body": {
+                  "type": "none"
+                },
+                "scripts": {
+                  "post-response": "const token = res.getBody().token;\nbru.setVar('token', token);"
+                }
+              },
+              {
+                "name": "Get Items",
+                "method": "GET",
+                "url": "<fixture>/items",
+                "auth": {
+                  "type": "bearer",
+                  "config": {
+                    "token": "{{token}}"
+                  }
+                }
+              }
+            ]
+          },
+          "result": "Wrote all 2 requests in <trial>/workspace/workspace/Store.\n1. Login: <trial>/workspace/workspace/Store/login.yml\n2. Get Items: <trial>/workspace/workspace/Store/get-items.yml"
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "Done! I've created the Store collection with:\n\n1. **Login** (POST to <fixture>/login) \u2014 extracts the `token` field from the response body and saves it as a variable via a post-response script\n2. **Get Items** (GET to <fixture>/items) \u2014 sends the captured token as a bearer token in the Authorization header\n\nWhen you run these requests in sequence, the token from the login response will automaticall",
+      "cliStderr": ""
+    },
+    {
+      "task": "create-batch",
+      "trial": 10,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 12,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__create_collection",
+          "input": {
+            "name": "Store",
+            "outputPath": "<trial>/workspace/workspace"
+          },
+          "result": "\u2705 Bruno collection \"Store\" created successfully at: <trial>/workspace/workspace/Store\nRegistered in <trial>/workspace.yml, so list_collections will show it."
+        },
+        {
+          "name": "mcp__bruno-mcp__write_request",
+          "input": {
+            "collectionPath": "<trial>/workspace/workspace/Store",
+            "requests": [
+              {
+                "name": "Ping",
+                "method": "GET",
+                "url": "<fixture>/ping"
+              },
+              {
+                "name": "Login",
+                "method": "POST",
+                "url": "<fixture>/login"
+              },
+              {
+                "name": "Items",
+                "method": "GET",
+                "url": "<fixture>/items"
+              },
+              {
+                "name": "Admin Reports",
+                "method": "GET",
+                "url": "<fixture>/admin/reports"
+              }
+            ]
+          },
+          "result": "Wrote all 4 requests in <trial>/workspace/workspace/Store.\n1. Ping: <trial>/workspace/workspace/Store/ping.yml\n2. Login: <trial>/workspace/workspace/Store/login.yml\n3. Items: <trial>/workspace/workspace/Store/items.yml\n4. Admin Reports: <trial>/workspace/workspace/Store/admin-reports.yml"
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "Done. Created the Store collection with all four requests:\n- **Ping**: GET to <fixture>/ping\n- **Login**: POST to <fixture>/login\n- **Items**: GET to <fixture>/items\n- **Admin Reports**: GET to <fixture>/admin/reports",
+      "cliStderr": ""
+    },
+    {
+      "task": "create-batch",
+      "trial": 11,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 12,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__create_collection",
+          "input": {
+            "name": "Store",
+            "outputPath": "<trial>/workspace/workspace"
+          },
+          "result": "\u2705 Bruno collection \"Store\" created successfully at: <trial>/workspace/workspace/Store\nRegistered in <trial>/workspace.yml, so list_collections will show it."
+        },
+        {
+          "name": "mcp__bruno-mcp__write_request",
+          "input": {
+            "collectionPath": "<trial>/workspace/workspace/Store",
+            "requests": [
+              {
+                "name": "Ping",
+                "method": "GET",
+                "url": "<fixture>/ping"
+              },
+              {
+                "name": "Login",
+                "method": "POST",
+                "url": "<fixture>/login"
+              },
+              {
+                "name": "Items",
+                "method": "GET",
+                "url": "<fixture>/items"
+              },
+              {
+                "name": "Admin Reports",
+                "method": "GET",
+                "url": "<fixture>/admin/reports"
+              }
+            ]
+          },
+          "result": "Wrote all 4 requests in <trial>/workspace/workspace/Store.\n1. Ping: <trial>/workspace/workspace/Store/ping.yml\n2. Login: <trial>/workspace/workspace/Store/login.yml\n3. Items: <trial>/workspace/workspace/Store/items.yml\n4. Admin Reports: <trial>/workspace/workspace/Store/admin-reports.yml"
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "Done! I've created the Store collection with all four requests:\n\n- **Ping** \u2014 GET to `<fixture>/ping`\n- **Login** \u2014 POST to `<fixture>/login`\n- **Items** \u2014 GET to `<fixture>/items`\n- **Admin Reports** \u2014 GET to `<fixture>/admin/reports`\n\nThe collection is registered and ready to use.",
+      "cliStderr": ""
+    },
+    {
+      "task": "create-websocket",
+      "trial": 12,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 14,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__create_collection",
+          "input": {
+            "name": "Store",
+            "outputPath": "<trial>/workspace/workspace"
+          },
+          "result": "\u2705 Bruno collection \"Store\" created successfully at: <trial>/workspace/workspace/Store\nRegistered in <trial>/workspace.yml, so list_collections will show it."
+        },
+        {
+          "name": "mcp__bruno-mcp__write_request",
+          "input": {
+            "collectionPath": "<trial>/workspace/workspace/Store",
+            "name": "Notify WebSocket",
+            "kind": "websocket",
+            "url": "ws://localhost:9/notify",
+            "websocket": {
+              "messages": [
+                {
+                  "title": "subscribe",
+                  "content": "{\"op\": \"subscribe\"}"
+                },
+                {
+                  "title": "ping",
+                  "content": "{\"op\": \"ping\"}"
+                }
+              ]
+            }
+          },
+          "result": "\u2705 Request \"Notify WebSocket\" created successfully at: <trial>/workspace/workspace/Store/notify-websocket.yml"
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "Done. I've created the Store collection with a WebSocket request that opens to `ws://localhost:9/notify` and sends `{\"op\": \"subscribe\"}` followed by `{\"op\": \"ping\"}`. The request is saved at `<trial>/workspace/workspace/Store/notify-websocket.yml`.",
+      "cliStderr": ""
+    },
+    {
+      "task": "create-graphql",
+      "trial": 13,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 11,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__create_collection",
+          "input": {
+            "name": "Store",
+            "outputPath": "<trial>/workspace/workspace"
+          },
+          "result": "\u2705 Bruno collection \"Store\" created successfully at: <trial>/workspace/workspace/Store\nRegistered in <trial>/workspace.yml, so list_collections will show it."
+        },
+        {
+          "name": "mcp__bruno-mcp__write_request",
+          "input": {
+            "collectionPath": "<trial>/workspace/workspace/Store",
+            "name": "Get Items",
+            "method": "POST",
+            "url": "<fixture>/graphql",
+            "body": {
+              "type": "graphql",
+              "content": "{ items { id } }",
+              "variables": "{\"first\": 10}"
+            }
+          },
+          "result": "\u2705 Request \"Get Items\" created successfully at: <trial>/workspace/workspace/Store/get-items.yml"
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "Done! I've created the \"Store\" collection with a GraphQL request called \"Get Items\" that queries `{ items { id } }` with variables `{\"first\": 10}` against `<fixture>/graphql`. The request is saved at `<trial>/workspace/workspace/Store/get-items.yml`.",
+      "cliStderr": ""
+    },
+    {
+      "task": "run-all",
+      "trial": 14,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 9,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__run_collection",
+          "input": {
+            "collectionPath": "<trial>/workspace/Shop",
+            "environment": "local"
+          },
+          "result": "{\n  \"summary\": {\n    \"total\": 4,\n    \"passed\": 4,\n    \"failed\": 0,\n    \"duration_ms\": 83,\n    \"tests\": {\n      \"total\": 0,\n      \"passed\": 0,\n      \"failed\": 0\n    },\n    \"requestsWithoutTests\": 4\n  },\n  \"groups\": [\n    {\n      \"index\": 0,\n      \"summary\": {\n        \"total\": 4,\n        \"passed\": 4,\n        \"failed\": 0,\n        \"duration_ms\": 74,\n        \"tests\": {\n          \"total\": 0,\n          \"passed\": 0,\n          \"failed\": 0\n        },\n        \"requestsWithoutTests\": 4\n      },\n      \"results\": [\n        {\n          \"name\": \"Login\",\n          \"method\": \"POST\",\n          \"url\": \"<fixture>/"
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "All 4 requests in the collection **passed**:\n\n1. **Login** (POST) \u2014 200 OK\n2. **Items** (GET) \u2014 200 OK\n3. **Admin Reports** (GET) \u2014 403 Forbidden (expected)\n4. **Ping** (GET) \u2014 200 OK\n\nThe collection ran successfully with no failures. Note that the requests don't have any test assertions defined, so they pass by executing without errors\u2014the 403 response from Admin Reports is an expected authorizat",
+      "cliStderr": ""
+    },
+    {
+      "task": "run-all",
+      "trial": 15,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 9,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__run_collection",
+          "input": {
+            "collectionPath": "<trial>/workspace/Shop",
+            "environment": "local"
+          },
+          "result": "{\n  \"summary\": {\n    \"total\": 4,\n    \"passed\": 4,\n    \"failed\": 0,\n    \"duration_ms\": 71,\n    \"tests\": {\n      \"total\": 0,\n      \"passed\": 0,\n      \"failed\": 0\n    },\n    \"requestsWithoutTests\": 4\n  },\n  \"groups\": [\n    {\n      \"index\": 0,\n      \"summary\": {\n        \"total\": 4,\n        \"passed\": 4,\n        \"failed\": 0,\n        \"duration_ms\": 66,\n        \"tests\": {\n          \"total\": 0,\n          \"passed\": 0,\n          \"failed\": 0\n        },\n        \"requestsWithoutTests\": 4\n      },\n      \"results\": [\n        {\n          \"name\": \"Login\",\n          \"method\": \"POST\",\n          \"url\": \"<fixture>/"
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "All **4 requests passed**:\n\n1. **Login** (POST) \u2014 200 OK, returned viewer token\n2. **Items** (GET) \u2014 200 OK, returned item list\n3. **Admin Reports** (GET) \u2014 403 Forbidden (expected authorization failure)\n4. **Ping** (GET) \u2014 200 OK, pong response\n\nThe collection ran in 71ms total with no request or connectivity failures.",
+      "cliStderr": ""
+    },
+    {
+      "task": "run-one-request",
+      "trial": 16,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 7,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__run_collection",
+          "input": {
+            "collectionPath": "<trial>/workspace/Shop",
+            "requests": [
+              "<trial>/workspace/Shop/ping.yml"
+            ]
+          },
+          "result": "{\n  \"summary\": {\n    \"total\": 1,\n    \"passed\": 1,\n    \"failed\": 0,\n    \"duration_ms\": 164,\n    \"tests\": {\n      \"total\": 0,\n      \"passed\": 0,\n      \"failed\": 0\n    },\n    \"requestsWithoutTests\": 1\n  },\n  \"groups\": [\n    {\n      \"index\": 0,\n      \"summary\": {\n        \"total\": 1,\n        \"passed\": 1,\n        \"failed\": 0,\n        \"duration_ms\": 155,\n        \"tests\": {\n          \"total\": 0,\n          \"passed\": 0,\n          \"failed\": 0\n        },\n        \"requestsWithoutTests\": 1\n      },\n      \"results\": [\n        {\n          \"name\": \"Ping\",\n          \"method\": \"GET\",\n          \"url\": \"<fixture>/"
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "Done. The `ping.yml` request executed successfully and returned a 200 status with `{\"pong\":true}`.",
+      "cliStderr": ""
+    },
+    {
+      "task": "run-two-identities",
+      "trial": 17,
+      "control": null,
+      "klass": "class-1-tool-error",
+      "pass": false,
+      "diagnosis": "1 tool error(s); first: Pass `requests` or `groups`, not both. `requests` runs one ordered selection; `groups` runs several isolated ones. There is no correct way to pick one for you.",
+      "recovered": true,
+      "seconds": 12,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__get_collection_stats",
+          "input": {
+            "collectionPath": "<trial>/workspace/Shop",
+            "nameContains": "Admin Reports"
+          },
+          "result": "{\n  \"totalRequests\": 4,\n  \"requestsByMethod\": {\n    \"GET\": 3,\n    \"POST\": 1\n  },\n  \"folders\": [],\n  \"environments\": [\n    \"local\"\n  ],\n  \"environmentDetails\": [\n    {\n      \"name\": \"local\",\n      \"variables\": [\n        \"username\",\n        \"token\"\n      ]\n    }\n  ],\n  \"requests\": [\n    {\n      \"name\": \"Admin Reports\",\n      \"method\": \"GET\",\n      \"seq\": 3,\n      \"folder\": \"\",\n      \"hasTests\": false,\n      \"filePath\": \"<trial>/workspace/Shop/admin-reports.yml\",\n      \"url\": \"<fixture>/admin/reports\"\n    }\n  ],\n  \"matchedRequests\": 1\n}"
+        },
+        {
+          "name": "mcp__bruno-mcp__run_collection",
+          "input": {
+            "collectionPath": "<trial>/workspace/Shop",
+            "requests": [
+              "admin-reports.yml"
+            ],
+            "groups": [
+              {
+                "name": "viewer",
+                "variables": {
+                  "token": "viewer-token"
+                }
+              },
+              {
+                "name": "admin",
+                "variables": {
+                  "token": "admin-token"
+                }
+              }
+            ],
+            "includeResponseHeaders": true
+          },
+          "result": "Pass `requests` or `groups`, not both. `requests` runs one ordered selection; `groups` runs several isolated ones. There is no correct way to pick one for you."
+        },
+        {
+          "name": "mcp__bruno-mcp__run_collection",
+          "input": {
+            "collectionPath": "<trial>/workspace/Shop",
+            "groups": [
+              {
+                "name": "viewer",
+                "variables": {
+                  "token": "viewer-token"
+                },
+                "requests": [
+                  "admin-reports.yml"
+                ]
+              },
+              {
+                "name": "admin",
+                "variables": {
+                  "token": "admin-token"
+                },
+                "requests": [
+                  "admin-reports.yml"
+                ]
+              }
+            ],
+            "includeResponseHeaders": true
+          },
+          "result": "{\n  \"summary\": {\n    \"total\": 2,\n    \"passed\": 2,\n    \"failed\": 0,\n    \"duration_ms\": 45,\n    \"tests\": {\n      \"total\": 0,\n      \"passed\": 0,\n      \"failed\": 0\n    },\n    \"requestsWithoutTests\": 2\n  },\n  \"groups\": [\n    {\n      \"name\": \"viewer\",\n      \"index\": 0,\n      \"summary\": {\n        \"total\": 1,\n        \"passed\": 1,\n        \"failed\": 0,\n        \"duration_ms\": 40,\n        \"tests\": {\n          \"total\": 0,\n          \"passed\": 0,\n          \"failed\": 0\n        },\n        \"requestsWithoutTests\": 1\n      },\n      \"results\": [\n        {\n          \"name\": \"Admin Reports\",\n          \"method\": \"GET"
+        }
+      ],
+      "toolErrors": [
+        "Pass `requests` or `groups`, not both. `requests` runs one ordered selection; `groups` runs several isolated ones. There is no correct way to pick one for you."
+      ],
+      "finalText": "Here's what each caller received:\n\n**Viewer (token: viewer-token)**\n- Status: `403 Forbidden`\n- Response: `{\"error\":\"forbidden\"}`\n\n**Admin (token: admin-token)**\n- Status: `200 OK`\n- Response: `{\"reports\":[\"q1\"]}`\n\nThe endpoint correctly enforces access control: the viewer token is rejected with a forbidden error, while the admin token successfully retrieves the reports list.",
+      "cliStderr": ""
+    },
+    {
+      "task": "run-two-identities",
+      "trial": 18,
+      "control": null,
+      "klass": "class-1-tool-error",
+      "pass": false,
+      "diagnosis": "1 tool error(s); first: Pass `requests` or `groups`, not both. `requests` runs one ordered selection; `groups` runs several isolated ones. There is no correct way to pick one for you.",
+      "recovered": true,
+      "seconds": 13,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__get_collection_stats",
+          "input": {
+            "collectionPath": "/private<trial>/workspace/Shop"
+          },
+          "result": "{\n  \"totalRequests\": 4,\n  \"requestsByMethod\": {\n    \"GET\": 3,\n    \"POST\": 1\n  },\n  \"folders\": [],\n  \"environments\": [\n    \"local\"\n  ],\n  \"environmentDetails\": [\n    {\n      \"name\": \"local\",\n      \"variables\": [\n        \"username\",\n        \"token\"\n      ]\n    }\n  ],\n  \"requests\": [\n    {\n      \"name\": \"Login\",\n      \"method\": \"POST\",\n      \"seq\": 1,\n      \"folder\": \"\",\n      \"hasTests\": false,\n      \"filePath\": \"/private<trial>/workspace/Shop/login.yml\",\n      \"url\": \"<fixture>/login\"\n    },\n    {\n      \"name\": \"Items\",\n      \"method\": \"GET\",\n      \"seq\": 2,\n      \"folder\": \"\",\n      \"hasTests\""
+        },
+        {
+          "name": "mcp__bruno-mcp__run_collection",
+          "input": {
+            "collectionPath": "/private<trial>/workspace/Shop",
+            "requests": [
+              "admin-reports.yml"
+            ],
+            "groups": [
+              {
+                "name": "Viewer",
+                "variables": {
+                  "token": "viewer-token"
+                }
+              },
+              {
+                "name": "Admin",
+                "variables": {
+                  "token": "admin-token"
+                }
+              }
+            ]
+          },
+          "result": "Pass `requests` or `groups`, not both. `requests` runs one ordered selection; `groups` runs several isolated ones. There is no correct way to pick one for you."
+        },
+        {
+          "name": "mcp__bruno-mcp__run_collection",
+          "input": {
+            "collectionPath": "/private<trial>/workspace/Shop",
+            "groups": [
+              {
+                "name": "Viewer",
+                "variables": {
+                  "token": "viewer-token"
+                },
+                "requests": [
+                  "admin-reports.yml"
+                ]
+              },
+              {
+                "name": "Admin",
+                "variables": {
+                  "token": "admin-token"
+                },
+                "requests": [
+                  "admin-reports.yml"
+                ]
+              }
+            ]
+          },
+          "result": "{\n  \"summary\": {\n    \"total\": 2,\n    \"passed\": 2,\n    \"failed\": 0,\n    \"duration_ms\": 72,\n    \"tests\": {\n      \"total\": 0,\n      \"passed\": 0,\n      \"failed\": 0\n    },\n    \"requestsWithoutTests\": 2\n  },\n  \"groups\": [\n    {\n      \"name\": \"Viewer\",\n      \"index\": 0,\n      \"summary\": {\n        \"total\": 1,\n        \"passed\": 1,\n        \"failed\": 0,\n        \"duration_ms\": 65,\n        \"tests\": {\n          \"total\": 0,\n          \"passed\": 0,\n          \"failed\": 0\n        },\n        \"requestsWithoutTests\": 1\n      },\n      \"results\": [\n        {\n          \"name\": \"Admin Reports\",\n          \"method\": \"GET"
+        }
+      ],
+      "toolErrors": [
+        "Pass `requests` or `groups`, not both. `requests` runs one ordered selection; `groups` runs several isolated ones. There is no correct way to pick one for you."
+      ],
+      "finalText": "**Viewer (viewer-token):**\n- Status: 403 Forbidden\n- Response: `{\"error\":\"forbidden\"}`\n\n**Admin (admin-token):**\n- Status: 200 OK\n- Response: `{\"reports\":[\"q1\"]}`\n\nThe endpoint correctly enforces access control\u2014the viewer is denied, while the admin gets the reports data.",
+      "cliStderr": ""
+    },
+    {
+      "task": "run-junit-report",
+      "trial": 19,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 8,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__run_collection",
+          "input": {
+            "collectionPath": "<trial>/workspace/Shop",
+            "environment": "local",
+            "report": {
+              "junit": "reports/junit.xml"
+            }
+          },
+          "result": "{\n  \"summary\": {\n    \"total\": 4,\n    \"passed\": 4,\n    \"failed\": 0,\n    \"duration_ms\": 105,\n    \"tests\": {\n      \"total\": 0,\n      \"passed\": 0,\n      \"failed\": 0\n    },\n    \"requestsWithoutTests\": 4\n  },\n  \"groups\": [\n    {\n      \"index\": 0,\n      \"summary\": {\n        \"total\": 4,\n        \"passed\": 4,\n        \"failed\": 0,\n        \"duration_ms\": 94,\n        \"tests\": {\n          \"total\": 0,\n          \"passed\": 0,\n          \"failed\": 0\n        },\n        \"requestsWithoutTests\": 4\n      },\n      \"results\": [\n        {\n          \"name\": \"Login\",\n          \"method\": \"POST\",\n          \"url\": \"<fixture>"
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "Done. The Shop collection ran successfully against the local environment with all 4 requests passing. The JUnit XML report is now available at `reports/junit.xml` inside the collection (1710 bytes) for CI to pick up.",
+      "cliStderr": ""
+    },
+    {
+      "task": "delete-one",
+      "trial": 20,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 8,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__get_collection_stats",
+          "input": {
+            "collectionPath": "/private<trial>/workspace/Shop"
+          },
+          "result": "{\n  \"totalRequests\": 4,\n  \"requestsByMethod\": {\n    \"GET\": 3,\n    \"POST\": 1\n  },\n  \"folders\": [],\n  \"environments\": [\n    \"local\"\n  ],\n  \"environmentDetails\": [\n    {\n      \"name\": \"local\",\n      \"variables\": [\n        \"username\",\n        \"token\"\n      ]\n    }\n  ],\n  \"requests\": [\n    {\n      \"name\": \"Login\",\n      \"method\": \"POST\",\n      \"seq\": 1,\n      \"folder\": \"\",\n      \"hasTests\": false,\n      \"filePath\": \"/private<trial>/workspace/Shop/login.yml\",\n      \"url\": \"<fixture>/login\"\n    },\n    {\n      \"name\": \"Items\",\n      \"method\": \"GET\",\n      \"seq\": 2,\n      \"folder\": \"\",\n      \"hasTests\""
+        },
+        {
+          "name": "mcp__bruno-mcp__delete_request",
+          "input": {
+            "filePaths": [
+              "/private<trial>/workspace/Shop/ping.yml"
+            ],
+            "confirm": true
+          },
+          "result": "Deleted 1 request.\n1. ping.yml: deleted (yaml format)"
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "Done. The Ping request has been deleted from the Shop collection.",
+      "cliStderr": ""
+    },
+    {
+      "task": "delete-batch",
+      "trial": 21,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 8,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__list_requests",
+          "input": {
+            "collectionPath": "<trial>/workspace/Shop"
+          },
+          "result": "{\n  \"requests\": [\n    \"<trial>/workspace/Shop/admin-reports.yml\",\n    \"<trial>/workspace/Shop/items.yml\",\n    \"<trial>/workspace/Shop/login.yml\",\n    \"<trial>/workspace/Shop/ping.yml\"\n  ]\n}"
+        },
+        {
+          "name": "mcp__bruno-mcp__delete_request",
+          "input": {
+            "filePaths": [
+              "<trial>/workspace/Shop/ping.yml",
+              "<trial>/workspace/Shop/items.yml"
+            ],
+            "confirm": true
+          },
+          "result": "Deleted all 2 requests.\n1. ping.yml: deleted (yaml format)\n2. items.yml: deleted (yaml format)"
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "Done. I've deleted both the Ping and Items requests from the Shop collection. The collection now contains only the admin-reports and login requests.",
+      "cliStderr": ""
+    },
+    {
+      "task": "delete-batch",
+      "trial": 22,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 8,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__list_requests",
+          "input": {
+            "collectionPath": "<trial>/workspace/Shop"
+          },
+          "result": "{\n  \"requests\": [\n    \"<trial>/workspace/Shop/admin-reports.yml\",\n    \"<trial>/workspace/Shop/items.yml\",\n    \"<trial>/workspace/Shop/login.yml\",\n    \"<trial>/workspace/Shop/ping.yml\"\n  ]\n}"
+        },
+        {
+          "name": "mcp__bruno-mcp__delete_request",
+          "input": {
+            "filePaths": [
+              "<trial>/workspace/Shop/ping.yml",
+              "<trial>/workspace/Shop/items.yml"
+            ],
+            "confirm": true
+          },
+          "result": "Deleted all 2 requests.\n1. ping.yml: deleted (yaml format)\n2. items.yml: deleted (yaml format)"
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "Done. Both the Ping and Items requests have been deleted from the Shop collection. Two requests remain: admin-reports and login.",
+      "cliStderr": ""
+    },
+    {
+      "task": "read-request",
+      "trial": 23,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 29,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__get_collection_stats",
+          "input": {
+            "collectionPath": "<trial>/workspace/Shop"
+          },
+          "result": "{\n  \"totalRequests\": 4,\n  \"requestsByMethod\": {\n    \"GET\": 3,\n    \"POST\": 1\n  },\n  \"folders\": [],\n  \"environments\": [\n    \"local\"\n  ],\n  \"environmentDetails\": [\n    {\n      \"name\": \"local\",\n      \"variables\": [\n        \"username\",\n        \"token\"\n      ]\n    }\n  ],\n  \"requests\": [\n    {\n      \"name\": \"Login\",\n      \"method\": \"POST\",\n      \"seq\": 1,\n      \"folder\": \"\",\n      \"hasTests\": false,\n      \"filePath\": \"<trial>/workspace/Shop/login.yml\",\n      \"url\": \"<fixture>/login\"\n    },\n    {\n      \"name\": \"Items\",\n      \"method\": \"GET\",\n      \"seq\": 2,\n      \"folder\": \"\",\n      \"hasTests\": false,"
+        },
+        {
+          "name": "mcp__bruno-mcp__read_request",
+          "input": {
+            "filePath": "<trial>/workspace/Shop/items.yml"
+          },
+          "result": "{\n  \"filePath\": \"<trial>/workspace/Shop/items.yml\",\n  \"format\": \"yaml\",\n  \"name\": \"Items\",\n  \"type\": \"http\",\n  \"seq\": 2,\n  \"method\": \"GET\",\n  \"url\": \"<fixture>/items\",\n  \"headers\": [],\n  \"params\": {\n    \"query\": [],\n    \"path\": []\n  },\n  \"auth\": {\n    \"mode\": \"bearer\",\n    \"config\": {\n      \"token\": \"{{token}}\"\n    }\n  },\n  \"scripts\": {},\n  \"assert\": [],\n  \"vars\": {\n    \"preRequest\": [],\n    \"postResponse\": []\n  },\n  \"settings\": {\n    \"encodeUrl\": true,\n    \"timeout\": 0,\n    \"followRedirects\": true,\n    \"maxRedirects\": 5\n  },\n  \"notes\": []\n}"
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "The Items request calls:\n\n- **URL:** `<fixture>/items`\n- **Auth:** Bearer token (using the `{{token}}` variable from the environment)",
+      "cliStderr": ""
+    },
+    {
+      "task": "read-environment",
+      "trial": 24,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 14,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__read_environment",
+          "input": {
+            "collectionPath": "<trial>/workspace/Shop"
+          },
+          "result": "{\n  \"collectionPath\": \"<trial>/workspace/Shop\",\n  \"environments\": [\n    \"local\"\n  ]\n}"
+        },
+        {
+          "name": "mcp__bruno-mcp__read_environment",
+          "input": {
+            "collectionPath": "<trial>/workspace/Shop",
+            "name": "local"
+          },
+          "result": "{\n  \"collectionPath\": \"<trial>/workspace/Shop\",\n  \"name\": \"local\",\n  \"variables\": [\n    {\n      \"name\": \"username\",\n      \"value\": \"viewer\"\n    },\n    {\n      \"name\": \"token\",\n      \"value\": \"viewer-token\"\n    }\n  ],\n  \"notes\": []\n}"
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "The **local** environment in the Shop collection defines two variables:\n\n- **username**: `viewer`\n- **token**: `viewer-token`",
+      "cliStderr": ""
+    },
+    {
+      "task": "modify-add-header",
+      "trial": 25,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 15,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__list_requests",
+          "input": {
+            "collectionPath": "<trial>/workspace/Shop"
+          },
+          "result": "{\n  \"requests\": [\n    \"<trial>/workspace/Shop/admin-reports.yml\",\n    \"<trial>/workspace/Shop/items.yml\",\n    \"<trial>/workspace/Shop/login.yml\",\n    \"<trial>/workspace/Shop/ping.yml\"\n  ]\n}"
+        },
+        {
+          "name": "mcp__bruno-mcp__read_request",
+          "input": {
+            "filePath": "<trial>/workspace/Shop/items.yml"
+          },
+          "result": "{\n  \"filePath\": \"<trial>/workspace/Shop/items.yml\",\n  \"format\": \"yaml\",\n  \"name\": \"Items\",\n  \"type\": \"http\",\n  \"seq\": 2,\n  \"method\": \"GET\",\n  \"url\": \"<fixture>/items\",\n  \"headers\": [],\n  \"params\": {\n    \"query\": [],\n    \"path\": []\n  },\n  \"auth\": {\n    \"mode\": \"bearer\",\n    \"config\": {\n      \"token\": \"{{token}}\"\n    }\n  },\n  \"scripts\": {},\n  \"assert\": [],\n  \"vars\": {\n    \"preRequest\": [],\n    \"postResponse\": []\n  },\n  \"settings\": {\n    \"encodeUrl\": true,\n    \"timeout\": 0,\n    \"followRedirects\": true,\n    \"maxRedirects\": 5\n  },\n  \"notes\": []\n}"
+        },
+        {
+          "name": "mcp__bruno-mcp__write_request",
+          "input": {
+            "filePath": "<trial>/workspace/Shop/items.yml",
+            "headers": {
+              "X-Request-Id": "abc-123"
+            }
+          },
+          "result": "Successfully modified request \"items.yml\""
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "Done. The X-Request-Id: abc-123 header is now added to the Items request without affecting anything else.",
+      "cliStderr": ""
+    },
+    {
+      "task": "modify-append-script",
+      "trial": 26,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 28,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__list_requests",
+          "input": {
+            "collectionPath": "/private<trial>/workspace/Shop"
+          },
+          "result": "{\n  \"requests\": [\n    \"/private<trial>/workspace/Shop/admin-reports.yml\",\n    \"/private<trial>/workspace/Shop/items.yml\",\n    \"/private<trial>/workspace/Shop/login.yml\",\n    \"/private<trial>/workspace/Shop/ping.yml\"\n  ]\n}"
+        },
+        {
+          "name": "mcp__bruno-mcp__read_request",
+          "input": {
+            "filePath": "/private<trial>/workspace/Shop/ping.yml"
+          },
+          "result": "{\n  \"filePath\": \"/private<trial>/workspace/Shop/ping.yml\",\n  \"format\": \"yaml\",\n  \"name\": \"Ping\",\n  \"type\": \"http\",\n  \"seq\": 4,\n  \"method\": \"GET\",\n  \"url\": \"<fixture>/ping\",\n  \"headers\": [],\n  \"params\": {\n    \"query\": [],\n    \"path\": []\n  },\n  \"scripts\": {\n    \"post-response\": \"console.log(\\\"ping done\\\");\"\n  },\n  \"assert\": [],\n  \"vars\": {\n    \"preRequest\": [],\n    \"postResponse\": []\n  },\n  \"settings\": {\n    \"encodeUrl\": true,\n    \"timeout\": 0,\n    \"followRedirects\": true,\n    \"maxRedirects\": 5\n  },\n  \"notes\": []\n}"
+        },
+        {
+          "name": "mcp__bruno-mcp__write_request",
+          "input": {
+            "filePath": "/private<trial>/workspace/Shop/ping.yml",
+            "scripts": {
+              "post-response": "console.log(res.getResponseTime());"
+            },
+            "scriptMode": "append"
+          },
+          "result": "Successfully modified request \"ping.yml\""
+        },
+        {
+          "name": "mcp__bruno-mcp__read_request",
+          "input": {
+            "filePath": "/private<trial>/workspace/Shop/ping.yml"
+          },
+          "result": "{\n  \"filePath\": \"/private<trial>/workspace/Shop/ping.yml\",\n  \"format\": \"yaml\",\n  \"name\": \"Ping\",\n  \"type\": \"http\",\n  \"seq\": 4,\n  \"method\": \"GET\",\n  \"url\": \"<fixture>/ping\",\n  \"headers\": [],\n  \"params\": {\n    \"query\": [],\n    \"path\": []\n  },\n  \"scripts\": {\n    \"post-response\": \"console.log(res.getResponseTime());\"\n  },\n  \"assert\": [],\n  \"vars\": {\n    \"preRequest\": [],\n    \"postResponse\": []\n  },\n  \"settings\": {\n    \"encodeUrl\": true,\n    \"timeout\": 0,\n    \"followRedirects\": true,\n    \"maxRedirects\": 5\n  },\n  \"notes\": []\n}"
+        },
+        {
+          "name": "mcp__bruno-mcp__write_request",
+          "input": {
+            "filePath": "/private<trial>/workspace/Shop/ping.yml",
+            "scripts": {
+              "post-response": "console.log(\"ping done\");\nconsole.log(res.getResponseTime());"
+            },
+            "scriptMode": "replace"
+          },
+          "result": "Successfully modified request \"ping.yml\""
+        },
+        {
+          "name": "mcp__bruno-mcp__read_request",
+          "input": {
+            "filePath": "/private<trial>/workspace/Shop/ping.yml"
+          },
+          "result": "{\n  \"filePath\": \"/private<trial>/workspace/Shop/ping.yml\",\n  \"format\": \"yaml\",\n  \"name\": \"Ping\",\n  \"type\": \"http\",\n  \"seq\": 4,\n  \"method\": \"GET\",\n  \"url\": \"<fixture>/ping\",\n  \"headers\": [],\n  \"params\": {\n    \"query\": [],\n    \"path\": []\n  },\n  \"scripts\": {\n    \"post-response\": \"console.log(\\\"ping done\\\");\\nconsole.log(res.getResponseTime());\"\n  },\n  \"assert\": [],\n  \"vars\": {\n    \"preRequest\": [],\n    \"postResponse\": []\n  },\n  \"settings\": {\n    \"encodeUrl\": true,\n    \"timeout\": 0,\n    \"followRedirects\": true,\n    \"maxRedirects\": 5\n  },\n  \"notes\": []\n}"
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "Done. The Ping request's after-response script now logs both the original \"ping done\" message and the response time with `console.log(res.getResponseTime());`.",
+      "cliStderr": ""
+    },
+    {
+      "task": "list-requests",
+      "trial": 27,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 11,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__list_requests",
+          "input": {
+            "collectionPath": "<trial>/workspace/Shop"
+          },
+          "result": "{\n  \"requests\": [\n    \"<trial>/workspace/Shop/admin-reports.yml\",\n    \"<trial>/workspace/Shop/items.yml\",\n    \"<trial>/workspace/Shop/login.yml\",\n    \"<trial>/workspace/Shop/ping.yml\"\n  ]\n}"
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "- admin-reports.yml\n- items.yml\n- login.yml\n- ping.yml",
+      "cliStderr": ""
+    },
+    {
+      "task": "refuse-oauth2-browser-grant",
+      "trial": 28,
+      "control": null,
+      "klass": "class-2-silent-wrong",
+      "pass": false,
+      "diagnosis": "write_request was called 1 time(s) for something this server cannot express",
+      "field": "write_request",
+      "seconds": 42,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__get_collection_stats",
+          "input": {
+            "collectionPath": "<trial>/workspace/Shop",
+            "includeRequests": false
+          },
+          "result": "{\n  \"totalRequests\": 4,\n  \"requestsByMethod\": {\n    \"GET\": 3,\n    \"POST\": 1\n  },\n  \"folders\": [],\n  \"environments\": [\n    \"local\"\n  ],\n  \"environmentDetails\": [\n    {\n      \"name\": \"local\",\n      \"variables\": [\n        \"username\",\n        \"token\"\n      ]\n    }\n  ],\n  \"requests\": [],\n  \"requestsOmitted\": true\n}"
+        },
+        {
+          "name": "mcp__bruno-mcp__write_request",
+          "input": {
+            "collectionPath": "<trial>/workspace/Shop",
+            "name": "Get Items",
+            "method": "GET",
+            "url": "<fixture>/items",
+            "auth": {
+              "type": "oauth2",
+              "config": {
+                "clientId": "app-1",
+                "authorizationUrl": "<fixture>/oauth/authorize",
+                "redirectUri": "http://localhost:8080/callback",
+                "grantType": "authorizationCode"
+              }
+            }
+          },
+          "result": "\u2705 Request \"Get Items\" created successfully at: <trial>/workspace/Shop/get-items.yml"
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "Done. I've added \"Get Items\" to the Shop collection with OAuth2 authorization code grant. The request is configured with:\n- Client ID: `app-1`\n- Authorization URL: `<fixture>/oauth/authorize`\n- Redirect URI: `http://localhost:8080/callback`\n- Grant type: Authorization code\n\nBruno stores this as a request-level auth block, so when you run it, the OAuth2 flow will prompt the user to authorize in a b",
+      "cliStderr": ""
+    },
+    {
+      "task": "create-simple",
+      "trial": 29,
+      "control": null,
+      "klass": "pass",
+      "pass": true,
+      "diagnosis": "",
+      "seconds": 12,
+      "exitCode": 0,
+      "calls": [
+        {
+          "name": "mcp__bruno-mcp__create_collection",
+          "input": {
+            "name": "Store",
+            "outputPath": "<trial>/workspace/workspace"
+          },
+          "result": "\u2705 Bruno collection \"Store\" created successfully at: <trial>/workspace/workspace/Store\nRegistered in <trial>/workspace.yml, so list_collections will show it."
+        },
+        {
+          "name": "mcp__bruno-mcp__write_request",
+          "input": {
+            "collectionPath": "<trial>/workspace/workspace/Store",
+            "name": "ping",
+            "method": "GET",
+            "url": "<fixture>/ping"
+          },
+          "result": "\u2705 Request \"ping\" created successfully at: <trial>/workspace/workspace/Store/ping.yml"
+        }
+      ],
+      "toolErrors": [],
+      "finalText": "Done. Created the \"Store\" collection with a GET request to <fixture>/ping at `<trial>/workspace/workspace/Store`.",
+      "cliStderr": ""
+    }
+  ]
+}

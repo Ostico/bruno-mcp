@@ -1,8 +1,8 @@
 /**
- * Dependency ordering for create_crud_requests.
+ * Dependency ordering for a batch of requests.
  *
- * Extracted verbatim; it sat among the tool registrations but is a pure
- * algorithm that never touched instance state.
+ * A pure algorithm: it never touched instance state, which is why it sits here
+ * rather than among the tool registrations it started in.
  */
 
 
@@ -23,9 +23,18 @@ export function topologicalSort(
   for (const dep of dependencies) {
     // "from" must run before "to", so from → to is an edge
     const neighbors = adjacency.get(dep.from);
-    if (neighbors) {
-      neighbors.push(dep.to);
+    // An edge naming something absent is reported rather than dropped. Dropping
+    // it used to raise the in-degree of a node whose edge had gone, so nothing
+    // ever decremented it, the node never became ready, and the caller was told
+    // there was a circular dependency between requests that do not depend on
+    // each other at all.
+    if (!neighbors) {
+      return { error: `Dependency names "${dep.from}", which is not one of the requests` };
     }
+    if (!inDegree.has(dep.to)) {
+      return { error: `Dependency names "${dep.to}", which is not one of the requests` };
+    }
+    neighbors.push(dep.to);
     inDegree.set(dep.to, (inDegree.get(dep.to) || 0) + 1);
   }
 

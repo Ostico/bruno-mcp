@@ -18,7 +18,8 @@ import type { ToolContext } from './tools/context.js';
 import { registerCreateCollectionTool, registerListCollectionsTool, registerGetCollectionStatsTool } from './tools/collection-tools.js';
 import { registerUnregisterCollectionTool, registerDeleteCollectionTool } from './tools/collection-lifecycle-tools.js';
 import { registerCreateEnvironmentTool, registerUpdateEnvironmentTool, registerSetEnvironmentVariableTool, registerRemoveEnvironmentVariableTool, registerReadEnvironmentTool } from './tools/environment-tools.js';
-import { registerCreateRequestTool, registerModifyRequestTool, registerMoveRequestTool, registerDeleteRequestTool, registerCreateTestSuiteTool, registerCreateCrudRequestsTool, registerListRequestsTool, registerReadRequestTool } from './tools/request-tools.js';
+import { registerMoveRequestTool, registerDeleteRequestTool, registerListRequestsTool, registerReadRequestTool } from './tools/request-tools.js';
+import { registerWriteRequestTool } from './tools/request-write.js';
 import { registerRunCollectionTool } from './tools/run-tools.js';
 import { registerAddTestScriptTool, registerRemoveScriptTool } from './tools/script-tools.js';
 
@@ -37,7 +38,7 @@ export class BrunoMcpServer {
         // Reported to the client on connect. Hand-maintained, and it had drifted
         // two releases behind package.json before anyone looked — which is what
         // `tests/unit/meta/version-matches-package.test.ts` now guards.
-        version: '2.4.0'
+        version: '2.5.0'
       },
       {
         // Says when to reach for this server as well as how, and names the case where
@@ -49,8 +50,9 @@ export class BrunoMcpServer {
           + 'WebSocket and gRPC, cookie jars isolated per identity, and OAuth2. For one or two '
           + 'throwaway HTTP calls, a direct request is cheaper — use one. '
           + 'Workflow: list_collections → list_requests (to discover request file paths) → '
-          + 'run_collection, and read_request before modify_request. Secrets belong in run-level '
-          + 'variables, never in a file.',
+          + 'run_collection, and read_request before write_request. Write a whole set of requests '
+          + 'in one write_request call with requests, not one call per request. Secrets belong in '
+          + 'run-level variables, never in a file.',
       },
     );
 
@@ -87,14 +89,11 @@ export class BrunoMcpServer {
     registerUpdateEnvironmentTool(ctx);
     registerSetEnvironmentVariableTool(ctx);
     registerRemoveEnvironmentVariableTool(ctx);
-    registerCreateRequestTool(ctx);
-    registerModifyRequestTool(ctx);
+    registerWriteRequestTool(ctx);
     registerMoveRequestTool(ctx);
     registerAddTestScriptTool(ctx);
     registerRemoveScriptTool(ctx);
     registerDeleteRequestTool(ctx);
-    registerCreateTestSuiteTool(ctx);
-    registerCreateCrudRequestsTool(ctx);
     registerListCollectionsTool(ctx);
     registerListRequestsTool(ctx);
     registerGetCollectionStatsTool(ctx);

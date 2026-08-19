@@ -1,6 +1,6 @@
 /**
  * Writing the two non-HTTP kinds: the message builders both authoring paths use,
- * and the edits `modify_request` applies to a request that has no `http` block.
+ * and the edits `write_request` applies to a request that has no `http` block.
  *
  * Separate from `request.ts` because that file is within a few lines of the
  * 1300-line `max-lines` ceiling, and because these are pure functions of their
@@ -309,7 +309,7 @@ export function applyBruTransportUpdates(
   const block = kind === 'grpc' ? bru.grpc : bru.ws;
   if (!block) {
     throw new BrunoError(
-      `This "${kind}" request has no ${kind} block to edit. Recreate it with create_request.`,
+      `This "${kind}" request has no ${kind} block to edit. Recreate it with write_request.`,
       'VALIDATION_ERROR',
     );
   }
@@ -357,7 +357,7 @@ export function applyYamlTransportUpdates(
   const block = kind === 'grpc' ? req.grpc : req.websocket;
   if (!block) {
     throw new BrunoError(
-      `This "${kind}" request has no ${kind} block to edit. Recreate it with create_request.`,
+      `This "${kind}" request has no ${kind} block to edit. Recreate it with write_request.`,
       'VALIDATION_ERROR',
     );
   }

@@ -65,6 +65,29 @@ const SHIPPED = [
 ];
 
 /**
+ * Every path in a source archive of HEAD.
+ *
+ * The top-level view below is blind to a directory excluded from inside `src`, which is
+ * how the whole of `src/tools` went missing from every archive: an `export-ignore`
+ * pattern with a trailing slash and no leading one matches a directory of that name at
+ * ANY depth, so a rule meant for the repository's own `tools` took `src/tools` with it.
+ */
+function archivePaths(): Set<string> {
+  const tar = run('git', ['archive', '--worktree-attributes', '--format=tar', 'HEAD'], {
+    maxBuffer: 128 * 1024 * 1024,
+  });
+  const listed = String(
+    run('tar', ['tf', '-'], {
+      input: tar,
+      encoding: 'utf8',
+      maxBuffer: 32 * 1024 * 1024,
+    }),
+  );
+
+  return new Set(listed.split('\n').filter((path) => path !== ''));
+}
+
+/**
  * The paths of a source archive of HEAD, top level only.
  *
  * Attributes are read from the working tree rather than from HEAD so that an edit to
@@ -120,10 +143,27 @@ describe('the source archive', () => {
 
     // Listed individually rather than as "everything not in SHIPPED", because the point
     // of each of these is different: the test suite is the bulk, `docs` and `SPEC.md` are
-    // for whoever changes the server, `.github` cannot act from inside an archive.
-    for (const entry of ['tests', 'docs', 'examples', '.github', 'CLAUDE.md', 'CONTRIBUTING.md', 'SPEC.md', 'jest.config.ts']) {
+    // for whoever changes the server, `tools` measures the server rather than building
+    // it, and `.github` cannot act from inside an archive.
+    for (const entry of [
+      'tests', 'docs', 'examples', 'tools', '.github',
+      'CLAUDE.md', 'CONTRIBUTING.md', 'SPEC.md', 'jest.config.ts',
+    ]) {
       expect([entry, [...shipped].includes(entry)]).toEqual([entry, false]);
     }
+  });
+
+  it('carries every tracked source file, not just the top of src', () => {
+    // A build needs all of them, and an archive missing one fails at compile time for
+    // whoever downloaded it and nowhere else. Asserted per file so the failure names it.
+    const shipped = archivePaths();
+    const tracked = git('ls-files', '--', 'src')
+      .split('\n')
+      .filter((path) => path !== '');
+
+    expect(tracked.length).toBeGreaterThan(100);
+    const missing = tracked.filter((path) => !shipped.has(path));
+    expect(missing).toEqual([]);
   });
 
   it('classifies every tracked top-level entry one way or the other', () => {
