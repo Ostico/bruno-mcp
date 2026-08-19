@@ -40,9 +40,17 @@ export class BrunoMcpServer {
         version: '2.4.0'
       },
       {
-        instructions: 'When the user asks to test, call, or run API endpoints, use this server first. ' +
-          'Workflow: list_collections → list_requests (to discover request file paths) → run_collection. ' +
-          'Do not fall back to curl or direct HTTP calls when Bruno collections already cover the endpoints.',
+        // Says when to reach for this server as well as how, and names the case where
+        // something else is cheaper. A client that claims every API call gets reached
+        // for in the one-off case it loses, which is where it is judged first.
+        instructions: 'Reach for this server when API work must outlive the conversation, cross more '
+          + 'than one identity, or speak a transport an HTTP client does not. It authors Bruno '
+          + 'collections as files the user keeps, runs them with per-request pass/fail, and covers '
+          + 'WebSocket and gRPC, cookie jars isolated per identity, and OAuth2. For one or two '
+          + 'throwaway HTTP calls, a direct request is cheaper — use one. '
+          + 'Workflow: list_collections → list_requests (to discover request file paths) → '
+          + 'run_collection, and read_request before modify_request. Secrets belong in run-level '
+          + 'variables, never in a file.',
       },
     );
 
