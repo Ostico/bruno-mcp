@@ -88,19 +88,17 @@ export function registerCreateCollectionTool(ctx: ToolContext): void {
     'create_collection',
     {
       title: 'Create Bruno Collection',
-      description: 'Create a new Bruno API testing collection with configuration. '
-        + 'outputPath is the PARENT directory and name is appended to it: outputPath '
-        + '"/work/apis" with name "Billing" creates the collection at /work/apis/Billing. '
-        + 'Do not put the collection name in outputPath as well. '
-        + 'The new collection is also added to the workspace registry, because '
-        + '`list_collections` reads that registry and not the disk: a collection that is '
-        + 'not listed there is invisible to it and to the Bruno app. The result says '
-        + 'whether it was registered and, if not, why.',
+      description: 'Create a new Bruno API testing collection with configuration. outputPath is the PARENT directory ' +
+        'and name is appended to it: outputPath "/work/apis" with name "Billing" creates the collection at ' +
+        '/work/apis/Billing. Do not put the collection name in outputPath as well. The new collection is ' +
+        'also added to the workspace registry that `list_collections` reads rather than the disk, so a ' +
+        'collection missing from it is invisible to that tool and to the Bruno app. The result says ' +
+        'whether it was registered and, if not, why.',
       inputSchema: {
         name: z.string().min(1, 'Collection name is required'),
         description: z.string().optional(),
         baseUrl: z.string().url().optional(),
-        outputPath: z.string().min(1, 'Output path is required').describe('Absolute path of the PARENT directory to create the collection directory in. name is appended to it, so outputPath "/work/apis" with name "Billing" creates /work/apis/Billing. Passing "/work/apis/Billing" here would create /work/apis/Billing/Billing.'),
+        outputPath: z.string().min(1, 'Output path is required').describe('Absolute path of the PARENT directory to create the collection directory in. name is appended: "/work/apis" with name "Billing" creates /work/apis/Billing, and passing "/work/apis/Billing" here would create /work/apis/Billing/Billing.'),
         ignore: z.array(z.string()).optional(),
         format: z.enum(['yaml', 'bru']).optional().default('yaml'),
         workspacePath: z.string().optional().describe(
@@ -193,7 +191,7 @@ export function registerListCollectionsTool(ctx: ToolContext): void {
     'list_collections',
     {
       title: 'List Collections',
-      description: 'List the Bruno collections REGISTERED IN workspace.yml, with their names and paths. This is a registry listing, not a filesystem scan: a collection that exists on disk but is not registered will NOT appear, and registered entries that no longer exist are returned with "exists": false. If you already know a collection\'s absolute path, pass it directly to the other tools — it does not need to appear here. Use the returned path as collectionPath in other tools (get_collection_stats, list_requests, run_collection).',
+      description: 'List the Bruno collections REGISTERED IN workspace.yml, with their names and paths. This is a registry listing, not a filesystem scan: a collection that exists on disk but is not registered will NOT appear, and registered entries that no longer exist are returned with "exists": false. A known absolute path works in the other tools without appearing here. Use the returned path as collectionPath in get_collection_stats, list_requests and run_collection.',
       inputSchema: {
         workspacePath: z.string().optional().describe('Optional explicit path to workspace.yml')
       }
@@ -275,7 +273,7 @@ export function registerGetCollectionStatsTool(ctx: ToolContext): void {
     'get_collection_stats',
     {
       title: 'Get Collection Statistics',
-      description: 'Get statistics about a Bruno collection — request counts by method, folders, environments, and per-request details including each request\'s file path and URL. environmentDetails lists each environment with the NAMES of the variables it declares (values are withheld), so you can see what an environment already defines before merging into it with set_environment_variable. Use filePath values as entries in the requests list of run_collection.\n\nSIZE: the per-request array is the bulk of the response and grows with the collection — a few hundred requests run to tens of kilobytes. Narrow it with folder, method or nameContains, or pass includeRequests: false for counts only. The counts always describe the WHOLE collection; a filtered call adds matchedRequests so the two cannot be confused.',
+      description: 'Get statistics about a Bruno collection — request counts by method, folders, environments, and per-request details including each request\'s file path and URL. environmentDetails lists each environment with the NAMES of the variables it declares, values withheld, so what an environment already defines is visible before merging into it with set_environment_variable. Use filePath values as entries in the requests list of run_collection.\n\nSIZE: the per-request array is the bulk of the response and grows with the collection — a few hundred requests run to tens of kilobytes. Narrow it with folder, method or nameContains, or pass includeRequests: false for counts only. The counts always describe the WHOLE collection; a filtered call adds matchedRequests so the two cannot be confused.',
       inputSchema: {
         collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to collection directory. Use the path returned by list_collections.'),
         folder: z.string().optional().describe('Report only requests in this folder, path relative to the collection root. Nested folders are included, so "auth" also matches "auth/oauth2".'),

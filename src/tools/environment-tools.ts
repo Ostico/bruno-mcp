@@ -22,7 +22,7 @@ export function registerCreateEnvironmentTool(ctx: ToolContext): void {
     'create_environment',
     {
       title: 'Create Bruno Environment',
-      description: 'Create an environment file for a Bruno collection. Writes the WHOLE file, so it REFUSES a name that already exists rather than overwriting it — the error names the existing variables and says which ones a replace would delete, so you can choose between merging with update_environment, picking another name, and retrying with overwrite: true.',
+      description: 'Create an environment file for a Bruno collection. Writes the WHOLE file, so it REFUSES a name that already exists rather than overwriting it — the error names the existing variables and which ones a replace would delete, so you can merge with update_environment, pick another name, or retry with overwrite: true.',
       inputSchema: {
         collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to existing collection directory.'),
         name: z.string().min(1, 'Environment name is required'),
@@ -108,7 +108,7 @@ export function registerUpdateEnvironmentTool(ctx: ToolContext): void {
     'update_environment',
     {
       title: 'Update Bruno Environment',
-      description: 'Partially update an existing Bruno environment by MERGING the provided variables into the existing ones. Pre-existing variables not listed are preserved (unlike create_environment, which replaces the whole file).',
+      description: 'Partially update an existing Bruno environment by MERGING the provided variables into the existing ones. Variables not listed are preserved, unlike create_environment, which replaces the whole file.',
       inputSchema: {
         collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to existing collection directory.'),
         name: z.string().min(1, 'Environment name is required').describe('Name of the existing environment to update.'),
@@ -180,6 +180,7 @@ export function registerSetEnvironmentVariableTool(ctx: ToolContext): void {
         name: z.string().min(1, 'Variable name is required').describe('Variable key to set.'),
         value: z.union([z.string(), z.number(), z.boolean()]).describe('Variable value.'),
         enabled: z.boolean().optional().describe('Whether the variable is enabled. Persisted: enabled=false is written as a disabled variable.'),
+        // SECURITY: verbatim
         secret: z.boolean().optional().describe('Whether the variable is a secret. Persisted. IMPORTANT: marking a variable secret means its VALUE IS NOT SAVED — Bruno stores a secret variable as a name only (.bru lists it under vars:secret, .yml writes secret: true with no value) and keeps the value outside the collection, so `value` is discarded. Omit this to leave an existing variable\'s secret state untouched; pass false to convert a secret variable back to a plain one carrying `value`.')
       }
     },
@@ -310,7 +311,7 @@ export function registerReadEnvironmentTool(ctx: ToolContext): void {
     'read_environment',
     {
       title: 'Read Bruno Environment',
-      description: 'Read an environment back as structured JSON: every variable with its value, plus its disabled and secret flags. Omit "name" to list the collection\'s environments instead. Secret variables are returned by name only — Bruno stores no value for a secret in either file format, so there is none to return.',
+      description: 'Read an environment back as structured JSON: every variable with its value, plus its disabled and secret flags. Omit "name" to list the collection\'s environments instead. Secret variables are returned by name only — no file format stores a secret\'s value, so there is none to return.',
       inputSchema: {
         collectionPath: z.string().min(1, 'Collection path is required')
           .describe('Absolute path to the collection directory.'),

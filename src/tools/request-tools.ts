@@ -22,12 +22,11 @@ export function registerMoveRequestTool(ctx: ToolContext): void {
     'move_request',
     {
       title: 'Move Request',
-      description: 'Relocate a request file to another folder, or to another collection entirely. '
-        + 'Pass copy:true to duplicate it instead of moving it. The bytes are moved verbatim and '
-        + 'nothing is parsed and rewritten, so no part of the request can be lost on the way — '
-        + 'which also means seq arrives unchanged and may tie with a request already there; that '
-        + 'is reported, and Bruno breaks such a tie by filename. The file keeps its name: use '
-        + 'write_request with filename to rename it. The new path comes back in the response.',
+      description: 'Relocate a request file to another folder, or to another collection entirely. Pass copy:true to ' +
+        'duplicate it instead of moving it. The bytes are moved verbatim, nothing is parsed and rewritten, ' +
+        'so seq arrives unchanged and may tie with a request already there; that is reported, and Bruno ' +
+        'breaks such a tie by filename. The file keeps its name: use write_request with filename to rename ' +
+        'it. The new path comes back in the response.',
       inputSchema: {
         filePath: z.string().min(1, 'File path is required')
           .describe('Absolute path to the .yml or .bru request file to move. Get from list_requests or get_collection_stats.'),
@@ -309,7 +308,7 @@ export function registerReadRequestTool(ctx: ToolContext): void {
     'read_request',
     {
       title: 'Read Bruno Request',
-      description: 'Read a single request file back as structured JSON: method, url, headers, query and path params, body, auth mode, scripts, assertions, vars, settings and docs. Works on both .bru and .yml and returns the same shape for each, so the on-disk format stays invisible. Use this before write_request to see current state, and after write_request to confirm what was written. A websocket or grpc request also carries its stored messages in full — title, content, and for a websocket the type and whether the runner will send it — under websocket.messages or grpc.messages, keyed as write_request accepts them. A "notes" array reports anything the file declares that the runner will not act on.',
+      description: 'Read a single request file back as structured JSON: method, url, headers, query and path params, body, auth mode, scripts, assertions, vars, settings and docs. Both .bru and .yml return the same shape, so the on-disk format stays invisible. Use this before write_request to see current state, and after it to confirm what was written. A websocket or grpc request also carries its stored messages in full — title, content, and for a websocket the type and whether the runner will send it — under websocket.messages or grpc.messages, keyed as write_request accepts them. A "notes" array reports anything the file declares that the runner will not act on.',
       inputSchema: {
         filePath: z.string().min(1, 'File path is required')
           .describe('Absolute path to the .bru or .yml request file. Use the path returned by write_request or list_requests rather than rebuilding it: request filenames are lowercased on write.'),

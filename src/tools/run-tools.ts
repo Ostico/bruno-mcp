@@ -14,10 +14,12 @@ import { validateToolPath } from './tool-path.js';
 import type { ToolContext } from './context.js';
 
 /**
- * Three sentences state a security consequence and are exempt from every compression rule:
- * the SSRF refusal contract, per-group isolation, and what response-header masking does and
- * does not withhold. A caller who misreads one can leak a credential across identities, or
- * read a refusal as a network failure and retry it forever.
+ * Every sentence marked `// SECURITY: verbatim` states a security consequence and is exempt
+ * from every compression rule: the SSRF refusal contract, per-group isolation, what
+ * response-header masking does and does not withhold, that run-level variables are never
+ * written to a file, and what a report file redacts. A caller who misreads one can leak a
+ * credential across identities, write a secret to disk, or read a refusal as a network
+ * failure and retry it forever.
  */
 
 // SECURITY: verbatim
@@ -114,14 +116,18 @@ export function registerRunCollectionTool(ctx: ToolContext): void {
       inputSchema: {
         collectionPath: z.string().min(1, 'Collection path is required').describe('Absolute path to collection root directory. Use the path returned by list_collections.'),
         environment: z.string().optional().describe('Environment name to use (e.g. "dev", "staging"). Get available names from get_collection_stats.'),
-        collectionRoot: z.string().optional().describe('The collection that collectionPath belongs to, when running a subfolder of one: environments and the collection- and folder-level scripts are resolved from here. Must be collectionPath itself or an ancestor of it — a root that does not contain the collection is rejected, because its root scripts would then run against these requests.'),
+        collectionRoot: z.string().optional().describe('The collection that collectionPath belongs to, when running a subfolder of one: environments ' +
+          'and the collection- and folder-level scripts are resolved from here. Must be collectionPath ' +
+          'itself or an ancestor of it — a root that does not contain the collection is rejected.'),
         requests: z.array(z.string().min(1, 'A request entry must not be empty')).optional().describe('The requests to run, IN THE ORDER GIVEN. Each entry is a .yml or .bru request file, or a directory, which expands to every request under it, recursively. Absolute, or relative to collectionPath. Get paths from list_requests or get_collection_stats. Duplicates are allowed and run twice. Omit to run every request in the collection; an empty [] is a selection of nothing and runs nothing. Cannot be combined with groups; to run a subset per identity, put the paths in each group\'s own requests. An entry naming nothing is reported in missingRequests rather than failing the run.'),
         groups: z.array(z.object({
           name: z.string().optional().describe('Your label for this group, echoed back on its result. Omit and the group is addressed by its index.'),
           requests: z.array(z.string().min(1, 'A request entry must not be empty')).optional().describe('This group\'s requests, in the order given. Same forms as the top-level requests: a file, or a directory that expands. Duplicates allowed. OMIT to run the whole collection under this group\'s identity — that is how one collection runs as two users. An empty [] is not the same thing: it is a selection of nothing, and runs nothing.'),
           environment: z.string().optional().describe('Environment file for this group, REPLACING the run-level environment rather than merging with it. Bruno\'s UI runs one environment per run; here two groups can run two.'),
           variables: z.record(z.union([z.string(), z.number(), z.boolean()])).optional().describe('Variables for this group, MERGED over the run-level variables with this group winning per name. So a run-level baseUrl survives a group that only overrides user.'),
-          parallel: z.boolean().optional().describe('Run this group\'s own requests concurrently. Default false, whatever the run-level parallel says. Two concurrent requests in one group share that group\'s store, so they can genuinely contend on a bru.setVar — which is the point when reproducing a race, and a reason to keep a group serial when it is not.'),
+          parallel: z.boolean().optional().describe('Run this group\'s own requests concurrently. Default false, whatever the run-level parallel ' +
+            'says. Two concurrent requests in one group share that group\'s store, so they can genuinely ' +
+            'contend on a bru.setVar.'),
           startAfter: z.object({
             group: z.string().min(1, 'startAfter.group cannot be empty').describe('The name of the group to wait on. It must be a group in this same call, it must be named, and it must not iterate over rows — several groups under one name give the gate no single position to watch.'),
             requestsCompleted: z.number().int().min(1, 'requestsCompleted must be at least 1').optional().describe('How many of that group\'s requests must have finished. Default 1, which is the usual meaning of "once it is up". A request that failed still counts: the gate marks a position in the group, not a verdict on it, and waiting for a verdict would hang the run rather than report the failure.'),
@@ -138,6 +144,7 @@ export function registerRunCollectionTool(ctx: ToolContext): void {
         maxResponseBodyBytes: z.number().optional().default(10240).describe('Maximum response body size (bytes) to return per request; longer bodies are truncated and response_body_truncated is set. Default: 10240.'),
         includeResponseHeaders: z.boolean().optional().default(true).describe('Include the response headers of each request in the results, credential values masked. Default: true. Turn it OFF for a run whose results you read in bulk: the same headers repeat per result and a few dozen requests can spend more output on them than on what you asked about. A test script is unaffected: res.getHeader() always reads the real headers.'),
         maxResponseHeaderBytes: z.number().int().min(1, 'maxResponseHeaderBytes must be at least 1').optional().default(2048).describe('Maximum size (bytes) of one header VALUE to return; a longer value is cut and response_headers_truncated is set on that result. Default: 2048. Per value, not per map, so it never changes which headers are reported. set-cookie is a list and each cookie is capped on its own.'),
+        // SECURITY: verbatim
         variables: z.record(z.union([z.string(), z.number(), z.boolean()])).optional().describe('Variables for this run only, as {name: value}. They override the environment file and work without one. Held in memory and never written to any file — this is the only correct way to supply a secret, because neither Bruno file format stores a secret value. Referenced as {{name}} in urls, headers, bodies and auth. A request-level vars:pre-request entry or a bru.setVar in a script still overrides these, matching Bruno\'s --env-var precedence.'),
         captureVariables: z.array(z.string()).optional().describe('Names of variables set by bru.setVar during the run whose values you want back, e.g. ["token"]. This is the only way to see one: without it the value exists only inside the run. Every name a script set is listed in capturedVariableNames on every run, so run once to see what is there. Values come back only for names you list here, verbatim. Nothing is captured from the environment file or from variables you supplied, only what a script set.'),
         websocket: z.object({
@@ -155,6 +162,7 @@ export function registerRunCollectionTool(ctx: ToolContext): void {
         // restoring the default. `maxMessage` for `maxMessages` is one
         // character from a bound that looks applied and is not.
         }).strict().optional().describe('Bounds for every websocket request in this call; there is no per-request form. Omit for the defaults below. A session always ends on one of these bounds or on the peer closing, and nothing is held open past the call. Each transcript entry carries its frame type ("text", "binary", "ping", "pong" or "close"), the authored title of a message the session sent, and on a close frame the close_code the peer gave — 1000 an ordinary goodbye, 1006 a peer that vanished, 1008 a refusal, 1011 a server error. Control frames do not count toward maxMessages. A binary frame\'s payload is base64; bytes is the true wire size for every kind. A subprotocol is not a bound and is not set here: author it as a Sec-WebSocket-Protocol header on the request, comma-separated for more than one. It is negotiated at the handshake, and the one the server agreed to comes back in that result\'s response_headers.'),
+        // SECURITY: verbatim
         report: z.object({
           junit: z.string().min(1, 'junit must name a file').optional().describe('Path for a JUnit XML report, relative to collectionPath or absolute inside it, e.g. "reports/junit.xml". One testsuite per request, one testcase per assertion or test, a request that errored reported as a suite error. What a run could not do is in the file too: an unparseable request file, a named request that resolved to nothing and a group that crashed each get their own suite, so the report never says a subset ran without saying it was a subset. A request that ran and verified nothing is one SKIPPED testcase, not an empty suite, which a CI summary reads as a pass.'),
           html: z.string().min(1, 'html must name a file').optional().describe('Path for a self-contained HTML report, relative to collectionPath or absolute inside it, e.g. "reports/run.html". For a person to open: around 30 KB, with execution groups as its iterations, so a two-identity run reads as two sections. Two limits: the request pane is empty, because a result does not retain the request as it was sent, and assertions and script tests share one list, because a result does not tell them apart.'),

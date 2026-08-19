@@ -178,11 +178,10 @@ export const requestBodySchema = z.object({
     selected: z.boolean().optional(),
   })).optional()
     .describe(
-      'File body parts. `content` is the one-file shorthand; use this to set a content ' +
-      'type, deselect an entry, or send more than one. Only the first selected entry is ' +
-      'sent, which is what Bruno does; an entry defaults to selected, and the flag is ' +
-      'always written to the file, because a .yml entry without it is one Bruno sends no ' +
-      'body for.',
+      'File body parts. `content` is the one-file shorthand; use this to set a content type, deselect an ' +
+        'entry, or send more than one. Only the first selected entry is sent, which is what Bruno does; an ' +
+        'entry defaults to selected, and the flag is always written, because a .yml entry without it is ' +
+        'one Bruno sends no body for.',
     ),
 }).optional();
 
@@ -222,6 +221,7 @@ export const grpcAuthoringSchema = z.object({
       'The fully qualified RPC method, e.g. "/greet.Greeter/SayHello". Not an HTTP verb, ' +
       'which is why it is here and not in the top-level method argument.',
     ),
+  // SECURITY: verbatim
   protoPath: z.string().optional()
     .describe(
       'The .proto file describing the service, relative to the collection. Must already ' +
