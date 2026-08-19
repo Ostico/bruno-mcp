@@ -663,7 +663,8 @@ export function registerWriteRequestTool(ctx: ToolContext): void {
         'collectionPath plus name creates, filePath changes what is already there. Creating never ' +
         'overwrites — an existing file is refused, so address it by filePath. Changing is a partial merge: ' +
         'only provided fields are updated and every other field is preserved. Pass requests to write a ' +
-        'whole set in one call. Authors HTTP requests by default, WebSocket requests with kind "websocket" ' +
+        'whole set in ONE call, not one call per request. Authors HTTP requests by default, WebSocket ' +
+        'requests with kind "websocket" ' +
         '(url plus websocket.messages) and gRPC requests with kind "grpc" (url plus grpc.method, ' +
         'grpc.protoPath and grpc.messages); neither takes an HTTP method or a body. Supports ' +
         'multipart/form-data with file uploads and per-part contentType (body.type "form-data" with ' +
