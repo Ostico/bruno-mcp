@@ -5,6 +5,274 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-08-20
+
+### Breaking changes
+
+Four tools were merged into `write_request` and `delete_request` now takes a list. Nothing
+changes about what an unchanged call does — only the names a caller reaches for.
+
+- **`create_request` and `modify_request` are now one `write_request`.** Which operation a call
+  performs follows from the locator: `collectionPath` plus `name` creates a request, `filePath`
+  edits one. An edit is still a partial merge, and `filename` still renames the file. A field
+  that only means something in one of the two modes — `kind`, `folder`, `sequence` on a create;
+  `filename`, `scriptMode` on an edit — is refused in the other rather than silently dropped.
+  The merge exists because the two tools sent the same sub-schemas twice into the cached prefix
+  of every request: the tool surface a client receives drops from 79,525 characters to 67,391.
+- **`create_test_suite` and `create_crud_requests` are gone.** Both wrote several requests at
+  once, which `write_request` now does with `requests: [...]` — including the ordering
+  `dependencies` that `create_test_suite` carried. `create_crud_requests`' five-request scaffold
+  is five items in a batch, spelled out rather than named for you. Removing them takes 4,428
+  characters out of the surface every call pays for.
+- **`delete_request` takes `filePaths`, not `filePath`.** A list, even for one request. The old
+  spelling is refused by the schema rather than ignored.
+- **This fails closed, and what needs editing is configuration, not code.** A client asks for
+  the tool list at connect, so an agent that reads the list is unaffected; a call to a removed
+  name is an unknown-tool error or a permission prompt, never a wrong result. What pins a name
+  is human-authored: an `--allowedTools mcp__bruno-mcp__create_request` argument, a
+  `settings.json` permission entry, a hook matcher, or prose in a `CLAUDE.md` or a skill naming
+  one of the four.
+- **A rename ships in a minor version, and the README now says so.** Tool names are discovered
+  from `tools/list` at connect rather than linked against, so renames and removals are minors; a
+  change to what an unchanged call *does* is a major, as when `2.0.0` turned folders into
+  execution groups. The policy is published in the README so it is a contract rather than a
+  dodge.
+
+### Added
+
+- **`write_request` writes several requests in one call.** Pass `requests: [...]` instead of a
+  single request's fields; `collectionPath` is given once at the top level and every item
+  carries its own fields. Each item is validated before anything is written, so a batch that
+  names two requests resolving to the same file, or an edit whose `filePath` sits outside the
+  collection, is refused with nothing written. The result lists every item in input order with
+  the path written or the reason it failed, and reports an error if any item failed. An item may
+  also declare `dependencies`, and the batch is then written in dependency order so each
+  request's `seq` reflects it.
+
+- **`delete_request` deletes several requests in one call.** `filePaths` takes a list and one
+  `confirm: true` covers the whole list. Every path is resolved and checked before the first
+  unlink, so a list naming one unusable path — a traversal, a wrong extension, a file under no
+  collection — deletes nothing at all, and a path repeated in one list is refused rather than
+  reported as a failure on a file the same call removed. The result names every file with what
+  happened to it, and reports an error if any file failed while the rest still went.
+
+- **A caller can take a collection back out.** Nothing in the toolset could remove a registry
+  entry, so the two ends of a collection's life are now both reachable: `unregister_collection`
+  edits the registry and leaves the directory alone, and `delete_collection` removes the
+  directory behind an explicit `confirm: true`, refusing any path that is not a collection root.
+  `list_collections` says how many of the entries it just listed point at a directory that is
+  gone, and where to send them.
+
+- **A script can read the session outcome, not only its frames.** A WebSocket script could read
+  the frames and nothing else, so "the peer answered" was assertable but "the peer closed with
+  1008", "a bound cut this recording short" and "the session timed out rather than ending" were
+  not — none of them is a frame, so an author had to infer them from the absence of something,
+  which is exactly the assertion that keeps passing when the session starts failing in a new
+  way. `res` now carries `res.getStopReason()`, `res.getCloseCode()` and
+  `res.getSessionTruncated()`, plus the matching plain properties, because a declared assert
+  block reaches for `res.stopReason` where a call is not valid syntax. `res.getBody()` is
+  unchanged. The outcome is derived from the detail the result reports rather than assembled
+  beside it, so an accessor and the result cannot disagree. On an HTTP response the accessors
+  answer null, null and false rather than a default: an exchange with no session did not stop
+  for a reason.
+
+- **`bru.getEnvVar` and `bru.hasEnvVar` answer from the environment layer alone.** A script could
+  read an environment variable through `bru.getVar`, which this server widens to resolve
+  environment and collection variables as well as what a script set, but the narrower question —
+  "was this configured", the question a negative control asks — had no answer, and a caller
+  writing a script against Bruno's own documentation got a TypeError. Aliasing the two accessors
+  onto one store would have let a runtime variable of the same name silently change what
+  `getEnvVar` returns, so the sandbox gets a second store seeded from the environment layer on
+  its own. All three paths to a script are covered: an HTTP pre-request script, the verification
+  phase that runs post-response scripts and declared assertions, and a transport pre-request
+  script. There is deliberately no `setEnvVar` — nothing here writes an environment file, and a
+  setter that looked like it did would be worse than its absence.
+
+- **A run can bound the response headers it reports.** Headers were returned by default on the
+  reasoning that `undici` bounds them at its 16 KB `maxHeaderSize`, which is true of one
+  response; a result set is many, and a sixteen-request run returned 54.9 KB, most of it the
+  same header map repeated per result with a ~350-character bearer token in each.
+  `includeResponseHeaders` turns the maps off and `maxResponseHeaderBytes` bounds one value; the
+  default of both leaves every existing caller's results byte-identical. The cap is per value,
+  not per map, so it changes how much of a long value comes back and never which headers are
+  reported. `set-cookie` is a list and each cookie is capped on its own, because capping the
+  joined list would have dropped the later cookies entirely. Truncation is reported as
+  `response_headers_truncated` rather than applied silently.
+
+- **`read_request` returns a transport request's messages in full.** It reported
+  `"websocket": { "url": ..., "messages": 1 }`. For a WebSocket or gRPC request the messages
+  *are* the request, the way a body is for an http one, so a count could not answer the question
+  the tool exists for: a caller who had written `{"id":40}` could not tell it from `{"id":4O}`
+  without running the request against a live server. The messages now come back keyed as the
+  write path accepts them — `title`, `content`, and for a WebSocket `type` and `selected` — so a
+  message can be corrected by copying it out of the view. `selected` is resolved rather than
+  copied, because `.bru` can only say "selected" by carrying the flag while a `.yml` message is
+  sent unless it states `selected: false`; reporting each file's literal spelling would make one
+  request read as two different requests depending on the format it was authored in.
+
+- A test that a shipped document may not name a tool the server does not register, closing
+  the class rather than the instance: a rename that leaves the tool list correct and every
+  README example wrong is what a reader copies. The migration table and the paragraph
+  describing another project's tools are fenced by HTML comments and skipped by position,
+  since both legitimately name what this server does not register.
+
+### Changed
+
+- `run_collection`'s tool and field descriptions are shorter by 4,004 characters (27,413 to
+  23,409, whole surface 65,063 to 61,059) with no fact removed. What went is rationale — why a
+  bound exists, what it saves, how it differs from a habit — not what a call does. The three
+  sentences that state a security consequence (the SSRF refusal contract, per-group store and
+  cookie-jar isolation, and what response-header masking withholds) are pulled into named
+  constants marked `// SECURITY: verbatim` and are unchanged.
+- `requests` now says where to put a subset when you want one per identity, rather than only
+  that it cannot be combined with `groups`.
+- Compressed `write_request`'s tool description and the `scripts`, `settings`,
+  `body` and `assert` field prose it shares with the other write paths, cutting a
+  further 934 characters from the served tool surface (61,059 to 60,125). Every
+  interface fact, default, unit and prohibition is retained; what was removed is
+  rationale that the comprehension harness confirmed no caller needed.
+- Compressed the remaining tool and field descriptions across the smaller tools
+  (`create_collection`, `create_environment`, `update_environment`, `move_request`,
+  `add_test_script`, `remove_script`, `list_collections`, `get_collection_stats`,
+  `read_request`, `read_environment`, `unregister_collection`, `delete_collection`)
+  and the last oversized `run_collection` and `write_request` fields, for a further
+  750 characters (60,125 to 59,375). Same rule as the earlier rounds: rationale out,
+  every interface fact, default, unit and refusal kept.
+- Marked each security sentence that is exempt from compression at its declaration,
+  so the next person to shorten a description can see which ones may not move.
+- A second pass over the two largest descriptions, `run_collection`'s and the shared
+  `scripts` field, for a further 404 characters (59,375 to 58,971). The served tool
+  surface is now 58,971 characters against 65,063 before this work and 79,525 before
+  the tools were consolidated.
+- `scriptMode` no longer carries a schema-level default of `"replace"`. It still defaults to
+  `"replace"` when scripts are written; the default was removed because the SDK would fill it
+  in on a create as well, where the field has no meaning.
+- `create_collection` appends `name` to `outputPath`, which its own description read both ways;
+  it now says so and gives an example, and warns when the leaf of `outputPath` already equals
+  `name` — the shape that produces a collection nested inside a directory of the same name.
+
+### Security
+
+- **A CSRF or XSRF token returned in a response header was written out in plaintext**, in the run
+  result and in any HTML or JUnit report the run was asked for, while the `set-cookie` beside it
+  was masked. The list of credential-bearing names covered what a server reads a credential from
+  and not what it mints one under, so `xsrf-token`, `x-xsrf-token`, `csrf-token`, `x-csrf-token`
+  and `x-amz-security-token` join it. Only the reported copy is masked, so a script can still
+  capture such a token and chain it.
+
+### Fixed
+
+- The source archive GitHub serves as "Download ZIP", and as the tarball on every
+  release, was missing the whole of `src/tools` and could not be built. An
+  `export-ignore` pattern written as `tools/` matches a directory of that name at any
+  depth, so the rule meant for this repository's own `tools` took `src/tools` with it.
+  Every directory rule is now anchored to the repository root, and a test asserts that
+  every tracked file under `src` appears in the archive. The npm package was never
+  affected: it ships by the `files` field, not by `git archive`.
+
+- Creating a request no longer overwrites an existing file. It is refused, naming the path and
+  saying to address it by `filePath` instead. Previously the create path wrote unconditionally,
+  so a call that named a collection instead of a file replaced the request and reported success.
+
+- **`settings.keepAliveInterval` is modelled, so writing a request no longer deletes it.** It is
+  a WebSocket request's ping interval, named by both of Bruno's dialects: the `.bru` reader takes
+  it out of a settings block and the `.yml` WebSocket writer emits it beside `timeout` for every
+  request. Nothing here modelled it, so a `.bru` value was dropped on the way in and deleted from
+  the file on the next write, while a `.yml` value survived only in the unmodelled-keys bag — a
+  read reported a field the settings input then refused, and a read-modify-write could not put
+  back what it had just read. It is a settings field now in both parsers, both writers and the
+  input schema. The value is carried for Bruno rather than acted on: this runner sends no pings
+  of its own.
+
+- **A response setting two cookies reached a script holding one.** Iterating a fetch Response's
+  header list yields `set-cookie` once per cookie rather than combining the values as it does for
+  every other name, so building a flat map by assignment kept whichever came last: asking whether
+  a login set the persistent-login cookie could not be answered. The flat map now carries the
+  joined form, and the per-cookie list is unchanged beside it for `res.getSetCookies()`, which is
+  still the only surface a cookie value containing a comma survives.
+
+- The integration suites registered every throwaway collection they created into whatever
+  workspace the developer running them happens to use, which is how a maintainer's own
+  `list_collections` came to answer with dozens of entries named `harness-collection`,
+  `req-collection` and `noisy-collection`, every one of them `exists: false`. There were two
+  paths for it: the in-process default resolution, and the stdio harness deliberately stripping
+  every `BRUNO_*` variable from the server it spawns. A `setupFiles` hook now points each test
+  file at its own throwaway workspace, and the harness lets that one variable through, so a run
+  leaves the ambient file byte-identical.
+
+- **A form-urlencoded body was built as multipart.** `formData` is the only key/value field on
+  the body input, so it carries a form-urlencoded body's pairs as well as a multipart body's
+  parts — and it reached the multipart branch of each body builder on its presence alone. On the
+  `.bru` side the model came back carrying the pairs and the same names again as parts; on the
+  `.yml` side, where that branch returns first, it decided the body type. Neither showed up in a
+  file, because each writer emits the block the mode names, so both are now asserted on the model
+  the writers are handed.
+
+- A per-pair `type` or `contentType` on `formData` was accepted and dropped, so a caller who
+  asked to attach a file got a text pair of the same name with nothing to say the file was not
+  there. Both are refused now, naming the body type that does carry them, while `type: "text"` is
+  accepted because it says what the absent key says.
+
+- `run_collection` promised to refuse `requests` and `groups` together and tested their lengths,
+  so an empty `requests` array beside `groups` ran the groups. An empty array is what a caller
+  gets when whatever assembled the selection found nothing; running something else instead
+  answers a question that was never asked. The test is now presence.
+
+- Ordering by `dependencies` no longer stalls on a dependency naming a request that is not in the
+  batch. The unknown name was dropped from the graph while still counting against the request it
+  pointed at, which left that request unreachable and reported as a cycle. It is now refused by
+  name.
+
+- **Pacing advice is no longer appended to a handshake failure.** A WebSocket request against a
+  URL that answered the handshake with a 404 reported the failure and, beside it, advice that a
+  paced sequence spends wall-clock time between sends so `maxDurationMs` has to cover the whole
+  of it. `sendIntervalMs` was 0, one message was authored, and the session was dead in 52 ms
+  against a 6000 ms ceiling: there was no pacing, and following the advice would have changed
+  nothing. The sentence is now appended only when there was an interval to spend and the session
+  carried no failure, so the case it was written for — a genuinely paced sequence cut short by
+  its own ceiling — still gets it.
+
+- **`captureVariables` warnings named the wrong cause, twice.** A group has its own variable
+  store by design, so a name missing from one store is not a finding; warned per group, a run of
+  three groups emitted three warnings, each listing the names the other two had just set. The
+  intersection across every group's report is what a run can honestly claim nothing captured, and
+  the note now lives on the run — group results no longer carry `warnings` at all, since nothing
+  populated the field. Separately, a name a request's own `vars:preRequest` block sets was
+  reported as one no script set, with the note that supplied variables are not captured. That
+  block *is* setting it; it is applied for interpolation and scoped to the request that declares
+  it by upstream's own precedence, so it never reaches the store the values come from. Those
+  names are now read off the plan — they are declared on disk, so a request that never ran still
+  declares them — and reported separately, saying where the value does live.
+
+- The `timeout` description claimed 0 means no timeout at all. It means no deadline for the
+  request; the per-script budget cannot be switched off, because the sandbox rejects 0 and treats
+  it as unset, so 0 leaves it at 5000ms. The same description now says the 30000ms request
+  default is reached only by a file with no timeout key, which a `.yml` request written here
+  never is.
+
+- Restored the batching instruction to `write_request`'s description, in fewer words
+  than it was cut in: "Pass requests to write a whole set in ONE call, not one call per
+  request." Sixty trials rather than thirty showed callers writing four requests with
+  four calls once the clause naming when to batch was gone. Final surface 58,997
+  characters, against 65,063 before this work.
+
+### Documentation
+
+- **The `instructions` string a client reads on connect no longer overreaches.** It said to use
+  this server first for any API work and not to fall back on a direct HTTP call, which is a claim
+  this server loses: for one or two throwaway requests a direct call is cheaper in both tokens
+  and wall clock, and an agent that follows the old instruction pays the whole tool surface plus
+  a round trip per object to do something curl does in one line. It now leads with the decision
+  rule — reach for this server when the work must outlive the conversation, cross more than one
+  identity, or speak a transport an HTTP client does not, and use something else for the one-off
+  — and names the capabilities that justify the cost (files the user keeps, per-request pass/fail,
+  WebSocket and gRPC, per-identity cookie jars, OAuth2) where a client can weigh them. The README
+  headline and the `package.json` description get the same treatment: they say what a caller ends
+  up with instead of listing internals.
+
+- The README gained an upgrade section for the merged tools, with the migration table and what
+  configuration to edit, and a versioning section stating the policy above.
+
 ## [2.4.0] - 2026-08-14
 
 ### Added
