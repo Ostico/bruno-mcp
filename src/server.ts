@@ -38,7 +38,7 @@ export class BrunoMcpServer {
         // Reported to the client on connect. Hand-maintained, and it had drifted
         // two releases behind package.json before anyone looked — which is what
         // `tests/unit/meta/version-matches-package.test.ts` now guards.
-        version: '2.4.0'
+        version: '2.5.0'
       },
       {
         // Says when to reach for this server as well as how, and names the case where
@@ -50,8 +50,9 @@ export class BrunoMcpServer {
           + 'WebSocket and gRPC, cookie jars isolated per identity, and OAuth2. For one or two '
           + 'throwaway HTTP calls, a direct request is cheaper — use one. '
           + 'Workflow: list_collections → list_requests (to discover request file paths) → '
-          + 'run_collection, and read_request before write_request. Secrets belong in run-level '
-          + 'variables, never in a file.',
+          + 'run_collection, and read_request before write_request. Write a whole set of requests '
+          + 'in one write_request call with requests, not one call per request. Secrets belong in '
+          + 'run-level variables, never in a file.',
       },
     );
 

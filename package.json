@@ -1,7 +1,7 @@
 {
   "name": "@ostico/bruno-mcp",
   "mcpName": "io.github.Ostico/bruno-mcp-studio",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "description": "An MCP server that turns an agent's API testing into files you keep: it authors and edits Bruno collections in place, then runs them — HTTP, WebSocket and gRPC, one identity or many — and reports per-request pass/fail you can re-run in CI.",
   "main": "dist/index.js",
   "bin": {

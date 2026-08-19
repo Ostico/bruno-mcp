@@ -87,7 +87,7 @@ Pick one of the others if: you want **the server Bruno itself maintains**, and w
 
 Pick this one if: you want the agent to **write** the collection and not just read or run it, you are on `.yml` opencollection format, you need the run to happen **without installing the Bruno CLI**, or you care that what lands in your repo is byte-comparable to what the Bruno app writes.
 
-On the fork parent specifically, since this project owes it its existence: [macarthy/bruno-mcp](https://github.com/macarthy/bruno-mcp) registers eight tools — `create_collection`, `create_request`, `create_environment`, `create_crud_requests`, `create_test_suite`, `add_test_script`, `list_collections`, `get_collection_stats`. It writes `.bru` files and does not read a request back, run anything, or expose an edit tool; a `updateRequest` helper exists in its `src/bruno/request.ts` but no MCP tool reaches it.
+On the fork parent specifically, since this project owes it its existence: [macarthy/bruno-mcp](https://github.com/macarthy/bruno-mcp) registers eight tools — <!-- foreign-tool-names:start -->`create_collection`, `create_request`, `create_environment`, `create_crud_requests`, `create_test_suite`, `add_test_script`, `list_collections`, `get_collection_stats`<!-- foreign-tool-names:end -->. It writes `.bru` files and does not read a request back, run anything, or expose an edit tool; a `updateRequest` helper exists in its `src/bruno/request.ts` but no MCP tool reaches it.
 
 ## Features
 
@@ -687,6 +687,41 @@ It started as a fork of [macarthy/bruno-mcp](https://github.com/macarthy/bruno-m
 No. Bruno is a product of [usebruno](https://www.usebruno.com) and its name and trademarks belong to them. This is a community project that reads Bruno's open-source packages to stay compatible with them; it is not endorsed by or affiliated with usebruno.
 
 Bruno's own team announced an official MCP server, [`usebruno/bruno-mcp`](https://github.com/usebruno/bruno-mcp), in August 2026. This is not it, and does not compete for that role — see [Which Bruno MCP server should I use?](#which-bruno-mcp-server-should-i-use) for what each is good at.
+
+## Upgrading to 2.5.0 — four tools were merged into `write_request`
+
+Four tools are gone. What they did, `write_request` does, with the same semantics: an edit
+still updates only the fields you pass and preserves every other field, byte for byte.
+
+<!-- migration-table:start -->
+| Removed in 2.5.0 | Call instead |
+| --- | --- |
+| `create_request`, `modify_request` | `write_request` |
+| `create_test_suite`, `create_crud_requests` | `write_request` with `requests`, and `dependencies` for ordering |
+<!-- migration-table:end -->
+
+`delete_request` is unchanged and still here; it now also takes `filePaths` to delete a set
+in one call.
+
+**This fails closed.** A client asks for the tool list at connect and gets the current
+names, so an agent that reads the list is unaffected. A call to a removed name is an
+unknown-tool error or a permission prompt — never a wrong result, never a silent one.
+
+**What actually needs editing is configuration that pins a name**: a
+`--allowedTools mcp__bruno-mcp__create_request` argument, a `settings.json` permission
+entry, a hook matcher, and any prose in a `CLAUDE.md` or a skill that tells an agent to
+call one of the four by name.
+
+## Versioning
+
+Tool names are discovered from `tools/list` at connect, not linked against, so **renaming
+or removing a tool ships in a minor version**. A call either behaves exactly as it did or
+does not exist, and the second case is loud.
+
+**Changing what an unchanged call does ships in a major version.** That is the dangerous
+kind: `2.0.0` turned folders into execution groups, so a caller who changed nothing got a
+different result. Nothing quieter than that earns a major, because majors that do not
+signal danger teach you to ignore majors.
 
 ## Upgrading from 1.x
 
