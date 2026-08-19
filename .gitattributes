@@ -39,6 +39,11 @@ jest.config.ts export-ignore
 docs/ export-ignore
 SPEC.md export-ignore
 examples/ export-ignore
+# The comprehension harness drives a real model against a real server to check that
+# the tool descriptions still carry what a caller needs. It is a measuring instrument
+# for whoever edits those descriptions, needs the `claude` CLI and an account to run,
+# and builds nothing.
+tools/ export-ignore
 
 # Instructions and process for working on the repository, not for using the server.
 CLAUDE.md export-ignore

@@ -120,8 +120,12 @@ describe('the source archive', () => {
 
     // Listed individually rather than as "everything not in SHIPPED", because the point
     // of each of these is different: the test suite is the bulk, `docs` and `SPEC.md` are
-    // for whoever changes the server, `.github` cannot act from inside an archive.
-    for (const entry of ['tests', 'docs', 'examples', '.github', 'CLAUDE.md', 'CONTRIBUTING.md', 'SPEC.md', 'jest.config.ts']) {
+    // for whoever changes the server, `tools` measures the server rather than building
+    // it, and `.github` cannot act from inside an archive.
+    for (const entry of [
+      'tests', 'docs', 'examples', 'tools', '.github',
+      'CLAUDE.md', 'CONTRIBUTING.md', 'SPEC.md', 'jest.config.ts',
+    ]) {
       expect([entry, [...shipped].includes(entry)]).toEqual([entry, false]);
     }
   });

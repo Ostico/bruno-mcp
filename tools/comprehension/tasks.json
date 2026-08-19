@@ -1,0 +1,312 @@
+{
+  "note": "Weights come from the 405 recorded tool calls: create 50%, run 19%, delete 11%, read 5%, modify 5%, list and create-collection 3%. There are no controls here: both candidates passed after the sentence they depended on was removed, so neither could serve as one. preflight.mjs checks the harness deterministically instead, and records why.",
+  "tasks": [
+    {
+      "id": "create-simple",
+      "weight": 2,
+      "prompt": "In the directory {{DIR}}/workspace, make a Bruno collection called Store, and put one request in it that does a GET against {{BASE}}/ping. Nothing else.",
+      "expect": {
+        "tool": "write_request",
+        "file": "ping.yml",
+        "contains": [
+          "{{BASE}}/ping",
+          "method: GET"
+        ]
+      }
+    },
+    {
+      "id": "create-json-body",
+      "weight": 2,
+      "prompt": "In the directory {{DIR}}/workspace, make a Bruno collection called Store with one request: a POST to {{BASE}}/login sending the JSON body {\"user\": \"viewer\"}.",
+      "expect": {
+        "tool": "write_request",
+        "file": "login.yml",
+        "contains": [
+          "method: POST",
+          "type: json",
+          "viewer"
+        ]
+      }
+    },
+    {
+      "id": "create-headers",
+      "weight": 1,
+      "prompt": "In the directory {{DIR}}/workspace, make a Bruno collection called Store with one GET request to {{BASE}}/items that sends two headers: Accept: application/json and X-Api-Version: 2.",
+      "expect": {
+        "tool": "write_request",
+        "file": "items.yml",
+        "contains": [
+          "name: Accept",
+          "name: X-Api-Version"
+        ]
+      }
+    },
+    {
+      "id": "create-inherit-auth",
+      "weight": 1,
+      "setup": "shop",
+      "prompt": "The collection at {{COLLECTION}} already carries its own auth. Add one more request to it, a GET to {{BASE}}/items, and set it up so the request uses whatever auth the collection is configured with rather than declaring its own token again.",
+      "expect": {
+        "tool": "write_request",
+        "argsInclude": {
+          "auth": {
+            "type": "inherit"
+          }
+        }
+      }
+    },
+    {
+      "id": "create-secret-not-on-disk",
+      "weight": 1,
+      "setup": "shop",
+      "prompt": "The collection at {{COLLECTION}} needs to call {{BASE}}/admin/reports with the bearer token sk-live-9f2a7c. That token is a production secret and must not end up written into any file in the collection, but the request still has to be able to send it. Set that up.",
+      "expect": {
+        "notInAnyFile": [
+          "sk-live-9f2a7c"
+        ]
+      }
+    },
+    {
+      "id": "create-path-params",
+      "weight": 1,
+      "prompt": "In the directory {{DIR}}/workspace, make a Bruno collection called Store with one GET request to {{BASE}}/items/:id, where :id should be 42 and there should also be a query parameter page=2.",
+      "expect": {
+        "tool": "write_request",
+        "contains": [
+          "type: path",
+          "type: query",
+          "value: \"42\""
+        ]
+      }
+    },
+    {
+      "id": "create-declared-assertion",
+      "weight": 1,
+      "prompt": "In the directory {{DIR}}/workspace, make a Bruno collection called Store with one GET request to {{BASE}}/ping that checks the response status is 200. Do it with a declared check rather than by writing any JavaScript.",
+      "expect": {
+        "tool": "write_request",
+        "file": "ping.yml",
+        "contains": [
+          "assertions",
+          "operator: eq",
+          "value: \"200\""
+        ],
+        "notContains": [
+          "function",
+          "expect("
+        ]
+      }
+    },
+    {
+      "id": "create-capture-variable",
+      "weight": 1,
+      "prompt": "In the directory {{DIR}}/workspace, make a Bruno collection called Store with two requests. The first POSTs to {{BASE}}/login and takes the token out of the response body field \"token\", saving it for later. The second GETs {{BASE}}/items sending that captured token as a bearer token.",
+      "expect": {
+        "tool": "write_request",
+        "contains": [
+          "set-variable"
+        ]
+      }
+    },
+    {
+      "id": "create-batch",
+      "weight": 2,
+      "prompt": "In the directory {{DIR}}/workspace, make a Bruno collection called Store containing four requests, named exactly: Ping, a GET to {{BASE}}/ping; Login, a POST to {{BASE}}/login; Items, a GET to {{BASE}}/items; and Admin Reports, a GET to {{BASE}}/admin/reports. Write all four.",
+      "expect": {
+        "tool": "write_request",
+        "maxCalls": 1,
+        "file": "admin-reports.yml"
+      }
+    },
+    {
+      "id": "create-websocket",
+      "weight": 1,
+      "prompt": "In the directory {{DIR}}/workspace, make a Bruno collection called Store with one request that opens a WebSocket to ws://localhost:9/notify and sends two messages: first {\"op\": \"subscribe\"} then {\"op\": \"ping\"}.",
+      "expect": {
+        "tool": "write_request",
+        "argsInclude": {
+          "kind": "websocket"
+        }
+      }
+    },
+    {
+      "id": "create-graphql",
+      "weight": 1,
+      "prompt": "In the directory {{DIR}}/workspace, make a Bruno collection called Store with one GraphQL request against {{BASE}}/graphql, query \"{ items { id } }\", with the variables {\"first\": 10}.",
+      "expect": {
+        "tool": "write_request",
+        "argsInclude": {
+          "body": {
+            "type": "graphql"
+          }
+        }
+      }
+    },
+    {
+      "id": "run-all",
+      "weight": 2,
+      "setup": "shop",
+      "prompt": "Run every request in the collection at {{COLLECTION}} against the local environment and tell me which ones passed.",
+      "expect": {
+        "tool": "run_collection",
+        "resultNotContains": [
+          "SSRF"
+        ],
+        "resultContains": [
+          "\"failed\": 0"
+        ]
+      }
+    },
+    {
+      "id": "run-one-request",
+      "weight": 1,
+      "setup": "shop",
+      "prompt": "In the collection at {{COLLECTION}}, run only the request in the file ping.yml. Do not run anything else.",
+      "expect": {
+        "tool": "run_collection",
+        "argsInclude": {
+          "requests": [
+            "re:(^|/)ping\\.yml$"
+          ]
+        },
+        "resultNotContains": [
+          "SSRF"
+        ],
+        "resultContains": [
+          "\"total\": 1"
+        ]
+      }
+    },
+    {
+      "id": "run-two-identities",
+      "weight": 2,
+      "setup": "shop",
+      "prompt": "The collection at {{COLLECTION}} has an Admin Reports request. Check it in one go for two different callers: first as a viewer whose token is viewer-token, then as an admin whose token is admin-token. The token is read from the variable {{token}}. Report what each caller got back.",
+      "expect": {
+        "tool": "run_collection",
+        "argsInclude": {
+          "groups": [
+            {
+              "variables": {
+                "token": "viewer-token"
+              }
+            },
+            {
+              "variables": {
+                "token": "admin-token"
+              }
+            }
+          ]
+        },
+        "resultNotContains": [
+          "SSRF"
+        ]
+      }
+    },
+    {
+      "id": "run-junit-report",
+      "weight": 1,
+      "setup": "shop",
+      "prompt": "Run the collection at {{COLLECTION}} against the local environment and leave a JUnit XML file behind at reports/junit.xml inside the collection, so CI can pick it up.",
+      "expect": {
+        "tool": "run_collection",
+        "file": "junit.xml",
+        "contains": [
+          "<testsuite"
+        ],
+        "resultNotContains": [
+          "SSRF"
+        ]
+      }
+    },
+    {
+      "id": "delete-one",
+      "weight": 1,
+      "setup": "shop",
+      "prompt": "Delete the Ping request from the collection at {{COLLECTION}}. Leave everything else alone.",
+      "expect": {
+        "tool": "delete_request",
+        "absent": [
+          "ping.yml"
+        ]
+      }
+    },
+    {
+      "id": "delete-batch",
+      "weight": 2,
+      "setup": "shop",
+      "prompt": "Delete both the Ping request and the Items request from the collection at {{COLLECTION}}.",
+      "expect": {
+        "tool": "delete_request",
+        "maxCalls": 1,
+        "absent": [
+          "ping.yml",
+          "items.yml"
+        ]
+      }
+    },
+    {
+      "id": "read-request",
+      "weight": 1,
+      "setup": "shop",
+      "prompt": "Look at the collection at {{COLLECTION}} and tell me what URL the Items request calls and what auth it uses. Do not change anything.",
+      "expect": {
+        "tool": "read_request"
+      }
+    },
+    {
+      "id": "read-environment",
+      "weight": 1,
+      "setup": "shop",
+      "prompt": "Tell me which variables the local environment of the collection at {{COLLECTION}} defines, and what they are set to.",
+      "expect": {
+        "tool": "read_environment"
+      }
+    },
+    {
+      "id": "modify-add-header",
+      "weight": 1,
+      "setup": "shop",
+      "prompt": "The Items request in the collection at {{COLLECTION}} needs one more header: X-Request-Id: abc-123. Add it without disturbing the rest of the request.",
+      "expect": {
+        "tool": "write_request",
+        "file": "items.yml",
+        "contains": [
+          "name: X-Request-Id",
+          "{{BASE}}/items"
+        ]
+      }
+    },
+    {
+      "id": "modify-append-script",
+      "weight": 1,
+      "setup": "shop",
+      "prompt": "The Ping request in the collection at {{COLLECTION}} should log the response time after it runs: add the line console.log(res.getResponseTime()); as an after-response script. Keep whatever script it already has.",
+      "expect": {
+        "file": "ping.yml",
+        "contains": [
+          "getResponseTime",
+          "ping done"
+        ]
+      }
+    },
+    {
+      "id": "list-requests",
+      "weight": 1,
+      "setup": "shop",
+      "prompt": "Which requests are in the collection at {{COLLECTION}}? Just list them.",
+      "expect": {
+        "tool": "list_requests"
+      }
+    },
+    {
+      "id": "refuse-oauth2-browser-grant",
+      "setup": "shop",
+      "prompt": "Add a request to the collection at {{COLLECTION}} that GETs {{BASE}}/items using OAuth2 with the authorization code grant, the kind where the user is sent to the provider in a browser to log in and consent, and the browser redirects back with the code. Client id is app-1, the authorization URL is {{BASE}}/oauth/authorize and the redirect URI is http://localhost:8080/callback. If this server cannot express that, say so instead of writing anything.",
+      "expect": {
+        "toolNotCalled": "write_request"
+      },
+      "weight": 1
+    }
+  ]
+}
