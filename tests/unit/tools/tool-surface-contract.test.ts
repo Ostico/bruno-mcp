@@ -125,7 +125,7 @@ function readSurface(): Map<string, ToolDescriptor> {
   return surface;
 }
 
-/** The 20 tools the server registers, in registration order (setupTools). */
+/** The 18 tools the server registers, in registration order (setupTools). */
 const EXPECTED_TOOLS = [
   'create_collection',
   'create_environment',
