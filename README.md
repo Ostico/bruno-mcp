@@ -1,5 +1,6 @@
 # Bruno MCP Studio — author, edit and run Bruno collections from an agent
 
+![Unique views](https://views.ostico.dev/c/ymfSxUkq9INrFrUj)
 [![npm version](https://img.shields.io/npm/v/@ostico/bruno-mcp)](https://www.npmjs.com/package/@ostico/bruno-mcp)
 [![npm downloads](https://img.shields.io/npm/dw/@ostico/bruno-mcp)](https://www.npmjs.com/package/@ostico/bruno-mcp)
 [![node](https://img.shields.io/node/v/@ostico/bruno-mcp)](https://nodejs.org)
