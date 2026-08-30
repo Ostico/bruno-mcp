@@ -761,3 +761,12 @@ MIT — see [LICENSE](./LICENSE). Contributions are accepted under the same term
 - [Model Context Protocol](https://modelcontextprotocol.io/)
 - [Changelog](./CHANGELOG.md)
 - [Integration guide](./INTEGRATION.md)
+
+---
+
+## Support
+
+If Test-Guard is useful to you, consider supporting its development:
+
+[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-❤️-ea4aaa?logo=github)](https://github.com/sponsors/Ostico)
+[![Donate via PayPal](https://img.shields.io/badge/PayPal-Donate-blue?logo=paypal)](https://paypal.me/Ostico)
